@@ -247,13 +247,13 @@ Select account ID to login:
       expect(hasUserSelectionPrompt(fullPromptOutput)).toBe(true)
     })
 
-    it('should return false when account ID is missing', () => {
+    it('should detect user selection from table structure even without account ID text', () => {
       const noAccountIdOutput = `
   ID | NAME          | USERNAME     
 -----+---------------+--------------
   1  | admin         | admin        
 `
-      expect(hasUserSelectionPrompt(noAccountIdOutput)).toBe(false)
+      expect(hasUserSelectionPrompt(noAccountIdOutput)).toBe(true)
     })
 
     it('should return false when header is missing', () => {
@@ -271,8 +271,23 @@ Some other content
     it('should return false when only partial keywords exist', () => {
       // only account ID without header
       expect(hasUserSelectionPrompt('account ID')).toBe(false)
-      // only ID and NAME without account ID
+      // only ID and NAME without account ID and no table structure
       expect(hasUserSelectionPrompt('ID | NAME')).toBe(false)
+    })
+
+    it('should detect ID> prompt as user selection', () => {
+      expect(hasUserSelectionPrompt('Some output\nID> ')).toBe(true)
+    })
+
+    it('should detect user selection from garbled Chinese table structure', () => {
+      // Simulates garbled UTF-8 decoded as Latin1 (common encoding issue)
+      const garbledOutput = `
+  ID    | 鍚嶇О                                        | 鐢ㄦ埛鍚?                 
+--------+---------------------------------------------+-------------------------
+  1     | 娴嬭瘯linux                                  | itouchtv                
+  2     | 娴嬭瘯linux瓒呯                              | root                    
+ID> `
+      expect(hasUserSelectionPrompt(garbledOutput)).toBe(true)
     })
   })
 })

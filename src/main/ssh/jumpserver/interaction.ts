@@ -1,7 +1,14 @@
 import { BrowserWindow } from 'electron'
 import type { Client } from 'ssh2'
 import type { JumpServerConnectionInfo, JumpServerNavigationPath } from './constants'
-import { jumpserverConnections, jumpserverShellStreams, jumpserverConnectionStatus, jumpserverLastCommand, jumpserverInputBuffer } from './state'
+import {
+  jumpserverConnections,
+  jumpserverShellStreams,
+  jumpserverConnectionStatus,
+  jumpserverLastCommand,
+  jumpserverInputBuffer,
+  jumpserverPendingData
+} from './state'
 import { createJumpServerExecStream, executeCommandOnJumpServerExec } from './streamManager'
 import { parseJumpServerUsers, hasUserSelectionPrompt } from './parser'
 import { handleJumpServerUserSelectionWithEvent } from './userSelection'
@@ -34,20 +41,31 @@ export const setupJumpServerInteraction = (
     messageParams?: Record<string, string | number>
   ) => void,
   resolve: (value: { status: string; message: string }) => void,
-  reject: (reason: Error) => void
+  reject: (reason: Error) => void,
+  inheritedNavigationPath?: JumpServerNavigationPath
 ) => {
   let outputBuffer = ''
   let connectionPhase: 'connecting' | 'inputIp' | 'selectUser' | 'inputPassword' | 'connected' = 'connecting'
   let connectionEstablished = false
   let connectionFailed = false
 
-  const navigationPath: JumpServerNavigationPath = {
-    needsPassword: false
-  }
+  // Connection-level timeout to prevent indefinite hanging
+  const interactionTimeout = setTimeout(() => {
+    if (connectionPhase !== 'connected' && !connectionFailed) {
+      logger.error('JumpServer interaction timeout', { event: 'jumpserver.interaction.timeout', connectionId, phase: connectionPhase })
+      stream.end()
+      reject(new Error('JumpServer connection timeout: Interaction with JumpServer menu did not complete in time'))
+    }
+  }, JUMPSERVER_CONSTANTS.INTERACTION_TIMEOUT)
 
-  const handleConnectionSuccess = (reason: string) => {
+  // When reusing an existing connection, inherit the navigation path so that
+  // multi-user selection and password can be auto-replayed without user intervention.
+  const navigationPath: JumpServerNavigationPath = inheritedNavigationPath ? { ...inheritedNavigationPath } : { needsPassword: false }
+
+  const handleConnectionSuccess = async (reason: string) => {
     if (connectionEstablished) return
     connectionEstablished = true
+    clearTimeout(interactionTimeout)
     sendStatusUpdate('Successfully connected to target server, you can start operating', 'success', 'ssh.jumpserver.connectedToTarget')
     connectionPhase = 'connected'
     outputBuffer = ''
@@ -62,9 +80,20 @@ export const setupJumpServerInteraction = (
     })
     jumpserverShellStreams.set(connectionId, stream)
     jumpserverConnectionStatus.set(connectionId, { isVerified: true })
+    // Initialize pending data buffer to capture data between connection success and shell start
+    jumpserverPendingData.set(connectionId, [])
 
-    createJumpServerExecStream(connectionId)
-      .then(async (execStream) => {
+    // Wait for exec stream creation with timeout before resolving connection
+    // This ensures the terminal is actually functional when we report success
+    const postConnectSetup = async () => {
+      try {
+        const execStream = await Promise.race([
+          createJumpServerExecStream(connectionId),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('JumpServer exec stream creation timeout')), JUMPSERVER_CONSTANTS.NAVIGATION_TIMEOUT)
+          )
+        ])
+
         const readyResult = {
           hasSudo: false,
           commandList: [] as string[]
@@ -109,9 +138,8 @@ export const setupJumpServerInteraction = (
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send(`ssh:connect:data:${connectionId}`, readyResult)
         }
-      })
-      .catch((error) => {
-        logger.error('JumpServer exec stream creation failed', {
+      } catch (error) {
+        logger.error('JumpServer exec stream creation failed or timed out', {
           event: 'jumpserver.exec.create.error',
           connectionId,
           error: error
@@ -130,8 +158,10 @@ export const setupJumpServerInteraction = (
         } else {
           logger.error('Cannot send empty command list: window does not exist or is destroyed', { event: 'jumpserver.window.notfound', connectionId })
         }
-      })
+      }
+    }
 
+    await postConnectSetup()
     resolve({ status: 'connected', message: 'Connection successful' })
   }
 
@@ -171,8 +201,7 @@ export const setupJumpServerInteraction = (
 
       if (hasUserSelectionPrompt(outputBuffer)) {
         logger.debug('Multiple user prompt detected, user selection required', { event: 'jumpserver.user.selection', connectionId })
-        sendStatusUpdate('Multiple user accounts detected, please select...', 'info', 'ssh.jumpserver.multipleUsersDetected')
-        connectionPhase = 'selectUser'
+
         const users = parseJumpServerUsers(outputBuffer)
         logger.debug('Parsed user list', { event: 'jumpserver.user.parsed', connectionId, userCount: users.length })
 
@@ -184,6 +213,22 @@ export const setupJumpServerInteraction = (
         }
 
         outputBuffer = ''
+
+        // If we have an inherited selectedUserId (from a reused connection), auto-select it
+        if (navigationPath.selectedUserId !== undefined) {
+          logger.debug('Auto-selecting inherited user for reused connection', {
+            event: 'jumpserver.user.autoselect',
+            connectionId,
+            selectedUserId: navigationPath.selectedUserId
+          })
+          sendStatusUpdate('Auto-selecting account from previous session...', 'info', 'ssh.jumpserver.connectingWithSelectedAccount')
+          connectionPhase = 'inputPassword'
+          stream.write(navigationPath.selectedUserId.toString() + '\r')
+          return
+        }
+
+        sendStatusUpdate('Multiple user accounts detected, please select...', 'info', 'ssh.jumpserver.multipleUsersDetected')
+        connectionPhase = 'selectUser'
 
         if (!event) {
           logger.error('JumpServer user selection requires event object', { event: 'jumpserver.user.event.missing', connectionId })
@@ -228,7 +273,19 @@ export const setupJumpServerInteraction = (
         logger.debug('JumpServer target asset requires no password, direct connection', { event: 'jumpserver.connect.direct', connectionId, reason })
         handleConnectionSuccess(`No password required - ${reason}`)
       } else {
-        logger.debug('JumpServer inputIp phase waiting for more output', { event: 'jumpserver.inputIp.waiting', connectionId })
+        const lines = outputBuffer.split(/\r?\n/).filter(Boolean)
+        const sampleLines = lines.slice(0, 3).concat(lines.slice(-3))
+        logger.info('JumpServer inputIp phase waiting for more output', {
+          event: 'jumpserver.inputIp.waiting',
+          connectionId,
+          bufferSize: outputBuffer.length,
+          lineCount: lines.length,
+          sampleLines: sampleLines.map((l) => l.substring(0, 80)),
+          hasPassword: hasPasswordPrompt(outputBuffer),
+          hasUserSelection: hasUserSelectionPrompt(outputBuffer),
+          hasNoAssets: hasNoAssetsPrompt(outputBuffer),
+          hasDirectReason: !!detectDirectConnectionReason(outputBuffer)
+        })
       }
       return
     }
@@ -270,7 +327,29 @@ export const setupJumpServerInteraction = (
       if (reason) {
         logger.debug('JumpServer entered target server after password verification', { event: 'jumpserver.auth.success', connectionId, reason })
         handleConnectionSuccess(`After password verification - ${reason}`)
+      } else {
+        const lines = outputBuffer.split(/\r?\n/).filter(Boolean)
+        const sampleLines = lines.slice(0, 3).concat(lines.slice(-3))
+        logger.info('JumpServer inputPassword phase waiting for connection success', {
+          event: 'jumpserver.inputPassword.waiting',
+          connectionId,
+          bufferSize: outputBuffer.length,
+          lineCount: lines.length,
+          sampleLines: sampleLines.map((l) => l.substring(0, 80)),
+          hasPasswordError: hasPasswordError(outputBuffer),
+          hasDirectReason: !!detectDirectConnectionReason(outputBuffer)
+        })
       }
+    }
+
+    // Buffer data in connected phase to prevent loss between connection success and shell start
+    // The ssh:shell handler will flush this buffer when it takes over the stream
+    if (connectionPhase === 'connected') {
+      const pending = jumpserverPendingData.get(connectionId)
+      if (pending) {
+        pending.push(data)
+      }
+      return
     }
   })
 
@@ -279,6 +358,7 @@ export const setupJumpServerInteraction = (
   })
 
   stream.on('close', () => {
+    clearTimeout(interactionTimeout)
     logger.debug('JumpServer stream closed', { event: 'jumpserver.stream.close', connectionId })
 
     // Check if underlying SSH connection needs to be closed
@@ -310,6 +390,7 @@ export const setupJumpServerInteraction = (
     jumpserverConnectionStatus.delete(connectionId)
     jumpserverLastCommand.delete(connectionId)
     jumpserverInputBuffer.delete(connectionId)
+    jumpserverPendingData.delete(connectionId)
 
     if (connectionPhase !== 'connected' && !connectionFailed) {
       reject(new Error('Connection closed before completion'))
@@ -317,6 +398,7 @@ export const setupJumpServerInteraction = (
   })
 
   stream.on('error', (error: Error) => {
+    clearTimeout(interactionTimeout)
     logger.error('JumpServer stream error', { event: 'jumpserver.stream.error', connectionId, error: error.message })
     reject(error)
   })

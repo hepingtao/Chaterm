@@ -9,7 +9,8 @@ import type { JumpServerErrorPayload } from './errorUtils'
  * Detect if output contains password prompt
  */
 export const hasPasswordPrompt = (text: string): boolean => {
-  return text.includes('Password:') || text.includes('password:')
+  const lowerText = text.toLowerCase()
+  return lowerText.includes('password:') || lowerText.includes('passphrase:') || lowerText.includes('密码:') || lowerText.includes('口令:')
 }
 
 /**
@@ -27,7 +28,7 @@ export const detectDirectConnectionReason = (text: string): string | null => {
   if (!text) return null
 
   // Keyword detection
-  const indicators = ['Connecting to', '连接到', 'Last login:', 'Last failed login:']
+  const indicators = ['Connecting to', '连接到', 'Last login:', 'Last failed login:', 'Welcome to', '欢迎', 'Authentication successful']
 
   for (const indicator of indicators) {
     if (text.includes(indicator)) {

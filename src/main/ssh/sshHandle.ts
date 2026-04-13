@@ -45,7 +45,8 @@ import {
   jumpserverLastCommand,
   createJumpServerExecStream,
   executeCommandOnJumpServerExec,
-  jumpserverSessionPids
+  jumpserverSessionPids,
+  jumpserverPendingData
 } from './jumpserverHandle'
 import path from 'path'
 import fs from 'fs'
@@ -1549,6 +1550,17 @@ export const registerSSHHandlers = () => {
 
       // Clear old listeners
       stream.removeAllListeners('data')
+
+      // Forward any data that arrived between connection success and shell start
+      // This prevents data loss during the window when interaction.ts was buffering
+      // connected-phase data but ssh:shell hadn't set up forwarding listeners yet
+      const pendingData = jumpserverPendingData.get(id)
+      if (pendingData && pendingData.length > 0) {
+        const combinedChunk = pendingData.map((b) => b.toString('utf8')).join('')
+        const combinedRaw = Buffer.concat(pendingData)
+        event.sender.send(`ssh:shell:data:${id}`, { data: combinedChunk, raw: combinedRaw, marker: '' })
+      }
+      jumpserverPendingData.delete(id)
 
       let bufferChunks: string[] = []
       let bufferLength = 0

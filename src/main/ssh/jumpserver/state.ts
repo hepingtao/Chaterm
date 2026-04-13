@@ -13,4 +13,6 @@ export const getExecStreamPromise = (connectionId: string) => jumpserverExecStre
 export const setExecStreamPromise = (connectionId: string, promise: Promise<any>) => jumpserverExecStreamPromises.set(connectionId, promise)
 export const deleteExecStreamPromise = (connectionId: string) => jumpserverExecStreamPromises.delete(connectionId)
 
+export const jumpserverPendingData = new Map<string, Buffer[]>()
+
 export const jumpserverSessionPids = new Map<string, number>()

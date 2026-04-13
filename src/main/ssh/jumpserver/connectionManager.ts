@@ -4,7 +4,7 @@ import net from 'net'
 import tls from 'tls'
 import type { Readable } from 'stream'
 import { createProxySocket } from '../proxy'
-import { attemptSecondaryConnection, keyboardInteractiveOpts, sftpConnections, connectionStatus } from '../sshHandle'
+import { keyboardInteractiveOpts, sftpConnections, connectionStatus } from '../sshHandle'
 import { LEGACY_ALGORITHMS } from '../algorithms'
 import { jumpserverConnections, jumpserverShellStreams, jumpserverMarkedCommands, jumpserverInputBuffer } from './state'
 import type { JumpServerConnectionInfo } from './constants'
@@ -117,6 +117,7 @@ const attemptJumpServerConnection = async (
           sendStatusUpdate('Reusing existing connection, creating new shell session...', 'info', 'ssh.jumpserver.reuseConnection')
 
           const conn = existingData.conn
+          const inheritedNavigationPath = existingData.navigationPath
           conn.shell({ term: connectionInfo.terminalType || 'vt100' }, (err, newStream) => {
             if (err) {
               logger.error('Failed to create shell with reused connection', {
@@ -137,7 +138,7 @@ const attemptJumpServerConnection = async (
                 sftpError: 'SFTP connection failed'
               })
             }
-            setupJumpServerInteraction(newStream, connectionInfo, connectionId, jumpserverUuid, conn, event, sendStatusUpdate, resolve, reject)
+            setupJumpServerInteraction(newStream, connectionInfo, connectionId, jumpserverUuid, conn, event, sendStatusUpdate, resolve, reject, inheritedNavigationPath)
           })
 
           return
@@ -221,7 +222,14 @@ const attemptJumpServerConnection = async (
     conn.on('ready', () => {
       logger.info('JumpServer connection established, creating shell', { event: 'jumpserver.connect', connectionId })
       sendStatusUpdate('Successfully connected to bastion host, please wait...', 'success', 'ssh.jumpserver.connectedToBastionHost')
-      attemptSecondaryConnection(event, connectionInfo, conn)
+
+      // Do NOT call attemptSecondaryConnection for JumpServer connections.
+      // attemptSecondaryConnection runs conn.exec() on the bastion host to check
+      // command list and sudo, which is wrong for JumpServer because:
+      // 1. The bastion's shell is an interactive menu, not a Linux shell
+      // 2. exec() commands interfere with the interactive shell() session
+      // 3. Command list and sudo checks are handled later via exec stream
+      //    in interaction.ts handleConnectionSuccess -> createJumpServerExecStream
 
       if (event && keyboardInteractiveOpts.has(connectionId)) {
         logger.info('MFA verification success', { event: 'jumpserver.mfa.success', connectionId })
