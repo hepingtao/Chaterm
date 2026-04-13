@@ -1082,8 +1082,14 @@ function setupIPC(): void {
 
       return { success: true, theme: dbTheme }
     } catch (error) {
-      logger.error('Database initialization failed', { error: error })
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' }
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      const errorName = error instanceof Error ? error.constructor.name : 'UnknownError'
+      logger.error('Database initialization failed', {
+        error: errorMessage,
+        errorType: errorName,
+        uid: uid
+      })
+      return { success: false, error: `[${errorName}] ${errorMessage}` }
     }
   })
 
