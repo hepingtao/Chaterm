@@ -220,19 +220,6 @@ export const setupJumpServerInteraction = (
 
         outputBuffer = ''
 
-        // If we have an inherited selectedUserId (from a reused connection), auto-select it
-        if (navigationPath.selectedUserId !== undefined) {
-          logger.debug('Auto-selecting inherited user for reused connection', {
-            event: 'jumpserver.user.autoselect',
-            connectionId,
-            selectedUserId: navigationPath.selectedUserId
-          })
-          sendStatusUpdate('Auto-selecting account from previous session...', 'info', 'ssh.jumpserver.connectingWithSelectedAccount')
-          connectionPhase = 'inputPassword'
-          stream.write(navigationPath.selectedUserId.toString() + '\r')
-          return
-        }
-
         sendStatusUpdate('Multiple user accounts detected, please select...', 'info', 'ssh.jumpserver.multipleUsersDetected')
         connectionPhase = 'selectUser'
 
