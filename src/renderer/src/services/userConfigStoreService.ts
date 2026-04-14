@@ -85,6 +85,9 @@ export interface UserConfig {
   >
   lastCustomImage?: string
   background: BackgroundConfig
+  sshKeepaliveInterval?: number
+  sshIdleTimeout?: number
+  sshTerminalKeepalive?: number
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -168,7 +171,10 @@ export function buildDefaultUserConfig(now: number = Date.now()): UserConfig {
       image: '',
       opacity: 0.15,
       brightness: 0.45
-    }
+    },
+    sshKeepaliveInterval: 10,
+    sshIdleTimeout: 0,
+    sshTerminalKeepalive: 0
   }
 }
 

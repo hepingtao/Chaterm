@@ -2,6 +2,7 @@ import { ipcMain, app } from 'electron'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { getSftpConnection, getUniqueRemoteName, pickReconnectConnectionInfo } from './sshHandle'
+import { getSshKeepaliveConfig } from './sshConfig'
 import nodeFs from 'node:fs/promises'
 import fs from 'fs'
 import type { Client } from 'ssh2'
@@ -2263,6 +2264,7 @@ export const connectSftpNew = async (event: any, connectionInfo: any, options?: 
   const identToken = connIdentToken ? `_t=${connIdentToken}` : ''
   const ident = `${packageInfo.name}_${packageInfo.version}${identToken}`
   const algorithms = getAlgorithmsByAssetType(asset_type)
+  const keepaliveCfg = await getSshKeepaliveConfig()
 
   const requestId = String(connectionInfo?.sftpRequestId || `${Date.now()}_${Math.random().toString(16).slice(2)}`)
   markPending(id, requestId, conn as any)
@@ -2272,7 +2274,8 @@ export const connectSftpNew = async (event: any, connectionInfo: any, options?: 
     host,
     port: port || 22,
     username,
-    keepaliveInterval: 10000,
+    keepaliveInterval: keepaliveCfg.keepaliveInterval,
+    keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
     readyTimeout: KeyboardInteractiveTimeout,
     tryKeyboard: true,
     ident,
@@ -2415,6 +2418,7 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
   const identToken = connIdentToken ? `_t=${connIdentToken}` : ''
   const ident = `${packageInfo.name}_${packageInfo.version}${identToken}`
   const algorithms = getAlgorithmsByAssetType(asset_type)
+  const keepaliveCfg = await getSshKeepaliveConfig()
 
   const requestId = String(connectionInfo?.sftpRequestId || `${Date.now()}_${Math.random().toString(16).slice(2)}`)
   markPending(id, requestId, conn as any)
@@ -2423,7 +2427,8 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
     host,
     port: port || 22,
     username,
-    keepaliveInterval: 10000,
+    keepaliveInterval: keepaliveCfg.keepaliveInterval,
+    keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
     readyTimeout: 180000,
     tryKeyboard: true,
     ident,

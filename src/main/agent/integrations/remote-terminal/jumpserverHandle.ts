@@ -3,6 +3,7 @@ import { ipcMain } from 'electron'
 import net from 'net'
 import tls from 'tls'
 import { getUserConfigFromRenderer } from '../../../index'
+import { getSshKeepaliveConfig } from '../../../ssh/sshConfig'
 import { createProxySocket } from '../../../ssh/proxy'
 import { parseJumpServerUsers, hasUserSelectionPrompt } from '../../../ssh/jumpserver/parser'
 import { hasNoAssetsPrompt, createNoAssetsError } from '../../../ssh/jumpserver/navigator'
@@ -391,6 +392,8 @@ export const handleJumpServerConnection = async (connectionInfo: {
     }
   }
 
+  const keepaliveCfg = await getSshKeepaliveConfig()
+
   return new Promise((resolve, reject) => {
     if (jumpserverConnections.has(connectionId)) {
       logger.debug('Reusing existing JumpServer connection', { event: 'remote-terminal.jumpserver.reuse', connectionId })
@@ -460,6 +463,7 @@ export const handleJumpServerConnection = async (connectionInfo: {
       port: number
       username: string
       keepaliveInterval: number
+      keepaliveCountMax?: number
       readyTimeout: number
       tryKeyboard: boolean
       privateKey?: Buffer
@@ -471,7 +475,8 @@ export const handleJumpServerConnection = async (connectionInfo: {
       host: connectionInfo.host,
       port: connectionInfo.port || 22,
       username: connectionInfo.username,
-      keepaliveInterval: 10000,
+      keepaliveInterval: keepaliveCfg.keepaliveInterval,
+      keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
       readyTimeout: 30000,
       ident: connectionInfo.ident,
       tryKeyboard: true // Enable keyboard interactive authentication for 2FA

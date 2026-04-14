@@ -21,6 +21,9 @@ export interface JumpServerConnectionData {
   stream: any
   jumpserverUuid: string
   targetIp: string
+  host: string
+  port: number
+  username: string
   navigationPath: JumpServerNavigationPath
 }
 

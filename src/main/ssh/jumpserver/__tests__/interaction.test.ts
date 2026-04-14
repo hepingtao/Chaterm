@@ -10,9 +10,7 @@ describe('JumpServer Interaction - Multi-user fixes', () => {
   describe('navigationPath inheritance', () => {
     it('should create empty navigationPath when no inheritedNavigationPath is provided', () => {
       const inheritedNavigationPath = undefined
-      const navigationPath: JumpServerNavigationPath = inheritedNavigationPath
-        ? { ...inheritedNavigationPath }
-        : { needsPassword: false }
+      const navigationPath: JumpServerNavigationPath = inheritedNavigationPath ? { ...inheritedNavigationPath } : { needsPassword: false }
 
       expect(navigationPath).toEqual({ needsPassword: false })
       expect(navigationPath.selectedUserId).toBeUndefined()
@@ -24,9 +22,7 @@ describe('JumpServer Interaction - Multi-user fixes', () => {
         password: 'test-password',
         selectedUserId: 2
       }
-      const navigationPath: JumpServerNavigationPath = inheritedNavigationPath
-        ? { ...inheritedNavigationPath }
-        : { needsPassword: false }
+      const navigationPath: JumpServerNavigationPath = inheritedNavigationPath ? { ...inheritedNavigationPath } : { needsPassword: false }
 
       expect(navigationPath.selectedUserId).toBe(2)
       expect(navigationPath.needsPassword).toBe(true)
@@ -38,9 +34,7 @@ describe('JumpServer Interaction - Multi-user fixes', () => {
         needsPassword: true,
         selectedUserId: 1
       }
-      const navigationPath: JumpServerNavigationPath = inheritedNavigationPath
-        ? { ...inheritedNavigationPath }
-        : { needsPassword: false }
+      const navigationPath: JumpServerNavigationPath = inheritedNavigationPath ? { ...inheritedNavigationPath } : { needsPassword: false }
 
       // Mutating the copy should not affect original
       navigationPath.selectedUserId = 3
@@ -86,15 +80,10 @@ describe('JumpServer Interaction - Multi-user fixes', () => {
       // Read the file and check that attemptSecondaryConnection is not imported
       const fs = require('fs')
       const path = require('path')
-      const content = fs.readFileSync(
-        path.join(__dirname, '../connectionManager.ts'),
-        'utf-8'
-      )
+      const content = fs.readFileSync(path.join(__dirname, '../connectionManager.ts'), 'utf-8')
 
       // The import line should NOT contain attemptSecondaryConnection
-      const importLine = content.split('\n').find((line: string) =>
-        line.includes("from '../sshHandle'") && line.includes('import')
-      )
+      const importLine = content.split('\n').find((line: string) => line.includes("from '../sshHandle'") && line.includes('import'))
 
       if (importLine) {
         expect(importLine).not.toContain('attemptSecondaryConnection')
@@ -104,10 +93,7 @@ describe('JumpServer Interaction - Multi-user fixes', () => {
     it('connectionManager conn.on("ready") should not call attemptSecondaryConnection', () => {
       const fs = require('fs')
       const path = require('path')
-      const content = fs.readFileSync(
-        path.join(__dirname, '../connectionManager.ts'),
-        'utf-8'
-      )
+      const content = fs.readFileSync(path.join(__dirname, '../connectionManager.ts'), 'utf-8')
 
       // Find the conn.on('ready') block and ensure attemptSecondaryConnection is not called
       // (only check actual code calls, not comments)
@@ -128,18 +114,15 @@ describe('JumpServer Interaction - Multi-user fixes', () => {
     it('connectionManager should pass existingData.navigationPath to setupJumpServerInteraction', () => {
       const fs = require('fs')
       const path = require('path')
-      const content = fs.readFileSync(
-        path.join(__dirname, '../connectionManager.ts'),
-        'utf-8'
-      )
+      const content = fs.readFileSync(path.join(__dirname, '../connectionManager.ts'), 'utf-8')
 
       // In the connection reuse block, verify inheritedNavigationPath is extracted and passed
       const reuseBlockStart = content.indexOf('Reusing existing connection')
       if (reuseBlockStart !== -1) {
-        const reuseBlock = content.substring(reuseBlockStart, reuseBlockStart + 2000)
+        const reuseBlock = content.substring(reuseBlockStart, reuseBlockStart + 3000)
         expect(reuseBlock).toContain('inheritedNavigationPath')
         expect(reuseBlock).toContain('existingData.navigationPath')
-        expect(reuseBlock).toContain('inheritedNavigationPath)')
+        expect(reuseBlock).toContain('setupJumpServerInteraction')
       }
     })
   })

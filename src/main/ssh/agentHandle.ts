@@ -13,6 +13,7 @@ import { LEGACY_ALGORITHMS } from './algorithms'
 import net from 'net'
 import tls from 'tls'
 import { getUserConfigFromRenderer } from '../index'
+import { getSshKeepaliveConfig } from './sshConfig'
 const logger = createLogger('ssh')
 
 // Store SSH connections
@@ -68,6 +69,8 @@ export async function remoteSshConnect(connectionInfo: ConnectionInfo): Promise<
     }
   }
 
+  const keepaliveCfg = await getSshKeepaliveConfig()
+
   return new Promise((resolve) => {
     const conn = new Client()
     let secondAuthTriggered = false
@@ -119,7 +122,8 @@ export async function remoteSshConnect(connectionInfo: ConnectionInfo): Promise<
       host,
       port: normalizedPort,
       username,
-      keepaliveInterval: 10000, // Keep connection alive
+      keepaliveInterval: keepaliveCfg.keepaliveInterval,
+      keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
       tryKeyboard: true, // Disable keyboard-interactive
       algorithms: LEGACY_ALGORITHMS
     }

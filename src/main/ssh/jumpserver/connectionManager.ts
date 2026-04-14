@@ -12,6 +12,7 @@ import { MAX_JUMPSERVER_MFA_ATTEMPTS } from './constants'
 import { setupJumpServerInteraction } from './interaction'
 import { handleJumpServerKeyboardInteractive } from './mfa'
 import { buildErrorResponse } from './errorUtils'
+import { getSshKeepaliveConfig } from '../sshConfig'
 import path from 'path'
 import fs from 'fs'
 const logger = createLogger('jumpserver')
@@ -107,43 +108,89 @@ const attemptJumpServerConnection = async (
   const identToken = connectionInfo.connIdentToken ? `_t=${connectionInfo.connIdentToken}` : ''
   const packageInfo = getPackageInfo()
   const ident = `${packageInfo.name}_${packageInfo.version}` + identToken
+  const keepaliveCfg = await getSshKeepaliveConfig()
 
   return new Promise((resolve, reject) => {
     const jumpserverUuid = connectionInfo.assetUuid || connectionId
 
+    let reuseCandidate: { id: string; data: typeof jumpserverConnections extends Map<string, infer V> ? V : never } | null = null
+
+    // First pass: match by jumpserverUuid (exact UUID-based reuse)
     if (connectionInfo.assetUuid) {
-      for (const [, existingData] of jumpserverConnections.entries()) {
+      for (const [existingId, existingData] of jumpserverConnections.entries()) {
         if (existingData.jumpserverUuid === jumpserverUuid) {
-          sendStatusUpdate('Reusing existing connection, creating new shell session...', 'info', 'ssh.jumpserver.reuseConnection')
-
-          const conn = existingData.conn
-          const inheritedNavigationPath = existingData.navigationPath
-          conn.shell({ term: connectionInfo.terminalType || 'vt100' }, (err, newStream) => {
-            if (err) {
-              logger.error('Failed to create shell with reused connection', {
-                event: 'jumpserver.shell.reuse.error',
-                connectionId,
-                error: err.message
-              })
-              reject(new Error(`Failed to create shell with reused connection: ${err.message}`))
-              return
-            }
-            // Establish SFTP connection
-            // TODO: Reuse conn implementation for JumpServer, other bastion hosts may need new conn
-            try {
-              sftpAsync(conn, connectionId)
-            } catch (e) {
-              connectionStatus.set(connectionId, {
-                sftpAvailable: false,
-                sftpError: 'SFTP connection failed'
-              })
-            }
-            setupJumpServerInteraction(newStream, connectionInfo, connectionId, jumpserverUuid, conn, event, sendStatusUpdate, resolve, reject, inheritedNavigationPath)
-          })
-
-          return
+          reuseCandidate = { id: existingId, data: existingData }
+          break
         }
       }
+    }
+
+    // Second pass: fallback match by host + port + username (session sharing across entry points)
+    // When UUID doesn't match (e.g., connecting from different UI entry points), we can still
+    // reuse the session if the bastion host credentials are the same
+    if (!reuseCandidate) {
+      for (const [existingId, existingData] of jumpserverConnections.entries()) {
+        if (
+          existingData.host === connectionInfo.host &&
+          existingData.port === (connectionInfo.port || 22) &&
+          existingData.username === connectionInfo.username
+        ) {
+          logger.info('JumpServer session reuse by host+port+username fallback', {
+            event: 'jumpserver.reuse.fallback',
+            connectionId,
+            existingId,
+            host: connectionInfo.host,
+            port: connectionInfo.port || 22,
+            hasPassword: !!connectionInfo.password,
+            hasPrivateKey: !!connectionInfo.privateKey
+          })
+          reuseCandidate = { id: existingId, data: existingData }
+          break
+        }
+      }
+    }
+
+    if (reuseCandidate) {
+      const existingData = reuseCandidate.data
+      sendStatusUpdate('Reusing existing connection, creating new shell session...', 'info', 'ssh.jumpserver.reuseConnection')
+
+      const conn = existingData.conn
+      const inheritedNavigationPath = existingData.navigationPath
+      conn.shell({ term: connectionInfo.terminalType || 'vt100' }, (err, newStream) => {
+        if (err) {
+          logger.error('Failed to create shell with reused connection', {
+            event: 'jumpserver.shell.reuse.error',
+            connectionId,
+            error: err.message
+          })
+          reject(new Error(`Failed to create shell with reused connection: ${err.message}`))
+          return
+        }
+        // Establish SFTP connection
+        // TODO: Reuse conn implementation for JumpServer, other bastion hosts may need new conn
+        try {
+          sftpAsync(conn, connectionId)
+        } catch (e) {
+          connectionStatus.set(connectionId, {
+            sftpAvailable: false,
+            sftpError: 'SFTP connection failed'
+          })
+        }
+        setupJumpServerInteraction(
+          newStream,
+          connectionInfo,
+          connectionId,
+          jumpserverUuid,
+          conn,
+          event,
+          sendStatusUpdate,
+          resolve,
+          reject,
+          inheritedNavigationPath
+        )
+      })
+
+      return
     }
 
     sendStatusUpdate('Connecting to remote bastion host...', 'info', 'ssh.jumpserver.connectingToBastionHost')
@@ -155,6 +202,7 @@ const attemptJumpServerConnection = async (
       port: number
       username: string
       keepaliveInterval: number
+      keepaliveCountMax?: number
       readyTimeout: number
       tryKeyboard: boolean
       privateKey?: Buffer
@@ -167,7 +215,8 @@ const attemptJumpServerConnection = async (
       host: connectionInfo.host,
       port: connectionInfo.port || 22,
       username: connectionInfo.username,
-      keepaliveInterval: 10000,
+      keepaliveInterval: keepaliveCfg.keepaliveInterval,
+      keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
       readyTimeout: 180000,
       tryKeyboard: true,
       ident: ident,

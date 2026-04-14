@@ -12,7 +12,14 @@ import {
 import { createJumpServerExecStream, executeCommandOnJumpServerExec } from './streamManager'
 import { parseJumpServerUsers, hasUserSelectionPrompt } from './parser'
 import { handleJumpServerUserSelectionWithEvent } from './userSelection'
-import { hasPasswordPrompt, hasUsernamePrompt, hasPasswordError, detectDirectConnectionReason, hasNoAssetsPrompt, createNoAssetsError } from './navigator'
+import {
+  hasPasswordPrompt,
+  hasUsernamePrompt,
+  hasPasswordError,
+  detectDirectConnectionReason,
+  hasNoAssetsPrompt,
+  createNoAssetsError
+} from './navigator'
 import { JUMPSERVER_CONSTANTS } from './constants'
 const logger = createLogger('jumpserver')
 
@@ -76,6 +83,9 @@ export const setupJumpServerInteraction = (
       stream,
       jumpserverUuid,
       targetIp: connectionInfo.targetIp,
+      host: connectionInfo.host,
+      port: connectionInfo.port || 22,
+      username: connectionInfo.username,
       navigationPath
     })
     jumpserverShellStreams.set(connectionId, stream)

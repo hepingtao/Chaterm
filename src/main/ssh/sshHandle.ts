@@ -52,6 +52,8 @@ import path from 'path'
 import fs from 'fs'
 import { SSHAgentManager } from './ssh-agent/ChatermSSHAgent'
 import { getAlgorithmsByAssetType } from './algorithms'
+import { getSshKeepaliveConfig } from './sshConfig'
+import { getUserConfigFromRenderer } from '../index'
 import { connectBastionByType, shellBastionSession, resizeBastionSession, writeBastionSession, disconnectBastionSession } from './bastionPlugin'
 import { shouldSkipPostConnectProbe } from './postConnectProbePolicy'
 import { sftpConnectionInfoMap } from './sftpTransfer'
@@ -127,6 +129,49 @@ export interface ExecResult {
 // Store shell session streams
 const shellStreams = new Map()
 const markedCommands = new Map()
+const terminalKeepaliveTimers = new Map<string, NodeJS.Timeout>()
+
+/**
+ * Start a terminal-level keepalive timer that sends null bytes to prevent
+ * bastion hosts (like JumpServer) from closing idle sessions.
+ */
+const startTerminalKeepalive = (id: string, _stream?: any) => {
+  stopTerminalKeepalive(id)
+  // Read config asynchronously but start timer on next tick
+  getUserConfigFromRenderer()
+    .then((cfg) => {
+      const keepaliveMinutes = cfg?.sshTerminalKeepalive ?? 0
+      if (keepaliveMinutes <= 0) return
+      const intervalMs = keepaliveMinutes * 60 * 1000
+      const timer = setInterval(() => {
+        const s = shellStreams.get(id) || jumpserverShellStreams.get(id)
+        if (s && !s.destroyed) {
+          s.write('\x00', (err) => {
+            if (err) {
+              logger.debug('Terminal keepalive write failed', { event: 'ssh.terminal-keepalive.error', connectionId: id, error: err.message })
+              stopTerminalKeepalive(id)
+            }
+          })
+        } else {
+          stopTerminalKeepalive(id)
+        }
+      }, intervalMs)
+      terminalKeepaliveTimers.set(id, timer)
+      logger.info('Terminal keepalive started', { event: 'ssh.terminal-keepalive.start', connectionId: id, intervalMinutes: keepaliveMinutes })
+    })
+    .catch((err) => {
+      logger.debug('Failed to read terminal keepalive config', { error: err.message })
+    })
+}
+
+const stopTerminalKeepalive = (id: string) => {
+  const timer = terminalKeepaliveTimers.get(id)
+  if (timer) {
+    clearInterval(timer)
+    terminalKeepaliveTimers.delete(id)
+    logger.debug('Terminal keepalive stopped', { event: 'ssh.terminal-keepalive.stop', connectionId: id })
+  }
+}
 
 const KeyboardInteractiveAttempts = new Map()
 export const connectionStatus = new Map()
@@ -1166,6 +1211,37 @@ const handleAttemptConnection = async (event, connectionInfo, resolve, reject, r
     }
   }
 
+  // Check if there's an existing JumpServer connection to the same bastion host.
+  // When connecting to the JumpServer CLI (not via an asset), the request comes through
+  // sshHandle with sshType='ssh', but we can reuse the underlying SSH connection from
+  // jumpserverConnections to avoid re-entering OTP.
+  let reusedJumpServerConn: Client | null = null
+  for (const [, existingData] of jumpserverConnections.entries()) {
+    if (existingData.host === host && existingData.port === (port || 22) && existingData.username === username) {
+      reusedJumpServerConn = existingData.conn
+      logger.info('Reusing existing JumpServer connection for SSH connect', {
+        event: 'ssh.jumpserver.reuse',
+        connectionId: id,
+        host,
+        port: port || 22
+      })
+      break
+    }
+  }
+
+  if (reusedJumpServerConn) {
+    const conn = reusedJumpServerConn
+    sshConnections.set(id, conn)
+    connectionStatus.set(id, { isVerified: true })
+    connectionEvents.emit(`connection-status-changed:${id}`, { isVerified: true })
+
+    // Execute secondary connection (sudo check, SFTP, etc.)
+    attemptSecondaryConnection(event, connectionInfo, conn)
+
+    resolve({ status: 'connected', message: 'Connection successful (JumpServer session reused)' })
+    return
+  }
+
   const conn = new Client()
 
   conn.on('ready', () => {
@@ -1247,12 +1323,13 @@ const handleAttemptConnection = async (event, connectionInfo, resolve, reject, r
 
   // Configure connection settings
   const algorithms = getAlgorithmsByAssetType(asset_type)
+  const keepaliveCfg = await getSshKeepaliveConfig()
   const connectConfig: any = {
     host,
     port: port || 22,
     username,
-    keepaliveInterval: 10000, // Keep connection alive
-    keepaliveCountMax: 3,
+    keepaliveInterval: keepaliveCfg.keepaliveInterval,
+    keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
     tryKeyboard: true, // Enable keyboard interactive authentication
     readyTimeout: KeyboardInteractiveTimeout, // Connection timeout, 30 seconds
     algorithms
@@ -1664,10 +1741,14 @@ export const registerSSHHandlers = () => {
 
       stream.on('close', () => {
         flushBuffer()
+        stopTerminalKeepalive(id)
         logger.debug('JumpServer shell stream closed', { event: 'jumpserver.stream.close', connectionId: id })
         event.sender.send(`ssh:shell:close:${id}`)
         jumpserverShellStreams.delete(id)
       })
+
+      // Start terminal keepalive to prevent bastion idle timeout
+      startTerminalKeepalive(id, stream)
 
       return { status: 'success', message: 'JumpServer Shell ready' }
     }
@@ -1698,6 +1779,9 @@ export const registerSSHHandlers = () => {
 
     const handleStream = (stream, method: 'shell' | 'exec') => {
       shellStreams.set(id, stream)
+
+      // Start terminal keepalive to prevent bastion idle timeout
+      startTerminalKeepalive(id, stream)
 
       let bufferChunks: string[] = []
       let bufferLength = 0
@@ -1783,6 +1867,7 @@ export const registerSSHHandlers = () => {
 
       stream.on('close', () => {
         flushBuffer()
+        stopTerminalKeepalive(id)
         const closeInfo = consumeShellCloseInfo(id)
         logger.info('Shell stream closed', {
           event: 'ssh.stream.close',
@@ -2141,6 +2226,7 @@ export const registerSSHHandlers = () => {
       connectionId: id
     })
 
+    stopTerminalKeepalive(id)
     await cleanupTunnelsByConnection(id)
 
     // Check if it's a JumpServer connection
