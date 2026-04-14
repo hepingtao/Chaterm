@@ -171,7 +171,11 @@ app.whenReady().then(async () => {
       try {
         const crypto = require('crypto')
         const ffmpegPath = path.join(path.dirname(process.execPath), 'ffmpeg.dll')
-        const KNOWN_HASH = 'B64F08946914D8CE2BDAAEF5796ADCF8398EE5BA55223AFBB9F14072F4302B45'
+        // Hash map keyed by Electron version — update when upgrading Electron
+        const FFMPEG_HASH_MAP: Record<string, string> = {
+          '41.1.1': 'B64F08946914D8CE2BDAAEF5796ADCF8398EE5BA55223AFBB9F14072F4302B45',
+          '41.2.0': 'B64F08946914D8CE2BDAAEF5796ADCF8398EE5BA55223AFBB9F14072F4302B45'
+        }
 
         try {
           await fs.access(ffmpegPath)
@@ -184,8 +188,10 @@ app.whenReady().then(async () => {
         const buffer = await fs.readFile(ffmpegPath)
         const hash = crypto.createHash('sha256').update(buffer).digest('hex').toUpperCase()
 
-        if (hash !== KNOWN_HASH) {
-          logger.error(`[Security] CRITICAL: ffmpeg.dll hash mismatch! Expected: ${KNOWN_HASH}, Actual: ${hash}`)
+        // Check against all known hashes for supported Electron versions
+        const knownHashes = Object.values(FFMPEG_HASH_MAP)
+        if (!knownHashes.includes(hash)) {
+          logger.error(`[Security] CRITICAL: ffmpeg.dll hash mismatch! Known hashes: ${JSON.stringify(FFMPEG_HASH_MAP)}, Actual: ${hash}`)
           const { dialog } = require('electron')
           dialog.showErrorBox(
             'Security Error',
