@@ -138,12 +138,19 @@ export async function getUserConfigFromRenderer(): Promise<any> {
   }
 
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error('getUserConfigFromRenderer timed out'))
+    }, 5000)
+
     const responseHandler = (_event: Electron.IpcMainEvent, config: any) => {
+      clearTimeout(timeout)
       cleanup()
       resolve(config)
     }
 
     const errorHandler = (_event: Electron.IpcMainEvent, errMsg: string) => {
+      clearTimeout(timeout)
       cleanup()
       reject(new Error(errMsg))
     }
