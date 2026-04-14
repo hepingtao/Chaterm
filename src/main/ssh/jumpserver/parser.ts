@@ -123,10 +123,12 @@ export function parseJumpserverOutput(output: string): ParsedOutput {
 export function parseJumpServerUsers(output: string): JumpServerUser[] {
   const users: JumpServerUser[] = []
   const lines = output.split(/\r?\n/)
-  // Match pattern: ID | NAME | USERNAME (3 columns) — most common format
-  const userRegex3Col = /^\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*$/
+  // Match pattern: ID | NAME | USERNAME (3+ columns) — supports 3 or more pipe-separated columns
+  // We capture the first 3 columns (ID, NAME, USERNAME) and ignore the rest
+  const userRegex = /^\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)(\s*\|.*)?$/
 
   let foundUserHeader = false
+  let consecutiveEmptyLines = 0
 
   for (const line of lines) {
     const trimmed = line.trim()
@@ -156,12 +158,23 @@ export function parseJumpServerUsers(output: string): JumpServerUser[] {
       continue
     }
 
+    // Skip empty lines but don't break — there may be empty lines between user rows
+    if (trimmed === '') {
+      consecutiveEmptyLines++
+      // Only stop after 2+ consecutive empty lines (likely end of table)
+      if (consecutiveEmptyLines >= 2) {
+        break
+      }
+      continue
+    }
+    consecutiveEmptyLines = 0
+
     // Stop parsing when we hit prompts or non-table content
-    if (trimmed.includes('Tips:') || trimmed.includes('Back:') || trimmed.startsWith('ID>') || trimmed === '' || trimmed === '\r') {
+    if (trimmed.includes('Tips:') || trimmed.includes('Back:') || trimmed.startsWith('ID>')) {
       break
     }
 
-    const match = trimmed.match(userRegex3Col)
+    const match = trimmed.match(userRegex)
     if (match) {
       try {
         const user: JumpServerUser = {
