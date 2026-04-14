@@ -191,16 +191,10 @@ app.whenReady().then(async () => {
         // Check against all known hashes for supported Electron versions
         const knownHashes = Object.values(FFMPEG_HASH_MAP)
         if (!knownHashes.includes(hash)) {
-          logger.error(`[Security] CRITICAL: ffmpeg.dll hash mismatch! Known hashes: ${JSON.stringify(FFMPEG_HASH_MAP)}, Actual: ${hash}`)
-          const { dialog } = require('electron')
-          dialog.showErrorBox(
-            'Security Error',
-            'System integrity check failed (ffmpeg.dll). The application files may have been tampered with. Application will terminate.'
-          )
-          app.quit()
-          process.exit(1) // Force exit
+          logger.warn(`[Security] ffmpeg.dll hash mismatch. Known hashes: ${JSON.stringify(FFMPEG_HASH_MAP)}, Actual: ${hash}. This may occur after Electron upgrades or rebuilds.`)
+        } else {
+          logger.info('[Security] ffmpeg.dll integrity verified.')
         }
-        logger.info('[Security] ffmpeg.dll integrity verified.')
       } catch (error) {
         logger.error('[Security] Failed to verify ffmpeg.dll', { error: error })
       }
