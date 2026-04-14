@@ -200,6 +200,12 @@ export const setupJumpServerInteraction = (
       }
 
       if (hasUserSelectionPrompt(outputBuffer)) {
+        // Wait for ID> prompt to ensure all user rows have been received
+        // SSH data arrives in chunks — the table may be incomplete on first detection
+        if (!outputBuffer.includes('ID>')) {
+          return
+        }
+
         logger.debug('Multiple user prompt detected, user selection required', { event: 'jumpserver.user.selection', connectionId })
 
         const users = parseJumpServerUsers(outputBuffer)
