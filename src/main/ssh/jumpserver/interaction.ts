@@ -12,7 +12,7 @@ import {
 import { createJumpServerExecStream, executeCommandOnJumpServerExec } from './streamManager'
 import { parseJumpServerUsers, hasUserSelectionPrompt } from './parser'
 import { handleJumpServerUserSelectionWithEvent } from './userSelection'
-import { hasPasswordPrompt, hasPasswordError, detectDirectConnectionReason, hasNoAssetsPrompt, createNoAssetsError } from './navigator'
+import { hasPasswordPrompt, hasUsernamePrompt, hasPasswordError, detectDirectConnectionReason, hasNoAssetsPrompt, createNoAssetsError } from './navigator'
 import { JUMPSERVER_CONSTANTS } from './constants'
 const logger = createLogger('jumpserver')
 
@@ -266,6 +266,16 @@ export const setupJumpServerInteraction = (
         return
       }
 
+      if (hasUsernamePrompt(outputBuffer)) {
+        sendStatusUpdate('Entering username...', 'info', 'ssh.jumpserver.authenticating')
+        outputBuffer = ''
+        setTimeout(() => {
+          logger.debug('Sending username to JumpServer', { event: 'jumpserver.auth.username', context: 'After IP input' })
+          stream.write((connectionInfo.username || '') + '\r')
+        }, JUMPSERVER_CONSTANTS.PASSWORD_INPUT_DELAY)
+        return
+      }
+
       if (hasPasswordPrompt(outputBuffer)) {
         sendStatusUpdate('Authenticating...', 'info', 'ssh.jumpserver.authenticating')
         connectionPhase = 'inputPassword'
@@ -297,6 +307,16 @@ export const setupJumpServerInteraction = (
     }
 
     if (connectionPhase === 'selectUser') {
+      if (hasUsernamePrompt(outputBuffer)) {
+        sendStatusUpdate('Entering username...', 'info', 'ssh.jumpserver.authenticating')
+        outputBuffer = ''
+        setTimeout(() => {
+          logger.debug('Sending username to JumpServer', { event: 'jumpserver.auth.username', context: 'After user selection' })
+          stream.write((connectionInfo.username || '') + '\r')
+        }, JUMPSERVER_CONSTANTS.PASSWORD_INPUT_DELAY)
+        return
+      }
+
       if (hasPasswordPrompt(outputBuffer)) {
         sendStatusUpdate('Authenticating...', 'info', 'ssh.jumpserver.authenticating')
         connectionPhase = 'inputPassword'
@@ -314,6 +334,16 @@ export const setupJumpServerInteraction = (
     }
 
     if (connectionPhase === 'inputPassword') {
+      // Handle username prompt that may appear in password phase
+      if (hasUsernamePrompt(outputBuffer)) {
+        outputBuffer = ''
+        setTimeout(() => {
+          logger.debug('Sending username to JumpServer', { event: 'jumpserver.auth.username', context: 'In password phase' })
+          stream.write((connectionInfo.username || '') + '\r')
+        }, JUMPSERVER_CONSTANTS.PASSWORD_INPUT_DELAY)
+        return
+      }
+
       if (hasPasswordError(outputBuffer)) {
         logger.warn('JumpServer password authentication failed', { event: 'jumpserver.auth.failed', connectionId })
 

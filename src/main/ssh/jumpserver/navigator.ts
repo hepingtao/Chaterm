@@ -10,7 +10,20 @@ import type { JumpServerErrorPayload } from './errorUtils'
  */
 export const hasPasswordPrompt = (text: string): boolean => {
   const lowerText = text.toLowerCase()
-  return lowerText.includes('password:') || lowerText.includes('passphrase:') || lowerText.includes('密码:') || lowerText.includes('口令:')
+  return (
+    lowerText.includes('password:') ||
+    lowerText.includes('passphrase:') ||
+    lowerText.includes('密码:') ||
+    lowerText.includes('口令:') ||
+    lowerText.includes('username:')
+  )
+}
+
+/**
+ * Detect if output contains username prompt (distinct from password prompt)
+ */
+export const hasUsernamePrompt = (text: string): boolean => {
+  return text.toLowerCase().includes('username:')
 }
 
 /**
