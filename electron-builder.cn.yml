@@ -3,6 +3,8 @@ extends: electron-builder.yml
 appId: ai.chaterm.cn.app
 productName: Chaterm CN
 
+npmRebuild: false
+
 directories:
   output: dist/cn
 

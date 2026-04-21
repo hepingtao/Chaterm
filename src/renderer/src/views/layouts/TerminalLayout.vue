@@ -230,6 +230,7 @@
                               { 'hide-tab-close-button': hideTabCloseButton }
                             ]"
                             :disable-tabs-overflow-list="true"
+                            :components="components"
                             :style="{
                               width: '100%',
                               height: '100%',
@@ -378,6 +379,11 @@ const isTransparent = computed(() => !!configStore.getUserConfig.background.imag
 const headerRef = ref<InstanceType<typeof Header> | null>(null)
 const allTabs = ref<InstanceType<typeof TabsPanel> | null>(null)
 const assetsRef = ref<InstanceType<typeof Assets> | null>(null)
+
+// Dockview component mapping
+const components = {
+  TabsPanel
+}
 const isSkippedLogin = computed(() => {
   return localStorage.getItem('login-skipped') === 'true'
 })
@@ -1404,6 +1410,7 @@ const handleSearchHost = () => {
 }
 
 const toggleMenu = function (params) {
+  logger.info('toggleMenu called', { params, currentMenu: currentMenu.value })
   const type = params?.type
   const container = document.querySelector('.splitpanes') as HTMLElement
   const containerWidth = container.offsetWidth
@@ -1506,6 +1513,7 @@ const toggleMenu = function (params) {
     }
   } else {
     currentMenu.value = params.menu
+    logger.info('currentMenu changed to', { menu: params.menu, type })
     switch (type) {
       case 'same':
         if (leftPaneSize.value == 0) {
@@ -1654,7 +1662,11 @@ const setupXshellWakeupBridge = async () => {
 }
 
 const currentClickServer = async (item) => {
-  if (item.children) return
+  logger.info('currentClickServer called', { item })
+  if (item.children) {
+    logger.info('Item has children, returning early')
+    return
+  }
 
   const id_ = uuidv4()
   const newTab = {
@@ -1667,6 +1679,7 @@ const currentClickServer = async (item) => {
     data: item,
     props: item?.props
   }
+  logger.info('Created newTab object', { newTab, focusedPane: focusedPane.value })
   if (focusedPane.value.type === 'rightVertical' && focusedPane.value.index !== undefined && focusedPane.value.rightPaneIndex !== undefined) {
     const rightPane = splitPanes.value[focusedPane.value.rightPaneIndex]
     if (rightPane && rightPane.verticalSplitPanes && focusedPane.value.index < rightPane.verticalSplitPanes.length) {
@@ -2060,21 +2073,31 @@ const openUserTab = async function (arg: OpenUserTabArg) {
     value === 'files' ||
     value.startsWith('plugins:')
   ) {
-    if (!dockApi) return
+    logger.info('Checking for existing panel', { value, hasDockApi: !!dockApi, panelCount: dockApi?.panels.length })
+    if (!dockApi) {
+      logger.error('dockApi is null, cannot create panel')
+      return
+    }
 
     const existingPanel = dockApi.panels.find((panel) => panel.params?.content === value || panel.params?.type === value)
     if (existingPanel) {
+      logger.info('Found existing panel, activating it', { panelId: existingPanel.id })
       existingPanel.api.setActive()
       return
     }
+    logger.info('No existing panel found, will create new one')
   }
   const p = {
     title: value,
     key: value,
     type: value,
+    content: value,
     props: {}
   }
   switch (value) {
+    case 'files':
+      p.title = 'files'
+      break
     case 'aliasConfig':
       p.title = 'alias'
       p.type = 'extensions'
@@ -2127,6 +2150,7 @@ const openUserTab = async function (arg: OpenUserTabArg) {
     }
   }
   currentClickServer(p)
+  logger.info('currentClickServer called for files tab', { p })
 }
 
 const changeCompany = () => {
@@ -2593,7 +2617,10 @@ const onDockReady = (event: DockviewReadyEvent) => {
   })
 }
 const addDockPanel = (params) => {
-  if (!dockApi) return
+  if (!dockApi) {
+    logger.error('addDockPanel: dockApi is null')
+    return
+  }
 
   const id = 'panel_' + params.id
   let displayTitle
@@ -2605,21 +2632,30 @@ const addDockPanel = (params) => {
   } else if (params.title === 'mcpConfigEditor') {
     displayTitle = t('mcp.configEditor')
   } else if (params.content === 'securityConfigEditor' || params.content === 'keywordHighlightEditor') {
-    // For config editors, title is already set to file name in switch statement, use it directly
     displayTitle = params.title
   } else {
     displayTitle = t(`common.${params.title}`) === `common.${params.title}` ? params.title : t(`common.${params.title}`)
   }
-  dockApi.addPanel({
-    id,
-    component: 'TabsPanel',
-    title: displayTitle,
-    params: {
-      ...params,
-      closeCurrentPanel: (panelId?: string) => closeCurrentPanel(panelId || id),
-      createNewPanel: (isClone: boolean, direction: string, panelId?: string) => createNewPanel(isClone, direction as any, panelId || id)
+
+  try {
+    dockApi.addPanel({
+      id,
+      component: 'TabsPanel',
+      title: displayTitle,
+      params: {
+        ...params,
+        closeCurrentPanel: (panelId?: string) => closeCurrentPanel(panelId || id),
+        createNewPanel: (isClone: boolean, direction: string, panelId?: string) => createNewPanel(isClone, direction as any, panelId || id)
+      }
+    })
+
+    const newPanel = dockApi.getPanel(id)
+    if (newPanel) {
+      newPanel.api.setActive()
     }
-  })
+  } catch (error) {
+    logger.error('Failed to add dock panel', { error, id })
+  }
 }
 
 const contextMenu = ref({

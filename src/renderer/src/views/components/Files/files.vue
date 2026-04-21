@@ -1233,6 +1233,14 @@ onMounted(async () => {
 
   isTeamCheck(props.uuid)
 
+  // Debug logging
+  logger.info('Files onMounted', {
+    uuid: props.uuid,
+    basePath: props.basePath,
+    currentDirectoryInput: props.currentDirectoryInput,
+    combinedPath: props.basePath + props.currentDirectoryInput
+  })
+
   const c: any = props.cachedState
   if (c && typeof c.path === 'string') {
     try {

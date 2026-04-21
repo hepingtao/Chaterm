@@ -1671,7 +1671,8 @@ const connectSSH = async (_opts?: { isAutoReconnect?: boolean }) => {
           wakeupNewTab: props.connectData.wakeupNewTab === true,
           wakeupTabId: props.connectData.wakeupSource ? props.connectData.uuid : '',
           disablePoolReuse: props.connectData.disablePoolReuse === true || props.connectData.wakeupNewTab === true || isWakeupSession,
-          disablePostConnectProbe: skipAssetLookup
+          disablePostConnectProbe: skipAssetLookup,
+          sftpPort: config.jumpserverSftpPort || 2222
         }
         connData.needProxy = assetInfo?.need_proxy === 1 || false
         if (connData.needProxy) {

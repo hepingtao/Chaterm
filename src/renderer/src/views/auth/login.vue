@@ -396,7 +396,7 @@ const onAccountLogin = async () => {
     message.error(err?.response?.data?.message || err?.message || t('login.loginFailed'))
   } finally {
     loading.value = false
-}
+  }
 }
 
 const onEmailLogin = async () => {

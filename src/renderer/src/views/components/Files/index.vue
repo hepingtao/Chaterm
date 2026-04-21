@@ -535,6 +535,9 @@ type FsEntry = {
 
 const FS_CACHE = reactive(new Map<string, FsEntry>())
 
+// Store JumpServer SFTP connection info for resolving correct initial paths
+const jumpserverSftpInfo = reactive(new Map<string, { sshType: string; targetIp: string; targetHostname: string }>())
+
 const getCurrentActiveTerminalInfo = async () => {
   try {
     const assetInfo = await new Promise((resolve, reject) => {
@@ -723,7 +726,19 @@ const buildSftpConnDataForFiles = async (node: any, side: PanelSide) => {
     isOfficeDevice: false,
     connIdentToken: jmsToken,
     asset_type: connAssetType,
-    proxyCommand: node?.proxyCommand || ''
+    proxyCommand: node?.proxyCommand || '',
+    sftpPort: cfg?.jumpserverSftpPort || 2222
+  }
+
+  // Store JumpServer SFTP info for path resolution
+  logger.info('buildSftpConnDataForFiles: connSshType:', connSshType, 'connHostname:', connHostname)
+  if (connSshType === 'jumpserver') {
+    jumpserverSftpInfo.set(connId, {
+      sshType: connSshType,
+      targetIp: connHost,
+      targetHostname: connHostname
+    })
+    logger.info('jumpserverSftpInfo set:', connId, jumpserverSftpInfo.get(connId))
   }
 
   connData.needProxy = assetInfo?.need_proxy === 1 || false
@@ -1438,6 +1453,50 @@ const selectedLeftNode = computed(() => sessionMap.value.get(String(selectedLeft
 const selectedRightNode = computed(() => sessionMap.value.get(String(selectedRightUuid.value)))
 const selectedLeftRawId = computed(() => resolveRawId(String(selectedLeftNode.value?.rawId || selectedLeftUuid.value || '')))
 const selectedRightRawId = computed(() => resolveRawId(String(selectedRightNode.value?.rawId || selectedRightUuid.value || '')))
+
+const safeDecodeB64 = (s: string) => {
+  try {
+    return Base64Util.decode(s)
+  } catch {
+    return ''
+  }
+}
+
+const getBasePath = (value: string) => {
+  if (value.includes('local-team')) {
+    return ''
+  }
+  return ''
+}
+
+const resolvePaths = (value: string) => {
+  const isLocal = value.includes('localhost@127.0.0.1:local')
+  if (isLocal) {
+    return localHome.value || ''
+  }
+  const isJumpServer = value?.includes('local-team') && value?.includes('@')
+  if (isJumpServer) {
+    const [, rest = ''] = String(value || '').split('@')
+    const parts = rest.split(':')
+    const assetName = parts.length > 2 ? safeDecodeB64(parts[2]) || 'Unknown' : 'Unknown'
+    return '/'
+  }
+  const [username] = String(value || '').split('@')
+  return username === 'root' ? '/root' : `/home/${username}`
+}
+
+// Debug watcher for selectedLeftRawId
+watch(
+  selectedLeftRawId,
+  (newVal) => {
+    logger.info('selectedLeftRawId changed', {
+      rawId: newVal,
+      basePath: getBasePath(newVal),
+      resolvePaths: resolvePaths(newVal)
+    })
+  },
+  { immediate: true }
+)
 
 type AddConnTarget = 'left' | 'right'
 const addConnTargetSide = ref<AddConnTarget>('right')
@@ -2191,16 +2250,6 @@ const updateTreeData = (newData: object) => {
   treeData.value = objectToTreeData(newData)
 }
 
-const isLocalId = (value: string) => value.includes('localhost@127.0.0.1:local')
-
-const safeDecodeB64 = (s: string) => {
-  try {
-    return Base64Util.decode(s)
-  } catch {
-    return ''
-  }
-}
-
 const localHome = ref('')
 onMounted(async () => {
   try {
@@ -2209,25 +2258,6 @@ onMounted(async () => {
     localHome.value = ''
   }
 })
-
-const getBasePath = (value: string) => {
-  if (value.includes('local-team')) {
-    const [, rest = ''] = String(value || '').split('@')
-    const parts = rest.split(':')
-    const hostname = safeDecodeB64(parts[2] || '') || 'Local'
-    return `/Default/${hostname}`
-  }
-
-  return ''
-}
-const resolvePaths = (value: string) => {
-  if (isLocalId(value)) {
-    return localHome.value || ''
-  }
-
-  const [username] = String(value || '').split('@')
-  return username === 'root' ? '/root' : `/home/${username}`
-}
 
 // Define editor interface
 // Use interface-typed reactive array

@@ -23,6 +23,26 @@ import {
 import { JUMPSERVER_CONSTANTS } from './constants'
 const logger = createLogger('jumpserver')
 
+// Fix UTF-8 bytes mis-decoded as Latin-1 back to proper UTF-8 Chinese
+const fixUtf8Misdecoded = (text: string): string => {
+  if (!text || !/[^\x00-\x7F]/.test(text)) {
+    return text
+  }
+  try {
+    const bytes: number[] = []
+    for (const char of text) {
+      bytes.push(char.charCodeAt(0))
+    }
+    const fixed = Buffer.from(bytes).toString('utf8')
+    if (/[\u4e00-\u9fa5]/.test(fixed)) {
+      return fixed
+    }
+  } catch {
+    // Fallback
+  }
+  return text
+}
+
 const sendPasswordToStream = (stream: any, password: string, navigationPath: JumpServerNavigationPath, context: string = '') => {
   const actualPassword = password || ''
   navigationPath.needsPassword = !!actualPassword
@@ -86,7 +106,8 @@ export const setupJumpServerInteraction = (
       host: connectionInfo.host,
       port: connectionInfo.port || 22,
       username: connectionInfo.username,
-      navigationPath
+      navigationPath,
+      sftpPort: connectionInfo.sftpPort
     })
     jumpserverShellStreams.set(connectionId, stream)
     jumpserverConnectionStatus.set(connectionId, { isVerified: true })
@@ -122,6 +143,32 @@ export const setupJumpServerInteraction = (
             (value) => ({ status: 'fulfilled' as const, value }),
             (reason) => ({ status: 'rejected' as const, reason })
           )
+
+          // Get the asset username via whoami for SFTP compound username support.
+          // This is needed when JumpServer auto-connects with a single user account
+          // (no user selection prompt), so navigationPath.selectedUsername would otherwise be unset.
+          if (!navigationPath.selectedUsername) {
+            const whoamiResult = await executeCommandOnJumpServerExec(execStream, 'whoami').then(
+              (value) => ({ status: 'fulfilled' as const, value }),
+              (reason) => ({ status: 'rejected' as const, reason })
+            )
+            if (whoamiResult.status === 'fulfilled' && whoamiResult.value.success) {
+              const assetUsername = (whoamiResult.value.stdout || '').trim()
+              if (assetUsername) {
+                navigationPath.selectedUsername = assetUsername
+                // Update the stored connection data with the discovered username
+                const existingData = jumpserverConnections.get(connectionId)
+                if (existingData) {
+                  existingData.navigationPath = { ...existingData.navigationPath, selectedUsername: assetUsername }
+                }
+                logger.info('JumpServer discovered asset username via whoami', {
+                  event: 'jumpserver.asset.username.discovered',
+                  connectionId,
+                  assetUsername
+                })
+              }
+            }
+          }
 
           if (commandListResult.status === 'fulfilled' && commandListResult.value.success) {
             const stdout = commandListResult.value.stdout || ''
@@ -247,6 +294,11 @@ export const setupJumpServerInteraction = (
             connectionPhase = 'inputPassword'
 
             navigationPath.selectedUserId = selectedUserId
+            // Store the selected system username for SFTP compound username support
+            const selectedUser = users.find((u) => u.id === selectedUserId)
+            if (selectedUser) {
+              navigationPath.selectedUsername = selectedUser.username
+            }
 
             stream.write(selectedUserId.toString() + '\r')
           })
@@ -293,7 +345,7 @@ export const setupJumpServerInteraction = (
           connectionId,
           bufferSize: outputBuffer.length,
           lineCount: lines.length,
-          sampleLines: sampleLines.map((l) => l.substring(0, 80)),
+          sampleLines: sampleLines.map((l) => fixUtf8Misdecoded(l.substring(0, 80))),
           hasPassword: hasPasswordPrompt(outputBuffer),
           hasUserSelection: hasUserSelectionPrompt(outputBuffer),
           hasNoAssets: hasNoAssetsPrompt(outputBuffer),
@@ -368,7 +420,7 @@ export const setupJumpServerInteraction = (
           connectionId,
           bufferSize: outputBuffer.length,
           lineCount: lines.length,
-          sampleLines: sampleLines.map((l) => l.substring(0, 80)),
+          sampleLines: sampleLines.map((l) => fixUtf8Misdecoded(l.substring(0, 80))),
           hasPasswordError: hasPasswordError(outputBuffer),
           hasDirectReason: !!detectDirectConnectionReason(outputBuffer)
         })

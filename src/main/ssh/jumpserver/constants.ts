@@ -12,6 +12,7 @@ export interface ProxyConfig {
 
 export interface JumpServerNavigationPath {
   selectedUserId?: number
+  selectedUsername?: string
   needsPassword: boolean
   password?: string
 }
@@ -25,6 +26,7 @@ export interface JumpServerConnectionData {
   port: number
   username: string
   navigationPath: JumpServerNavigationPath
+  sftpPort?: number
 }
 
 export interface JumpServerMarkedCommand {
@@ -50,6 +52,7 @@ export interface JumpServerConnectionInfo {
   assetUuid?: string
   host: string
   port?: number
+  sftpPort?: number
   username: string
   password?: string
   privateKey?: string

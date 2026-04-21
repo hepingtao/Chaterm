@@ -410,6 +410,8 @@ export default {
     sshIdleTimeoutDescribe: 'Time before idle SSH connection is closed, 0 means no timeout',
     sshTerminalKeepalive: 'Terminal keepalive interval (minutes)',
     sshTerminalKeepaliveDescribe: 'Send keepalive data to prevent bastion host from closing idle sessions, 0 means disabled',
+    jumpserverSftpPort: 'JumpServer SFTP Port',
+    jumpserverSftpPortDescribe: 'SFTP service port of JumpServer bastion host, default 2222',
     terminal: 'Terminal',
     apiConfiguration: 'API Configuration',
     apiProvider: 'API Provider',

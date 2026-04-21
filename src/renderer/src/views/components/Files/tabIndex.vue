@@ -418,6 +418,14 @@ const { t } = useI18n()
 const emit = defineEmits(['currentClickServer', 'change-company', 'open-user-tab', 'files-open-sftp-by-asset-node'])
 const logger = createRendererLogger('files')
 
+// Define props
+const props = defineProps({
+  toggleSidebar: {
+    type: Function,
+    default: () => {}
+  }
+})
+
 const company = ref('personal_user_id')
 const selectedKeys = ref<string[]>([])
 const expandedKeys = ref<string[]>([])

@@ -179,6 +179,20 @@
           />
           <span class="setting-description">{{ $t('user.sshTerminalKeepaliveDescribe') }}</span>
         </a-form-item>
+        <a-form-item
+          :label="$t('user.jumpserverSftpPort')"
+          class="user_my-ant-form-item"
+        >
+          <a-input-number
+            v-model:value="userConfig.jumpserverSftpPort"
+            :bordered="false"
+            style="width: 20%"
+            :min="1"
+            :max="65535"
+            class="user_my-ant-form-item-content"
+          />
+          <span class="setting-description">{{ $t('user.jumpserverSftpPortDescribe') }}</span>
+        </a-form-item>
         <a-form-item class="user_my-ant-form-item">
           <div class="mouse-event-container">
             <div class="mouse-event-row">
@@ -458,6 +472,7 @@ const userConfig = ref<{
   sshKeepaliveInterval: number
   sshIdleTimeout: number
   sshTerminalKeepalive: number
+  jumpserverSftpPort: number
 }>({
   fontSize: 12,
   fontFamily: 'Menlo, Monaco, "Courier New", Consolas, Courier, monospace',
@@ -474,7 +489,8 @@ const userConfig = ref<{
   sshProxyConfigs: [],
   sshKeepaliveInterval: 10,
   sshIdleTimeout: 0,
-  sshTerminalKeepalive: 0
+  sshTerminalKeepalive: 0,
+  jumpserverSftpPort: 2222
 })
 
 const fontFamilyOptions = [
@@ -794,7 +810,8 @@ const saveConfig = async () => {
       sshProxyConfigs: userConfig.value.sshProxyConfigs,
       sshKeepaliveInterval: userConfig.value.sshKeepaliveInterval,
       sshIdleTimeout: userConfig.value.sshIdleTimeout,
-      sshTerminalKeepalive: userConfig.value.sshTerminalKeepalive
+      sshTerminalKeepalive: userConfig.value.sshTerminalKeepalive,
+      jumpserverSftpPort: userConfig.value.jumpserverSftpPort
     }
 
     await userConfigStore.saveConfig(configToStore as any)

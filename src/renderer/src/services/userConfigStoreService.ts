@@ -88,6 +88,7 @@ export interface UserConfig {
   sshKeepaliveInterval?: number
   sshIdleTimeout?: number
   sshTerminalKeepalive?: number
+  jumpserverSftpPort?: number
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -174,7 +175,8 @@ export function buildDefaultUserConfig(now: number = Date.now()): UserConfig {
     },
     sshKeepaliveInterval: 10,
     sshIdleTimeout: 0,
-    sshTerminalKeepalive: 0
+    sshTerminalKeepalive: 0,
+    jumpserverSftpPort: 2222
   }
 }
 

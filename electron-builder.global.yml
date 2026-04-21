@@ -3,6 +3,8 @@ extends: electron-builder.yml
 appId: ai.chaterm.global.app
 productName: Chaterm
 
+npmRebuild: false
+
 directories:
   output: dist/global
 

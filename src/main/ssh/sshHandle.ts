@@ -2773,9 +2773,74 @@ const getSystemInfo = async (id: string): Promise<CommandGenerationContext> => {
 }
 
 export const pickReconnectConnectionInfo = (connectionInfo: any) => {
-  if (!connectionInfo?.id) return null
+  if (!connectionInfo?.id) {
+    logger.warn('pickReconnectConnectionInfo: no id in connectionInfo', { event: 'sftp.pick.noId' })
+    return null
+  }
 
-  return {
+  // For JumpServer SFTP connections, we need to store the compound username
+  // (bastionUser@assetUser@assetIp) for reconnection. The regular username field
+  // is kept as-is for findReusableJumpServerSession matching.
+  let sftpCompoundUsername: string | undefined
+  if (connectionInfo.sshType === 'jumpserver' && connectionInfo.targetIp) {
+    const { assetUuid, host, port, username } = connectionInfo
+    const jumpserverUuid = assetUuid || connectionInfo.id
+
+    logger.info('pickReconnectConnectionInfo: processing JumpServer SFTP', {
+      event: 'sftp.pick.jumpserver',
+      jumpserverUuid,
+      hasAssetUuid: !!assetUuid,
+      hasTargetIp: !!connectionInfo.targetIp,
+      existingSessionCount: jumpserverConnections.size
+    })
+
+    // Find matching JumpServer session to get selectedUsername
+    for (const [, existingData] of jumpserverConnections.entries()) {
+      if (existingData.jumpserverUuid === jumpserverUuid && existingData.navigationPath?.selectedUsername) {
+        // Build compound username format: bastionUser@assetUser@assetIp
+        // Example: hepingtao@itouchtv@192.168.31.20
+        // Note: The host parameter in connectConfig already specifies the bastion host,
+        // so we don't need to include it in the username
+        sftpCompoundUsername = `${username}@${existingData.navigationPath.selectedUsername}@${connectionInfo.targetIp}`
+        logger.info('pickReconnectConnectionInfo: found JumpServer session', {
+          event: 'sftp.pick.jumpserver.found',
+          jumpserverUuid,
+          selectedUsername: existingData.navigationPath.selectedUsername,
+          compoundUsername: sftpCompoundUsername
+        })
+        break
+      }
+    }
+
+    // Fallback: try host + port + username match
+    if (!sftpCompoundUsername && host && port && username) {
+      for (const [, existingData] of jumpserverConnections.entries()) {
+        if (
+          existingData.host === host &&
+          existingData.port === (port || 22) &&
+          existingData.username === username &&
+          existingData.navigationPath?.selectedUsername
+        ) {
+          // Build compound username format: bastionUser@assetUser@assetIp
+          // Example: hepingtao@itouchtv@192.168.31.20
+          // Note: The host parameter in connectConfig already specifies the bastion host,
+          // so we don't need to include it in the username
+          sftpCompoundUsername = `${username}@${existingData.navigationPath.selectedUsername}@${connectionInfo.targetIp}`
+          logger.info('pickReconnectConnectionInfo: found JumpServer session via fallback', {
+            event: 'sftp.pick.jumpserver.fallback',
+            host,
+            port,
+            username,
+            selectedUsername: existingData.navigationPath.selectedUsername,
+            compoundUsername: sftpCompoundUsername
+          })
+          break
+        }
+      }
+    }
+  }
+
+  const result = {
     id: connectionInfo.id,
     sshType: connectionInfo.sshType,
     host: connectionInfo.host,
@@ -2791,8 +2856,21 @@ export const pickReconnectConnectionInfo = (connectionInfo: any) => {
     asset_type: connectionInfo.asset_type,
     assetUuid: connectionInfo.assetUuid,
     targetIp: connectionInfo.targetIp,
-    terminalType: connectionInfo.terminalType
+    terminalType: connectionInfo.terminalType,
+    sftpCompoundUsername
   }
+
+  logger.info('pickReconnectConnectionInfo: result', {
+    event: 'sftp.pick.result',
+    id: result.id,
+    sshType: result.sshType,
+    host: result.host,
+    targetIp: result.targetIp,
+    hasSftpCompoundUsername: !!result.sftpCompoundUsername,
+    sftpCompoundUsername: result.sftpCompoundUsername
+  })
+
+  return result
 }
 
 export const initSftpOnConnection = (conn: Client, connectionId: string, connectionInfo: any): Promise<void> => {

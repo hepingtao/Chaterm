@@ -404,6 +404,8 @@ export default {
     sshIdleTimeoutDescribe: 'SSH连接无操作自动断开的时间，0表示不超时',
     sshTerminalKeepalive: '终端保活间隔（分钟）',
     sshTerminalKeepaliveDescribe: '定期发送保活数据防止堡垒机断开空闲会话，0表示不发送',
+    jumpserverSftpPort: 'JumpServer SFTP 端口',
+    jumpserverSftpPortDescribe: 'JumpServer 堡垒机的 SFTP 服务端口，默认 2222',
     terminal: '终端',
     apiConfiguration: 'API 配置',
     apiProvider: 'API 提供商',
