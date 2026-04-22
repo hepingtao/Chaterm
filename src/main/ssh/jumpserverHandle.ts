@@ -17,7 +17,8 @@ export {
   jumpserverLastCommand,
   jumpserverInputBuffer,
   jumpserverConnectionStatus,
-  jumpserverSessionPids
+  jumpserverSessionPids,
+  jumpserverPendingData
 } from './jumpserver/state'
 
 export { navigateToJumpServerAsset, createJumpServerExecStream, executeCommandOnJumpServerExec } from './jumpserver/streamManager'

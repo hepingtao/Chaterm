@@ -7,7 +7,11 @@ if (process.platform !== 'win32') {
   process.exit(0)
 }
 
-const KNOWN_HASH = '643B7BACE9228642DEBF58469BAC31C7DAC5E67F591AED034CA39CDFF88E72E6'
+// Hash map keyed by Electron version — update when upgrading Electron
+const FFMPEG_HASH_MAP = {
+  '41.1.1': 'B64F08946914D8CE2BDAAEF5796ADCF8398EE5BA55223AFBB9F14072F4302B45',
+  '41.2.0': 'B64F08946914D8CE2BDAAEF5796ADCF8398EE5BA55223AFBB9F14072F4302B45'
+}
 
 const ffmpegPath = path.join(__dirname, '../node_modules/electron/dist/ffmpeg.dll')
 
@@ -25,9 +29,10 @@ try {
   hashSum.update(fileBuffer)
   const hex = hashSum.digest('hex').toUpperCase()
 
-  if (hex !== KNOWN_HASH) {
+  const knownHashes = Object.values(FFMPEG_HASH_MAP)
+  if (!knownHashes.includes(hex)) {
     console.error('❌ SECURITY ALERT: ffmpeg.dll hash mismatch!')
-    console.error(`Expected: ${KNOWN_HASH}`)
+    console.error(`Known hashes: ${JSON.stringify(FFMPEG_HASH_MAP)}`)
     console.error(`Actual:   ${hex}`)
     console.error('\nPOSSIBLE CAUSES:')
     console.error('1. Electron version changed (update the hash in scripts/verify-ffmpeg.js)')

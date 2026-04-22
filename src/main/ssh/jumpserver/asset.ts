@@ -5,6 +5,7 @@ import { Asset, parseJumpserverOutput } from './parser'
 
 import { getPackageInfo } from './connectionManager'
 import { LEGACY_ALGORITHMS } from '../algorithms'
+import { getSshKeepaliveConfig } from '../sshConfig'
 const logger = createLogger('jumpserver')
 
 // interface ServerInfo {
@@ -51,12 +52,14 @@ class JumpServerClient {
    */
   async connect(): Promise<void> {
     logger.info('Starting connection to JumpServer', { event: 'jumpserver.asset.connect' })
+    const keepaliveCfg = await getSshKeepaliveConfig()
     return new Promise((resolve, reject) => {
       const connectConfig: ConnectConfig = {
         host: this.config.host,
         port: this.config.port || 22,
         username: this.config.username,
-        keepaliveInterval: 10000,
+        keepaliveInterval: keepaliveCfg.keepaliveInterval,
+        keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
         readyTimeout: 180000,
         tryKeyboard: true, // Enable keyboard interactive authentication for 2FA
         algorithms: LEGACY_ALGORITHMS

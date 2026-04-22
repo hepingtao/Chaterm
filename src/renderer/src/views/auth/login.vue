@@ -378,7 +378,8 @@ const onAccountLogin = async () => {
         const api = window.api as any
         const dbResult = await api.initUserDatabase({ uid: (res as any).data.uid })
         if (!dbResult.success) {
-          message.error(t('login.databaseInitFailed'))
+          logger.error('Mobile login database init failed', { error: dbResult.error })
+          message.error(`${t('login.databaseInitFailed')}: ${dbResult.error || 'Unknown error'}`)
           return
         }
 
@@ -420,7 +421,8 @@ const onEmailLogin = async () => {
       const api = window.api as any
       const dbResult = await api.initUserDatabase({ uid: (res as any).data.uid })
       if (!dbResult.success) {
-        message.error(t('login.databaseInitFailed'))
+        logger.error('Email login database init failed', { error: dbResult.error })
+        message.error(`${t('login.databaseInitFailed')}: ${dbResult.error || 'Unknown error'}`)
         return
       }
 
@@ -495,7 +497,8 @@ const onMobileLogin = async () => {
         const api = window.api as any
         const dbResult = await api.initUserDatabase({ uid: (res as any).data.uid })
         if (!dbResult.success) {
-          message.error(t('login.databaseInitFailed'))
+          logger.error('Mobile login database init failed', { error: dbResult.error })
+          message.error(`${t('login.databaseInitFailed')}: ${dbResult.error || 'Unknown error'}`)
           return
         }
 

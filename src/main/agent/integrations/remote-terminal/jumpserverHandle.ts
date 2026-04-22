@@ -3,11 +3,13 @@ import { ipcMain } from 'electron'
 import net from 'net'
 import tls from 'tls'
 import { getUserConfigFromRenderer } from '../../../index'
+import { getSshKeepaliveConfig } from '../../../ssh/sshConfig'
 import { createProxySocket } from '../../../ssh/proxy'
 import { parseJumpServerUsers, hasUserSelectionPrompt } from '../../../ssh/jumpserver/parser'
 import { hasNoAssetsPrompt, createNoAssetsError } from '../../../ssh/jumpserver/navigator'
 import { handleJumpServerUserSelectionWithWindow } from '../../../ssh/jumpserver/userSelection'
 import { jumpserverConnections as globalJumpserverConnections } from '../../../ssh/jumpserverHandle'
+import { jumpserverPendingData } from '../../../ssh/jumpserver/state'
 const logger = createLogger('remote-terminal')
 
 // Store JumpServer connections
@@ -107,12 +109,15 @@ const initializeJumpServerShell = (
       source: connectionSource,
       jumpserverUuid
     })
+    // Initialize pending data buffer to capture data between connection success and shell start
+    jumpserverPendingData.set(connectionId, [])
 
     resolve({ status: 'connected', message: 'Connection successful' })
   }
 
   const hasPasswordPrompt = (text: string): boolean => {
-    return text.includes('Password:') || text.includes('password:')
+    const lowerText = text.toLowerCase()
+    return lowerText.includes('password:') || lowerText.includes('passphrase:') || lowerText.includes('密码:') || lowerText.includes('口令:')
   }
 
   const hasPasswordError = (text: string): boolean => {
@@ -122,7 +127,7 @@ const initializeJumpServerShell = (
   const detectDirectConnectionReason = (text: string): string | null => {
     if (!text) return null
 
-    const indicators = ['Connecting to', 'Last login:', 'Last failed login:']
+    const indicators = ['Connecting to', '连接到', 'Last login:', 'Last failed login:']
     for (const indicator of indicators) {
       if (text.includes(indicator)) {
         logger.debug('Detected success indicator', { event: 'remote-terminal.jumpserver.indicator', connectionId, indicator: indicator.trim() })
@@ -184,6 +189,12 @@ const initializeJumpServerShell = (
 
       // Check if user selection is required
       if (hasUserSelectionPrompt(outputBuffer)) {
+        // Wait for ID> prompt to ensure all user rows have been received
+        // SSH data arrives in chunks — the table may be incomplete on first detection
+        if (!outputBuffer.includes('ID>')) {
+          return
+        }
+
         logger.debug('Multi-user prompt detected', { event: 'remote-terminal.jumpserver.user.prompt', connectionId })
         connectionPhase = 'selectUser'
         const users = parseJumpServerUsers(outputBuffer)
@@ -298,6 +309,15 @@ const initializeJumpServerShell = (
         handleConnectionSuccess(`After password verification - ${reason}`)
       }
     }
+
+    // Buffer data in connected phase to prevent loss between connection success and shell start
+    if (connectionPhase === 'connected') {
+      const pending = jumpserverPendingData.get(connectionId)
+      if (pending) {
+        pending.push(data)
+      }
+      return
+    }
   })
 
   stream.stderr.on('data', (data: Buffer) => {
@@ -320,6 +340,7 @@ const initializeJumpServerShell = (
     jumpserverConnectionStatus.delete(connectionId)
     jumpserverLastCommand.delete(connectionId)
     jumpserverInputBuffer.delete(connectionId)
+    jumpserverPendingData.delete(connectionId)
     if (connectionPhase !== 'connected' && !connectionFailed) {
       reject(new Error('Connection closed before completion'))
     }
@@ -370,6 +391,8 @@ export const handleJumpServerConnection = async (connectionInfo: {
       sock = await createProxySocket(proxyConfig, connectionInfo.host || '', connectionInfo.port || 22)
     }
   }
+
+  const keepaliveCfg = await getSshKeepaliveConfig()
 
   return new Promise((resolve, reject) => {
     if (jumpserverConnections.has(connectionId)) {
@@ -440,6 +463,7 @@ export const handleJumpServerConnection = async (connectionInfo: {
       port: number
       username: string
       keepaliveInterval: number
+      keepaliveCountMax?: number
       readyTimeout: number
       tryKeyboard: boolean
       privateKey?: Buffer
@@ -451,7 +475,8 @@ export const handleJumpServerConnection = async (connectionInfo: {
       host: connectionInfo.host,
       port: connectionInfo.port || 22,
       username: connectionInfo.username,
-      keepaliveInterval: 10000,
+      keepaliveInterval: keepaliveCfg.keepaliveInterval,
+      keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
       readyTimeout: 30000,
       ident: connectionInfo.ident,
       tryKeyboard: true // Enable keyboard interactive authentication for 2FA

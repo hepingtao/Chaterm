@@ -223,6 +223,57 @@ ID>
       expect(users).toHaveLength(1)
       expect(users[0].name).toBe('admin')
     })
+
+    it('should parse multiple users even with empty lines between rows', () => {
+      const outputWithEmptyLines = `
+  ID | NAME          | USERNAME     
+-----+---------------+--------------
+  1  | admin         | admin        
+
+  2  | developer     | dev_user     
+
+  3  | operator      | ops_user     
+ID> 
+`
+      const users = parseJumpServerUsers(outputWithEmptyLines)
+
+      expect(users).toHaveLength(3)
+      expect(users[0].name).toBe('admin')
+      expect(users[1].name).toBe('developer')
+      expect(users[2].name).toBe('operator')
+    })
+
+    it('should parse users with 4+ columns (extra columns ignored)', () => {
+      const outputWith4Cols = `
+  ID | NAME          | USERNAME     | ROLE      
+----+---------------+--------------+-----------
+  1  | admin         | admin        | superuser
+  2  | developer     | dev_user     | developer
+ID> 
+`
+      const users = parseJumpServerUsers(outputWith4Cols)
+
+      expect(users).toHaveLength(2)
+      expect(users[0].name).toBe('admin')
+      expect(users[0].username).toBe('admin')
+      expect(users[1].name).toBe('developer')
+      expect(users[1].username).toBe('dev_user')
+    })
+
+    it('should stop after 2+ consecutive empty lines', () => {
+      const outputWithDoubleEmpty = `
+  ID | NAME          | USERNAME     
+-----+---------------+--------------
+  1  | admin         | admin        
+
+
+  2  | should_not_appear | hidden   
+`
+      const users = parseJumpServerUsers(outputWithDoubleEmpty)
+
+      expect(users).toHaveLength(1)
+      expect(users[0].name).toBe('admin')
+    })
   })
 
   describe('hasUserSelectionPrompt', () => {
@@ -247,13 +298,13 @@ Select account ID to login:
       expect(hasUserSelectionPrompt(fullPromptOutput)).toBe(true)
     })
 
-    it('should return false when account ID is missing', () => {
+    it('should detect user selection from table structure even without account ID text', () => {
       const noAccountIdOutput = `
   ID | NAME          | USERNAME     
 -----+---------------+--------------
   1  | admin         | admin        
 `
-      expect(hasUserSelectionPrompt(noAccountIdOutput)).toBe(false)
+      expect(hasUserSelectionPrompt(noAccountIdOutput)).toBe(true)
     })
 
     it('should return false when header is missing', () => {
@@ -271,8 +322,23 @@ Some other content
     it('should return false when only partial keywords exist', () => {
       // only account ID without header
       expect(hasUserSelectionPrompt('account ID')).toBe(false)
-      // only ID and NAME without account ID
+      // only ID and NAME without account ID and no table structure
       expect(hasUserSelectionPrompt('ID | NAME')).toBe(false)
+    })
+
+    it('should detect ID> prompt as user selection', () => {
+      expect(hasUserSelectionPrompt('Some output\nID> ')).toBe(true)
+    })
+
+    it('should detect user selection from garbled Chinese table structure', () => {
+      // Simulates garbled UTF-8 decoded as Latin1 (common encoding issue)
+      const garbledOutput = `
+  ID    | 鍚嶇О                                        | 鐢ㄦ埛鍚?                 
+--------+---------------------------------------------+-------------------------
+  1     | 娴嬭瘯linux                                  | itouchtv                
+  2     | 娴嬭瘯linux瓒呯                              | root                    
+ID> `
+      expect(hasUserSelectionPrompt(garbledOutput)).toBe(true)
     })
   })
 })

@@ -12,6 +12,7 @@ export interface ProxyConfig {
 
 export interface JumpServerNavigationPath {
   selectedUserId?: number
+  selectedUsername?: string
   needsPassword: boolean
   password?: string
 }
@@ -21,7 +22,11 @@ export interface JumpServerConnectionData {
   stream: any
   jumpserverUuid: string
   targetIp: string
+  host: string
+  port: number
+  username: string
   navigationPath: JumpServerNavigationPath
+  sftpPort?: number
 }
 
 export interface JumpServerMarkedCommand {
@@ -47,6 +52,7 @@ export interface JumpServerConnectionInfo {
   assetUuid?: string
   host: string
   port?: number
+  sftpPort?: number
   username: string
   password?: string
   privateKey?: string
@@ -63,7 +69,8 @@ export const JUMPSERVER_CONSTANTS = {
   DATA_COLLECTION_DELAY: 50,
   COMMAND_EXEC_TIMEOUT: 30000,
   NAVIGATION_TIMEOUT: 60000,
-  DATA_SETTLE_DELAY: 100
+  DATA_SETTLE_DELAY: 100,
+  INTERACTION_TIMEOUT: 120000
 } as const
 
 export const MAX_JUMPSERVER_MFA_ATTEMPTS = 3

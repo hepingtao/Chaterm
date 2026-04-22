@@ -1,33 +1,26 @@
 <template>
   <div class="tabs-panel">
     <template v-if="localTab && localTab.id !== ''">
-      <draggable
-        v-model="localTab"
+      <div
         class="tabs-bar"
         :class="{ 'transparent-bg': isTransparent }"
-        :animation="150"
-        handle=".tab-title"
-        item-key="id"
-        :group="{ name: 'tabs', pull: true, put: true }"
       >
-        <template #item="{ element: tab }">
-          <div
-            :class="{ 'tab-item': true, active: isActive }"
-            @contextmenu.prevent="showContextMenu($event, tab)"
+        <div
+          :class="{ 'tab-item': true, active: isActive }"
+          @contextmenu.prevent="showContextMenu($event, localTab)"
+        >
+          <span
+            class="tab-title"
+            @click="emit('change-tab', localTab.id)"
+            >{{ localTab.ip ? localTab.title : $t(`common.${localTab.title}`) }}</span
           >
-            <span
-              class="tab-title"
-              @click="emit('change-tab', tab.id)"
-              >{{ tab.ip ? tab.title : $t(`common.${tab.title}`) }}</span
-            >
-            <button
-              class="close-btn"
-              @click.stop="emit('close-tab', tab.id)"
-              >&times;</button
-            >
-          </div>
-        </template>
-      </draggable>
+          <button
+            class="close-btn"
+            @click.stop="emit('close-tab', localTab.id)"
+            >&times;</button
+          >
+        </div>
+      </div>
       <div
         class="tabs-content"
         :class="{ 'transparent-bg': isTransparent }"
@@ -154,7 +147,10 @@ const emit = defineEmits<{
   'close-tab': [tabId: string]
 }>()
 
-const localTab = computed(() => props.params.params as TabItem)
+const localTab = computed(() => {
+  const tab = props.params?.params as TabItem | undefined
+  return tab
+})
 const configStore = userConfigStore()
 const isTransparent = computed(() => !!configStore.getUserConfig.background.image)
 

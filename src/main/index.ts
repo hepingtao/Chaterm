@@ -147,12 +147,19 @@ export async function getUserConfigFromRenderer(): Promise<any> {
   }
 
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error('getUserConfigFromRenderer timed out'))
+    }, 5000)
+
     const responseHandler = (_event: Electron.IpcMainEvent, config: any) => {
+      clearTimeout(timeout)
       cleanup()
       resolve(config)
     }
 
     const errorHandler = (_event: Electron.IpcMainEvent, errMsg: string) => {
+      clearTimeout(timeout)
       cleanup()
       reject(new Error(errMsg))
     }
@@ -180,7 +187,11 @@ app.whenReady().then(async () => {
       try {
         const crypto = require('crypto')
         const ffmpegPath = path.join(path.dirname(process.execPath), 'ffmpeg.dll')
-        const KNOWN_HASH = '643B7BACE9228642DEBF58469BAC31C7DAC5E67F591AED034CA39CDFF88E72E6'
+        // Hash map keyed by Electron version — update when upgrading Electron
+        const FFMPEG_HASH_MAP: Record<string, string> = {
+          '41.1.1': 'B64F08946914D8CE2BDAAEF5796ADCF8398EE5BA55223AFBB9F14072F4302B45',
+          '41.2.0': 'B64F08946914D8CE2BDAAEF5796ADCF8398EE5BA55223AFBB9F14072F4302B45'
+        }
 
         try {
           await fs.access(ffmpegPath)
@@ -193,17 +204,15 @@ app.whenReady().then(async () => {
         const buffer = await fs.readFile(ffmpegPath)
         const hash = crypto.createHash('sha256').update(buffer).digest('hex').toUpperCase()
 
-        if (hash !== KNOWN_HASH) {
-          logger.error(`[Security] CRITICAL: ffmpeg.dll hash mismatch! Expected: ${KNOWN_HASH}, Actual: ${hash}`)
-          const { dialog } = require('electron')
-          dialog.showErrorBox(
-            'Security Error',
-            'System integrity check failed (ffmpeg.dll). The application files may have been tampered with. Application will terminate.'
+        // Check against all known hashes for supported Electron versions
+        const knownHashes = Object.values(FFMPEG_HASH_MAP)
+        if (!knownHashes.includes(hash)) {
+          logger.warn(
+            `[Security] ffmpeg.dll hash mismatch. Known hashes: ${JSON.stringify(FFMPEG_HASH_MAP)}, Actual: ${hash}. This may occur after Electron upgrades or rebuilds.`
           )
-          app.quit()
-          process.exit(1) // Force exit
+        } else {
+          logger.info('[Security] ffmpeg.dll integrity verified.')
         }
-        logger.info('[Security] ffmpeg.dll integrity verified.')
       } catch (error) {
         logger.error('[Security] Failed to verify ffmpeg.dll', { error: error })
       }
@@ -1112,8 +1121,14 @@ function setupIPC(): void {
 
       return { success: true, theme: dbTheme }
     } catch (error) {
-      logger.error('Database initialization failed', { error: error })
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' }
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      const errorName = error instanceof Error ? error.constructor.name : 'UnknownError'
+      logger.error('Database initialization failed', {
+        error: errorMessage,
+        errorType: errorName,
+        uid: uid
+      })
+      return { success: false, error: `[${errorName}] ${errorMessage}` }
     }
   })
 

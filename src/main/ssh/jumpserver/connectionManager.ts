@@ -4,7 +4,8 @@ import net from 'net'
 import tls from 'tls'
 import type { Readable } from 'stream'
 import { createProxySocket } from '../proxy'
-import { attemptSecondaryConnection, keyboardInteractiveOpts, sftpConnections, connectionStatus } from '../sshHandle'
+import { keyboardInteractiveOpts, sftpConnections, connectionStatus, pickReconnectConnectionInfo } from '../sshHandle'
+import { sftpConnectionInfoMap } from '../sftpTransfer'
 import { LEGACY_ALGORITHMS } from '../algorithms'
 import { jumpserverConnections, jumpserverShellStreams, jumpserverMarkedCommands, jumpserverInputBuffer } from './state'
 import type { JumpServerConnectionInfo } from './constants'
@@ -12,6 +13,7 @@ import { MAX_JUMPSERVER_MFA_ATTEMPTS } from './constants'
 import { setupJumpServerInteraction } from './interaction'
 import { handleJumpServerKeyboardInteractive } from './mfa'
 import { buildErrorResponse } from './errorUtils'
+import { getSshKeepaliveConfig } from '../sshConfig'
 import path from 'path'
 import fs from 'fs'
 const logger = createLogger('jumpserver')
@@ -43,7 +45,8 @@ export function getPackageInfo(
 }
 
 // Establish SFTP
-const sftpAsync = (conn, connectionId) => {
+const sftpAsync = (conn, connectionId, connectionInfo?: JumpServerConnectionInfo) => {
+  logger.info('sftpAsync called', { event: 'jumpserver.sftp.async', connectionId, hasConnectionInfo: !!connectionInfo })
   return new Promise<void>((resolve) => {
     conn.sftp((err, sftp) => {
       if (err || !sftp) {
@@ -68,6 +71,19 @@ const sftpAsync = (conn, connectionId) => {
             logger.debug('SFTP check success', { event: 'jumpserver.sftp.success', connectionId })
             sftpConnections.set(connectionId, { isSuccess: true, sftp: sftp })
             connectionStatus.set(connectionId, { sftpAvailable: true })
+            // Cache connection info for future reconnects
+            if (connectionInfo) {
+              const picked = pickReconnectConnectionInfo(connectionInfo)
+              logger.info('JumpServer SFTP pickReconnectConnectionInfo result', { event: 'jumpserver.sftp.pick', connectionId, hasPicked: !!picked })
+              if (picked) {
+                sftpConnectionInfoMap.set(String(connectionId), picked)
+                logger.info('JumpServer SFTP cached connection info', { event: 'jumpserver.sftp.cached', connectionId })
+              } else {
+                logger.warn('JumpServer SFTP pickReconnectConnectionInfo returned null', { event: 'jumpserver.sftp.pick.null', connectionId })
+              }
+            } else {
+              logger.warn('JumpServer SFTP no connectionInfo provided', { event: 'jumpserver.sftp.noinfo', connectionId })
+            }
           }
           resolve()
         })
@@ -107,42 +123,87 @@ const attemptJumpServerConnection = async (
   const identToken = connectionInfo.connIdentToken ? `_t=${connectionInfo.connIdentToken}` : ''
   const packageInfo = getPackageInfo()
   const ident = `${packageInfo.name}_${packageInfo.version}` + identToken
+  const keepaliveCfg = await getSshKeepaliveConfig()
 
   return new Promise((resolve, reject) => {
     const jumpserverUuid = connectionInfo.assetUuid || connectionId
 
+    let reuseCandidate: { id: string; data: typeof jumpserverConnections extends Map<string, infer V> ? V : never } | null = null
+
+    // First pass: match by jumpserverUuid (exact UUID-based reuse)
     if (connectionInfo.assetUuid) {
-      for (const [, existingData] of jumpserverConnections.entries()) {
+      for (const [existingId, existingData] of jumpserverConnections.entries()) {
         if (existingData.jumpserverUuid === jumpserverUuid) {
-          sendStatusUpdate('Reusing existing connection, creating new shell session...', 'info', 'ssh.jumpserver.reuseConnection')
-
-          const conn = existingData.conn
-          conn.shell({ term: connectionInfo.terminalType || 'vt100' }, (err, newStream) => {
-            if (err) {
-              logger.error('Failed to create shell with reused connection', {
-                event: 'jumpserver.shell.reuse.error',
-                connectionId,
-                error: err.message
-              })
-              reject(new Error(`Failed to create shell with reused connection: ${err.message}`))
-              return
-            }
-            // Establish SFTP connection
-            // TODO: Reuse conn implementation for JumpServer, other bastion hosts may need new conn
-            try {
-              sftpAsync(conn, connectionId)
-            } catch (e) {
-              connectionStatus.set(connectionId, {
-                sftpAvailable: false,
-                sftpError: 'SFTP connection failed'
-              })
-            }
-            setupJumpServerInteraction(newStream, connectionInfo, connectionId, jumpserverUuid, conn, event, sendStatusUpdate, resolve, reject)
-          })
-
-          return
+          reuseCandidate = { id: existingId, data: existingData }
+          break
         }
       }
+    }
+
+    // Second pass: fallback match by host + port + username (session sharing across entry points)
+    // When UUID doesn't match (e.g., connecting from different UI entry points), we can still
+    // reuse the session if the bastion host credentials are the same
+    if (!reuseCandidate) {
+      for (const [existingId, existingData] of jumpserverConnections.entries()) {
+        if (
+          existingData.host === connectionInfo.host &&
+          existingData.port === (connectionInfo.port || 22) &&
+          existingData.username === connectionInfo.username
+        ) {
+          logger.info('JumpServer session reuse by host+port+username fallback', {
+            event: 'jumpserver.reuse.fallback',
+            connectionId,
+            existingId,
+            host: connectionInfo.host,
+            port: connectionInfo.port || 22,
+            hasPassword: !!connectionInfo.password,
+            hasPrivateKey: !!connectionInfo.privateKey
+          })
+          reuseCandidate = { id: existingId, data: existingData }
+          break
+        }
+      }
+    }
+
+    if (reuseCandidate) {
+      const existingData = reuseCandidate.data
+      sendStatusUpdate('Reusing existing connection, creating new shell session...', 'info', 'ssh.jumpserver.reuseConnection')
+
+      const conn = existingData.conn
+      const inheritedNavigationPath = existingData.navigationPath
+      conn.shell({ term: connectionInfo.terminalType || 'vt100' }, (err, newStream) => {
+        if (err) {
+          logger.error('Failed to create shell with reused connection', {
+            event: 'jumpserver.shell.reuse.error',
+            connectionId,
+            error: err.message
+          })
+          reject(new Error(`Failed to create shell with reused connection: ${err.message}`))
+          return
+        }
+        // Initialize SFTP on the reused bastion connection so the file manager
+        // can find it. Fire-and-forget — SFTP availability is checked later.
+        sftpAsync(conn, connectionId, connectionInfo).catch(() => {
+          connectionStatus.set(connectionId, {
+            sftpAvailable: false,
+            sftpError: 'SFTP initialization failed on reused bastion connection'
+          })
+        })
+        setupJumpServerInteraction(
+          newStream,
+          connectionInfo,
+          connectionId,
+          jumpserverUuid,
+          conn,
+          event,
+          sendStatusUpdate,
+          resolve,
+          reject,
+          inheritedNavigationPath
+        )
+      })
+
+      return
     }
 
     sendStatusUpdate('Connecting to remote bastion host...', 'info', 'ssh.jumpserver.connectingToBastionHost')
@@ -154,6 +215,7 @@ const attemptJumpServerConnection = async (
       port: number
       username: string
       keepaliveInterval: number
+      keepaliveCountMax?: number
       readyTimeout: number
       tryKeyboard: boolean
       privateKey?: Buffer
@@ -166,7 +228,8 @@ const attemptJumpServerConnection = async (
       host: connectionInfo.host,
       port: connectionInfo.port || 22,
       username: connectionInfo.username,
-      keepaliveInterval: 10000,
+      keepaliveInterval: keepaliveCfg.keepaliveInterval,
+      keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
       readyTimeout: 180000,
       tryKeyboard: true,
       ident: ident,
@@ -221,7 +284,14 @@ const attemptJumpServerConnection = async (
     conn.on('ready', () => {
       logger.info('JumpServer connection established, creating shell', { event: 'jumpserver.connect', connectionId })
       sendStatusUpdate('Successfully connected to bastion host, please wait...', 'success', 'ssh.jumpserver.connectedToBastionHost')
-      attemptSecondaryConnection(event, connectionInfo, conn)
+
+      // Do NOT call attemptSecondaryConnection for JumpServer connections.
+      // attemptSecondaryConnection runs conn.exec() on the bastion host to check
+      // command list and sudo, which is wrong for JumpServer because:
+      // 1. The bastion's shell is an interactive menu, not a Linux shell
+      // 2. exec() commands interfere with the interactive shell() session
+      // 3. Command list and sudo checks are handled later via exec stream
+      //    in interaction.ts handleConnectionSuccess -> createJumpServerExecStream
 
       if (event && keyboardInteractiveOpts.has(connectionId)) {
         logger.info('MFA verification success', { event: 'jumpserver.mfa.success', connectionId })
@@ -236,6 +306,17 @@ const attemptJumpServerConnection = async (
           reject(new Error(`Failed to create shell: ${err.message}`))
           return
         }
+
+        // Initialize SFTP on the bastion connection so the file manager can
+        // reuse it. This is fire-and-forget — SFTP availability is checked
+        // independently when the file manager requests an SFTP session.
+        sftpAsync(conn, connectionId, connectionInfo).catch(() => {
+          // Non-fatal: SFTP may not be supported on this bastion host.
+          connectionStatus.set(connectionId, {
+            sftpAvailable: false,
+            sftpError: 'SFTP initialization failed on bastion connection'
+          })
+        })
 
         setupJumpServerInteraction(stream, connectionInfo, connectionId, jumpserverUuid, conn, event, sendStatusUpdate, resolve, reject)
       })

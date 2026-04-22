@@ -2,6 +2,7 @@ import { ipcMain, app } from 'electron'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { getSftpConnection, getUniqueRemoteName, pickReconnectConnectionInfo } from './sshHandle'
+import { getSshKeepaliveConfig } from './sshConfig'
 import nodeFs from 'node:fs/promises'
 import fs from 'fs'
 import type { Client } from 'ssh2'
@@ -2263,6 +2264,7 @@ export const connectSftpNew = async (event: any, connectionInfo: any, options?: 
   const identToken = connIdentToken ? `_t=${connIdentToken}` : ''
   const ident = `${packageInfo.name}_${packageInfo.version}${identToken}`
   const algorithms = getAlgorithmsByAssetType(asset_type)
+  const keepaliveCfg = await getSshKeepaliveConfig()
 
   const requestId = String(connectionInfo?.sftpRequestId || `${Date.now()}_${Math.random().toString(16).slice(2)}`)
   markPending(id, requestId, conn as any)
@@ -2272,7 +2274,8 @@ export const connectSftpNew = async (event: any, connectionInfo: any, options?: 
     host,
     port: port || 22,
     username,
-    keepaliveInterval: 10000,
+    keepaliveInterval: keepaliveCfg.keepaliveInterval,
+    keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
     readyTimeout: KeyboardInteractiveTimeout,
     tryKeyboard: true,
     ident,
@@ -2386,9 +2389,152 @@ function openShell(conn: any, connectionInfo: any) {
 }
 
 const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, options?: { skipReusableConn?: Client }): Promise<SftpConnectResult> => {
-  const { id, host, port, username, password, privateKey, passphrase, needProxy, proxyConfig, proxyCommand, connIdentToken, asset_type } =
-    connectionInfo
-  // Try a live JumpServer connect-side session first, then fall back to an SFTP-owned one.
+  const {
+    id,
+    host,
+    port,
+    username,
+    password,
+    privateKey,
+    passphrase,
+    needProxy,
+    proxyConfig,
+    proxyCommand,
+    connIdentToken,
+    asset_type,
+    targetIp,
+    sftpCompoundUsername
+  } = connectionInfo
+
+  // If we have sftpCompoundUsername from pickReconnectConnectionInfo, use it to directly access target asset
+  if (sftpCompoundUsername && targetIp) {
+    sftpLogger.info('JumpServer SFTP using sftpCompoundUsername for direct asset access', {
+      event: 'sftp.jumpserver.compound.username',
+      connectionId: id,
+      sftpCompoundUsername,
+      targetIp
+    })
+
+    const conn = new SSHClient()
+    const packageInfo = getPackageInfo()
+    const identToken = connIdentToken ? `_t=${connIdentToken}` : ''
+    const ident = `${packageInfo.name}_${packageInfo.version}${identToken}`
+    const algorithms = getAlgorithmsByAssetType(asset_type)
+    const keepaliveCfg = await getSshKeepaliveConfig()
+    const requestId = String(connectionInfo?.sftpRequestId || `${Date.now()}_${Math.random().toString(16).slice(2)}`)
+    markPending(id, requestId, conn as any)
+
+    const connectConfig: any = {
+      host,
+      port: port || 22,
+      username: sftpCompoundUsername,
+      keepaliveInterval: keepaliveCfg.keepaliveInterval,
+      keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
+      readyTimeout: 180000,
+      tryKeyboard: true,
+      ident,
+      algorithms
+    }
+
+    if (privateKey) {
+      try {
+        connectConfig.privateKey = Buffer.isBuffer(privateKey) ? privateKey : Buffer.from(privateKey)
+        if (passphrase) connectConfig.passphrase = passphrase
+      } catch (err: any) {
+        clearPending(id)
+        return { status: 'error', message: `Private key format error: ${err?.message || String(err)}` }
+      }
+    } else if (password) {
+      connectConfig.password = password
+    } else {
+      clearPending(id)
+      return { status: 'error', message: 'Missing authentication info: private key or password required' }
+    }
+
+    try {
+      if (proxyCommand) {
+        connectConfig.sock = await createProxyCommandSocket(proxyCommand, host, port || 22)
+        delete connectConfig.host
+        delete connectConfig.port
+      } else if (needProxy) {
+        connectConfig.sock = await createProxySocket(proxyConfig, host, port || 22)
+      }
+    } catch (err: any) {
+      clearPending(id)
+      return { status: 'error', message: `Failed to establish a transport layer tunnel: ${err?.message || String(err)}` }
+    }
+
+    return new Promise((resolve) => {
+      let settled = false
+      const safeResolve = (data) => {
+        if (settled) return
+        settled = true
+        resolve(data)
+      }
+      const cleanup = async () => {
+        sftpOwnedJumpServerConnections.delete(id)
+        sftpOwnedJumpServerStreams.delete(id)
+        await markSftpDead(id, 'cleanup')
+      }
+
+      conn.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
+        ;(async () => {
+          try {
+            const p = getPending(id)
+            if (p?.cancelled) {
+              conn.end()
+              return safeResolve({ status: 'cancelled', message: 'cancelled' })
+            }
+            await handleRequestKeyboardInteractive(_event, id, prompts, finish)
+          } catch (e: any) {
+            conn.end()
+            clearPending(id)
+            safeResolve({ status: 'error', message: e?.message || String(e) })
+          }
+        })()
+      })
+
+      conn.on('ready', async () => {
+        sftpOwnedJumpServerConnections.set(id, conn)
+        try {
+          await initSftpOnConnection(conn, id)
+          const p = getPending(id)
+          if (p?.cancelled) {
+            conn.end()
+            clearPending(id)
+            return safeResolve({ status: 'cancelled', message: 'cancelled' })
+          }
+          clearPending(id)
+          const st = connectionStatus.get(id) as any
+          if (st?.sftpAvailable) {
+            safeResolve({ status: 'connected', message: 'SFTP ready (JumpServer compound username - target asset)' })
+          } else {
+            cleanup()
+            safeResolve({ status: 'error', message: st?.sftpError || 'SFTP init failed' })
+          }
+        } catch (e: any) {
+          cleanup()
+          safeResolve({ status: 'error', message: e?.message || String(e) })
+        }
+      })
+
+      conn.on('error', (err: any) => {
+        logger.error('SFTP compound username connection error', { event: 'sftp.connect.error', error: err?.message || String(err) })
+        cleanup()
+        clearPending(id)
+        safeResolve({ status: 'error', message: err?.message || 'Connection failed' })
+      })
+
+      conn.on('close', () => {
+        cleanup()
+      })
+
+      conn.connect(connectConfig)
+    })
+  }
+
+  // No sftpCompoundUsername available - fall back to using reusable JumpServer connection
+  // This will only give access to the bastion filesystem
   const reusableConn = findReusableJumpServerConn(connectionInfo, options?.skipReusableConn)
   if (reusableConn) {
     const requestId = String(connectionInfo?.sftpRequestId || `${Date.now()}_${Math.random().toString(16).slice(2)}`)
@@ -2405,7 +2551,7 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
     clearPending(id)
     const st = connectionStatus.get(id) as any
     if (st?.sftpAvailable) {
-      return { status: 'connected', message: 'SFTP ready (reused JumpServer connection)' }
+      return { status: 'connected', message: 'SFTP ready (reused JumpServer connection - bastion filesystem)' }
     }
   }
 
@@ -2415,6 +2561,7 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
   const identToken = connIdentToken ? `_t=${connIdentToken}` : ''
   const ident = `${packageInfo.name}_${packageInfo.version}${identToken}`
   const algorithms = getAlgorithmsByAssetType(asset_type)
+  const keepaliveCfg = await getSshKeepaliveConfig()
 
   const requestId = String(connectionInfo?.sftpRequestId || `${Date.now()}_${Math.random().toString(16).slice(2)}`)
   markPending(id, requestId, conn as any)
@@ -2423,7 +2570,8 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
     host,
     port: port || 22,
     username,
-    keepaliveInterval: 10000,
+    keepaliveInterval: keepaliveCfg.keepaliveInterval,
+    keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
     readyTimeout: 180000,
     tryKeyboard: true,
     ident,

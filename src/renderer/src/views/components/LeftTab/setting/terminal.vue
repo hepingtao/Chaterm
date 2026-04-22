@@ -138,9 +138,62 @@
           >
         </a-form-item>
         <a-form-item
-          :label="$t('user.mouseEvent')"
+          :label="$t('user.sshKeepaliveInterval')"
           class="user_my-ant-form-item"
         >
+          <a-input-number
+            v-model:value="userConfig.sshKeepaliveInterval"
+            :bordered="false"
+            style="width: 20%"
+            :min="0"
+            :max="3600"
+            class="user_my-ant-form-item-content"
+          />
+          <span class="setting-description">{{ $t('user.sshKeepaliveIntervalDescribe') }}</span>
+        </a-form-item>
+        <a-form-item
+          :label="$t('user.sshIdleTimeout')"
+          class="user_my-ant-form-item"
+        >
+          <a-input-number
+            v-model:value="userConfig.sshIdleTimeout"
+            :bordered="false"
+            style="width: 20%"
+            :min="0"
+            :max="86400"
+            class="user_my-ant-form-item-content"
+          />
+          <span class="setting-description">{{ $t('user.sshIdleTimeoutDescribe') }}</span>
+        </a-form-item>
+        <a-form-item
+          :label="$t('user.sshTerminalKeepalive')"
+          class="user_my-ant-form-item"
+        >
+          <a-input-number
+            v-model:value="userConfig.sshTerminalKeepalive"
+            :bordered="false"
+            style="width: 20%"
+            :min="0"
+            :max="1440"
+            class="user_my-ant-form-item-content"
+          />
+          <span class="setting-description">{{ $t('user.sshTerminalKeepaliveDescribe') }}</span>
+        </a-form-item>
+        <a-form-item
+          :label="$t('user.jumpserverSftpPort')"
+          class="user_my-ant-form-item"
+        >
+          <a-input-number
+            v-model:value="userConfig.jumpserverSftpPort"
+            :bordered="false"
+            style="width: 20%"
+            :min="1"
+            :max="65535"
+            class="user_my-ant-form-item-content"
+          />
+          <span class="setting-description">{{ $t('user.jumpserverSftpPortDescribe') }}</span>
+        </a-form-item>
+        <a-form-item class="user_my-ant-form-item">
           <div class="mouse-event-container">
             <div class="mouse-event-row">
               <span class="mouse-event-label">{{ $t('user.middleMouseEvent') }}:</span>
@@ -416,6 +469,10 @@ const userConfig = ref<{
   sshAgentsMap: string
   sshProxyStatus: boolean
   sshProxyConfigs: ProxyConfig[]
+  sshKeepaliveInterval: number
+  sshIdleTimeout: number
+  sshTerminalKeepalive: number
+  jumpserverSftpPort: number
 }>({
   fontSize: 12,
   fontFamily: 'Menlo, Monaco, "Courier New", Consolas, Courier, monospace',
@@ -429,7 +486,11 @@ const userConfig = ref<{
   sshAgentsStatus: 2,
   sshAgentsMap: '[]',
   sshProxyStatus: false,
-  sshProxyConfigs: []
+  sshProxyConfigs: [],
+  sshKeepaliveInterval: 10,
+  sshIdleTimeout: 0,
+  sshTerminalKeepalive: 0,
+  jumpserverSftpPort: 2222
 })
 
 const fontFamilyOptions = [
@@ -746,7 +807,11 @@ const saveConfig = async () => {
       showCloseButton: userConfig.value.showCloseButton,
       sshAgentsStatus: userConfig.value.sshAgentsStatus,
       sshAgentsMap: userConfig.value.sshAgentsMap,
-      sshProxyConfigs: userConfig.value.sshProxyConfigs
+      sshProxyConfigs: userConfig.value.sshProxyConfigs,
+      sshKeepaliveInterval: userConfig.value.sshKeepaliveInterval,
+      sshIdleTimeout: userConfig.value.sshIdleTimeout,
+      sshTerminalKeepalive: userConfig.value.sshTerminalKeepalive,
+      jumpserverSftpPort: userConfig.value.jumpserverSftpPort
     }
 
     await userConfigStore.saveConfig(configToStore as any)
@@ -1021,6 +1086,14 @@ onBeforeUnmount(() => {
 .telemetry-description a:hover {
   color: #40a9ff;
   text-decoration: underline;
+}
+
+.setting-description {
+  font-size: 12px;
+  color: var(--text-color-secondary);
+  line-height: 1.4;
+  opacity: 0.8;
+  margin-left: 12px;
 }
 
 .mouse-event-row {

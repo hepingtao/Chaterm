@@ -4,6 +4,9 @@ import type Logger from 'electron-log'
 
 const REDACTED = '[REDACTED]'
 
+// Debug mode: set DEBUG_SANITIZER=1 to disable redaction for easier debugging
+const DEBUG_MODE = process.env.DEBUG_SANITIZER === '1'
+
 // Credential key substrings (case-insensitive substring match).
 // A field name like "anthropicApiKey" will match because it contains "apikey".
 const SENSITIVE_KEY_SUBSTRINGS = [
@@ -181,6 +184,8 @@ function truncateString(value: string): string {
 }
 
 function sanitizeValue(value: unknown, depth: number, seen: WeakSet<object>): unknown {
+  if (DEBUG_MODE) return value // Skip sanitization in debug mode
+
   if (depth > MAX_DEPTH) return '[MAX_DEPTH]'
 
   if (value === null || value === undefined) return value

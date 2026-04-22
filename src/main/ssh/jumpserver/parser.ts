@@ -122,42 +122,69 @@ export function parseJumpserverOutput(output: string): ParsedOutput {
  */
 export function parseJumpServerUsers(output: string): JumpServerUser[] {
   const users: JumpServerUser[] = []
-  const lines = output.split('\n')
-  // Match pattern: ID | NAME | USERNAME
-  const userRegex = /^\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*$/
+  const lines = output.split(/\r?\n/)
+  // Match pattern: ID | NAME | USERNAME (3+ columns) — supports 3 or more pipe-separated columns
+  // We capture the first 3 columns (ID, NAME, USERNAME) and ignore the rest
+  const userRegex = /^\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)(\s*\|.*)?$/
 
   let foundUserHeader = false
+  let consecutiveEmptyLines = 0
 
   for (const line of lines) {
-    // Detect user table header (ID | NAME | USERNAME)
-    if (line.includes('ID') && line.includes('NAME') && line.includes('USERNAME')) {
-      foundUserHeader = true
+    const trimmed = line.trim()
+
+    // Detect user table header
+    // English: ID | NAME | USERNAME
+    // Chinese (or garbled): line contains ID and | characters
+    if (!foundUserHeader) {
+      if (trimmed.includes('ID') && trimmed.includes('|') && (trimmed.includes('NAME') || trimmed.includes('USERNAME') || trimmed.includes('|'))) {
+        // Verify this looks like a header by checking for at least one pipe separator
+        const pipeCount = (trimmed.match(/\|/g) || []).length
+        if (pipeCount >= 2) {
+          foundUserHeader = true
+          continue
+        }
+      }
+      // Fallback: detect by separator line followed by data lines
+      if (trimmed.match(/^-{4,}\+-{4,}/)) {
+        foundUserHeader = true
+        continue
+      }
       continue
     }
 
     // Skip separator lines
-    if (line.includes('---+---')) {
+    if (trimmed.match(/^-{4,}\+-{4,}/)) {
       continue
     }
 
-    if (foundUserHeader) {
-      // Stop parsing when we hit Tips or other non-table content
-      if (line.includes('Tips:') || line.includes('Back:') || line.includes('ID>')) {
+    // Skip empty lines but don't break — there may be empty lines between user rows
+    if (trimmed === '') {
+      consecutiveEmptyLines++
+      // Only stop after 2+ consecutive empty lines (likely end of table)
+      if (consecutiveEmptyLines >= 2) {
         break
       }
+      continue
+    }
+    consecutiveEmptyLines = 0
 
-      const match = line.match(userRegex)
-      if (match) {
-        try {
-          const user: JumpServerUser = {
-            id: parseInt(match[1].trim()),
-            name: match[2].trim(),
-            username: match[3].trim()
-          }
-          users.push(user)
-        } catch (e) {
-          logger.debug('Failed to parse user line', { event: 'jumpserver.parser.user.error', error: e })
+    // Stop parsing when we hit prompts or non-table content
+    if (trimmed.includes('Tips:') || trimmed.includes('Back:') || trimmed.startsWith('ID>')) {
+      break
+    }
+
+    const match = trimmed.match(userRegex)
+    if (match) {
+      try {
+        const user: JumpServerUser = {
+          id: parseInt(match[1].trim()),
+          name: match[2].trim(),
+          username: match[3].trim()
         }
+        users.push(user)
+      } catch (e) {
+        logger.debug('Failed to parse user line', { event: 'jumpserver.parser.user.error', error: e })
       }
     }
   }
@@ -171,5 +198,44 @@ export function parseJumpServerUsers(output: string): JumpServerUser[] {
  * @returns true if user selection is required
  */
 export function hasUserSelectionPrompt(output: string): boolean {
-  return output.includes('account ID') && output.includes('ID') && output.includes('NAME') && output.includes('USERNAME')
+  // English format: contains account ID, ID, NAME, USERNAME
+  if (output.includes('account ID') && output.includes('ID') && output.includes('NAME') && output.includes('USERNAME')) {
+    return true
+  }
+
+  // ID> prompt indicates JumpServer is waiting for user selection
+  // This appears after the user table when multiple accounts exist for an asset
+  if (output.includes('ID>')) {
+    return true
+  }
+
+  // Chinese format with garbled encoding: the table has ID column and separator pattern
+  // Check for table structure with ID column (works with both proper and garbled Chinese)
+  const lines = output.split(/\r?\n/)
+  let hasIdColumn = false
+  let hasSeparator = false
+  let dataLineCount = 0
+  for (const line of lines) {
+    const trimmed = line.trim()
+    // Header line with ID column
+    if (trimmed.includes('ID') && trimmed.includes('|')) {
+      hasIdColumn = true
+    }
+    // Separator line
+    if (trimmed.match(/^-{4,}\+-{4,}/)) {
+      hasSeparator = true
+    }
+    // Data line: starts with number followed by |
+    if (trimmed.match(/^\s*\d+\s*\|/)) {
+      dataLineCount++
+    }
+  }
+  // If we have a table with ID column, separator, and at least one data row,
+  // and it's not the initial asset list (which would have Opt> prompt),
+  // it's likely a user/account selection table
+  if (hasIdColumn && hasSeparator && dataLineCount > 0 && !output.includes('Opt>')) {
+    return true
+  }
+
+  return false
 }

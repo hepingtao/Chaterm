@@ -269,9 +269,9 @@ const userConfig = () => {
 }
 
 const files = (key) => {
+  logger.info('Files button clicked, emitting open-user-tab with value:', key)
   emit('open-user-tab', 'files')
   showUserMenu.value = false
-  menuClick(key)
 }
 
 const logout = async () => {
