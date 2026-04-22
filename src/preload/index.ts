@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { WebviewMessage } from '../main/agent/shared/WebviewMessage'
+import type { ChatermMessagesPage } from '../main/agent/shared/ExtensionMessage'
 
 import * as dotenv from 'dotenv'
 import * as path from 'path'
@@ -207,6 +208,22 @@ const getLocalAssetRoute = async (data: { searchType: string; params?: unknown[]
   }
 }
 
+const recordConnection = async (data: {
+  assetUuid: string
+  assetIp: string
+  assetLabel?: string
+  assetPort?: number
+  assetUsername?: string
+  assetType: string
+  organizationId?: string
+}) => {
+  try {
+    await ipcRenderer.invoke('record-connection', data)
+  } catch {
+    // Non-critical: silently ignore recording failures
+  }
+}
+
 const updateLocalAssetLabel = async (data: { uuid: string; label: string }) => {
   try {
     const result = await ipcRenderer.invoke('asset-route-local-update', data)
@@ -353,6 +370,19 @@ const connectAssetInfo = async (data: { uuid: string }) => {
 const chatermGetChatermMessages = async (data: { taskId: string }) => {
   try {
     const result = await ipcRenderer.invoke('agent-chaterm-messages', data)
+    return result
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const chatermGetChatermMessagesPage = async (data: {
+  taskId: string
+  beforeCursor?: number | null
+  limit?: number
+}): Promise<ChatermMessagesPage> => {
+  try {
+    const result = await ipcRenderer.invoke('agent-chaterm-messages-page', data)
     return result
   } catch (error) {
     return Promise.reject(error)
@@ -584,6 +614,7 @@ const api = {
   insertCommand,
   aiSuggestCommand,
   getLocalAssetRoute,
+  recordConnection,
   updateLocalAssetLabel,
   updateLocalAsseFavorite,
   getKeyChainSelect,
@@ -601,6 +632,7 @@ const api = {
   updateKeyChain,
   connectAssetInfo,
   chatermGetChatermMessages,
+  chatermGetChatermMessagesPage,
   getTaskMetadata,
   saveTaskTitle,
   saveTaskFavorite,
@@ -1128,6 +1160,10 @@ const api = {
   // Uninstall plugin
   uninstallPlugin(pluginId: string) {
     return ipcRenderer.invoke('plugins.uninstall', pluginId)
+  },
+
+  reloadPlugins() {
+    return ipcRenderer.invoke('plugins.reload')
   },
 
   listPlugins() {

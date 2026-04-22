@@ -26,13 +26,15 @@ import {
   createOrganizationAssetLogic,
   updateOrganizationAssetLogic,
   deleteOrganizationAssetLogic,
-  batchDeleteOrganizationAssetsLogic
+  batchDeleteOrganizationAssetsLogic,
+  recordConnectionLogic
 } from './chaterm/assets'
 import {
   deleteChatermHistoryByTaskIdLogic,
   getApiConversationHistoryLogic,
   saveApiConversationHistoryLogic,
   getSavedChatermMessagesLogic,
+  getSavedChatermMessagesPageLogic,
   saveChatermMessagesLogic,
   getTaskMetadataLogic,
   saveTaskMetadataLogic,
@@ -157,6 +159,18 @@ export class ChatermDatabaseService {
     return await getLocalAssetRouteLogic(this.db, searchType, params)
   }
 
+  recordConnection(params: {
+    assetUuid: string
+    assetIp: string
+    assetLabel?: string
+    assetPort?: number
+    assetUsername?: string
+    assetType: string
+    organizationId?: string
+  }): void {
+    recordConnectionLogic(this.db, params)
+  }
+
   updateLocalAssetLabel(uuid: string, label: string): any {
     return updateLocalAssetLabelLogic(this.db, uuid, label)
   }
@@ -236,6 +250,10 @@ export class ChatermDatabaseService {
   // Agent UI message related methods
   async getSavedChatermMessages(taskId: string): Promise<any[]> {
     return getSavedChatermMessagesLogic(this.db, taskId)
+  }
+
+  async getSavedChatermMessagesPage(taskId: string, options?: { beforeCursor?: number | null; limit?: number }) {
+    return getSavedChatermMessagesPageLogic(this.db, taskId, options)
   }
 
   async saveChatermMessages(taskId: string, uiMessages: any[]): Promise<void> {

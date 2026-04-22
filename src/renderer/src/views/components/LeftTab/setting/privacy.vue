@@ -18,6 +18,7 @@
           </template>
         </a-form-item>
         <a-form-item
+          v-if="!telemetryPolicyHidden"
           :label="$t('user.telemetry')"
           class="user_my-ant-form-item"
         >
@@ -31,6 +32,7 @@
           </a-radio-group>
         </a-form-item>
         <a-form-item
+          v-if="!telemetryPolicyHidden"
           class="description-item"
           :label-col="{ span: 0 }"
           :wrapper-col="{ span: 24 }"
@@ -93,7 +95,7 @@
           </a-collapse>
         </a-form-item>
         <a-form-item
-          v-if="isUserLoggedIn"
+          v-if="isUserLoggedIn && !dataSyncPolicyHidden"
           :label="$t('user.dataSync')"
           class="user_my-ant-form-item"
         >
@@ -108,7 +110,7 @@
         </a-form-item>
 
         <a-form-item
-          v-if="isUserLoggedIn"
+          v-if="isUserLoggedIn && !dataSyncPolicyHidden"
           class="description-item"
           :label-col="{ span: 0 }"
           :wrapper-col="{ span: 24 }"
@@ -117,8 +119,55 @@
             {{ $t('user.dataSyncDescription') }}
           </div>
         </a-form-item>
+        <a-form-item
+          v-if="isUserLoggedIn && deployStatus === 0"
+          class="account-management-item"
+          :label-col="{ span: 0 }"
+          :wrapper-col="{ span: 24 }"
+        >
+          <div class="account-management-section">
+            <div class="account-management-content">
+              <div class="account-management-header">{{ $t('user.accountManagement') }}</div>
+              <div class="description account-management-description">
+                {{ $t('user.deactivateAccountDescription') }}
+              </div>
+            </div>
+            <div class="account-management-action">
+              <a-button
+                danger
+                :loading="deactivateLoading"
+                class="deactivate-account-button"
+                @click="openDeactivateModal"
+              >
+                {{ $t('user.deactivateAccount') }}
+              </a-button>
+            </div>
+          </div>
+        </a-form-item>
       </a-form>
     </a-card>
+
+    <a-modal
+      v-model:open="deactivateModalOpen"
+      wrap-class-name="deactivate-account-modal"
+      :title="$t('user.deactivateAccountConfirmTitle')"
+      :ok-text="$t('user.deactivateAccount')"
+      :cancel-text="$t('common.cancel')"
+      :confirm-loading="deactivateLoading"
+      :ok-button-props="{ type: 'primary', danger: true, disabled: !canConfirmDeactivation }"
+      @ok="handleDeactivateAccount"
+      @cancel="closeDeactivateModal"
+    >
+      <div class="deactivate-modal-content">
+        <p class="deactivate-modal-description">
+          {{ $t('user.deactivateAccountConfirmDescription') }}
+        </p>
+        <a-input
+          v-model:value="deactivateConfirmationInput"
+          :placeholder="t('user.deactivateAccountInputPlaceholder', { keyword: deactivateAccountConfirmKeyword })"
+        />
+      </div>
+    </a-modal>
   </div>
 </template>
 
@@ -127,22 +176,38 @@ import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { notification } from 'ant-design-vue'
 import { userConfigStore, remoteApplyGuard, getStoredUserConfigSnapshot, resolveDataSyncPreference } from '@/services/userConfigStoreService'
 import { dataSyncService } from '@/services/dataSyncService'
+import { chatSyncService } from '@/services/chatSyncService'
+import { shortcutService } from '@/services/shortcutService'
 import { useI18n } from 'vue-i18n'
 import { getPrivacyPolicyUrl } from '@/utils/edition'
-import { getUserInfo } from '@/utils/permission'
+import { getUserInfo, removeToken } from '@/utils/permission'
 import eventBus from '@/utils/eventBus'
 import type { TelemetrySetting } from '@shared/TelemetrySetting'
+import { deactivateAccount } from '@/api/user/user'
+import { useRouter } from 'vue-router'
+import { userInfoStore } from '@/store'
+import { pinia } from '@/main'
 
 const logger = createRendererLogger('settings.privacy')
 const { t } = useI18n()
+const router = useRouter()
+const userStore = userInfoStore(pinia)
 
 const privacyUrl = getPrivacyPolicyUrl()
+const deactivateModalOpen = ref(false)
+const deactivateLoading = ref(false)
+const deactivateConfirmationInput = ref('')
 
 const userConfig = ref({
   secretRedaction: 'disabled',
   dataSync: 'enabled',
   telemetry: 'enabled'
 })
+
+const deactivateAccountConfirmKeyword = computed(() => t('user.deactivateAccountConfirmKeyword'))
+const canConfirmDeactivation = computed(
+  () => deactivateConfirmationInput.value.trim() === deactivateAccountConfirmKeyword.value && !deactivateLoading.value
+)
 
 const isUserLoggedIn = computed(() => {
   const token = localStorage.getItem('ctm-token')
@@ -155,6 +220,27 @@ const isUserLoggedIn = computed(() => {
     return false
   }
 })
+
+const parsePolicyEnabled = (raw: unknown): boolean | null => {
+  if (typeof raw !== 'string') return null
+  const normalized = raw.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  return null
+}
+const telemetryPolicyEnabled = parsePolicyEnabled(import.meta.env.RENDERER_TELEMETRY_ENABLED)
+const dataSyncPolicyEnabled = parsePolicyEnabled(import.meta.env.RENDERER_DATA_SYNC_ENABLED)
+const telemetryPolicyHidden = computed(() => telemetryPolicyEnabled === false)
+const dataSyncPolicyHidden = computed(() => dataSyncPolicyEnabled === false)
+const parseDeployStatus = (raw: unknown): number => {
+  if (typeof raw !== 'string') return 0
+  const normalized = raw.trim()
+  if (!normalized) return 0
+  const parsed = Number(normalized)
+  if (!Number.isFinite(parsed)) return 0
+  return parsed
+}
+const deployStatus = computed(() => parseDeployStatus(import.meta.env.RENDERER_DEPLOY_STATUS))
 
 const secretPatterns = computed(() => [
   {
@@ -179,7 +265,7 @@ const secretPatterns = computed(() => [
   },
   {
     name: t('user.macAddress'),
-    regex: '\\b((([a-zA-z0-9]{2}[-:]){5}([a-zA-z0-9]{2}))|(([a-zA-z0-9]{2}:){5}([a-zA-z0-9]{2})))\\b'
+    regex: '\\b((([a-zA-Z0-9]{2}[-:]){5}([a-zA-Z0-9]{2}))|(([a-zA-Z0-9]{2}:){5}([a-zA-Z0-9]{2})))\\b'
   },
   {
     name: t('user.googleApiKey'),
@@ -219,7 +305,7 @@ const secretPatterns = computed(() => [
   },
   {
     name: t('user.jsonWebToken'),
-    regex: '\\b(ey[a-zA-z0-9_\\-=]{10,}\\.){2}[a-zA-z0-9_\\-=]{10,}\\b'
+    regex: '\\b(ey[a-zA-Z0-9_\\-=]{10,}\\.){2}[a-zA-Z0-9_\\-=]{10,}\\b'
   },
   {
     name: t('user.openaiApiKey'),
@@ -256,6 +342,13 @@ const loadSavedConfig = async () => {
         dataSync: resolvedDataSync,
         telemetry: ((savedConfig as any).telemetry || 'unset') as 'unset' | 'enabled' | 'disabled'
       } as any
+      if (telemetryPolicyEnabled === false) {
+        userConfig.value.telemetry = 'disabled'
+      }
+      if (dataSyncPolicyEnabled === false) {
+        userConfig.value.dataSync = 'disabled'
+      }
+      await saveConfig()
     }
   } catch (error) {
     logger.error('Failed to load config', { error: error })
@@ -307,6 +400,9 @@ onBeforeUnmount(() => {
 
 const updateTelemetry = async () => {
   try {
+    if (telemetryPolicyEnabled === false) {
+      userConfig.value.telemetry = 'disabled'
+    }
     await window.api.sendToMain({
       type: 'telemetrySetting',
       telemetrySetting: userConfig.value.telemetry as TelemetrySetting
@@ -327,6 +423,12 @@ const changeSecretRedaction = async () => {
 }
 
 const changeDataSync = async () => {
+  if (dataSyncPolicyEnabled === false) {
+    userConfig.value.dataSync = 'disabled'
+    await saveConfig()
+    await dataSyncService.disableDataSync()
+    return
+  }
   await saveConfig()
 
   const isEnabled = userConfig.value.dataSync === 'enabled'
@@ -357,6 +459,72 @@ const changeDataSync = async () => {
       message: t('user.dataSyncUpdateFailed'),
       description: t('user.retryLater')
     })
+  }
+}
+
+const openDeactivateModal = () => {
+  deactivateConfirmationInput.value = ''
+  deactivateModalOpen.value = true
+}
+
+const closeDeactivateModal = () => {
+  if (deactivateLoading.value) return
+  deactivateConfirmationInput.value = ''
+  deactivateModalOpen.value = false
+}
+
+const cleanupLocalAccountState = async () => {
+  try {
+    if (dataSyncService.getInitializationStatus()) {
+      await dataSyncService.disableDataSync()
+      dataSyncService.reset()
+    } else {
+      await chatSyncService.disable()
+      chatSyncService.reset()
+    }
+  } catch (error) {
+    logger.error('Failed to clean sync state after account deactivation', { error })
+  }
+
+  userStore.deleteInfo()
+  removeToken()
+  shortcutService.init()
+}
+
+const handleDeactivateAccount = async () => {
+  if (!canConfirmDeactivation.value) return
+
+  const currentUser = getUserInfo()
+  const uid = Number(currentUser?.uid)
+
+  if (!uid) {
+    notification.error({
+      message: t('user.deactivateAccountFailed'),
+      description: t('user.deactivateAccountUserMissing')
+    })
+    return
+  }
+
+  deactivateLoading.value = true
+
+  try {
+    await deactivateAccount({ uid })
+    await cleanupLocalAccountState()
+    deactivateConfirmationInput.value = ''
+    deactivateModalOpen.value = false
+    notification.success({
+      message: t('user.deactivateAccountSuccess'),
+      description: t('user.deactivateAccountSuccessDescription')
+    })
+    await router.push('/login')
+  } catch (error: any) {
+    logger.error('Failed to deactivate account', { error })
+    notification.error({
+      message: t('user.deactivateAccountFailed'),
+      description: error?.message || t('user.retryLater')
+    })
+  } finally {
+    deactivateLoading.value = false
   }
 }
 </script>
@@ -475,6 +643,10 @@ const changeDataSync = async () => {
   margin-bottom: 14px;
 }
 
+.account-management-item {
+  margin-top: 18px;
+}
+
 .description-item :deep(.ant-form-item-control) {
   margin-left: 0 !important;
   max-width: 100% !important;
@@ -502,6 +674,103 @@ const changeDataSync = async () => {
 .privacy-link:hover {
   color: #40a9ff;
   text-decoration: underline;
+}
+
+.account-management-section {
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-color-secondary);
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.account-management-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.account-management-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.account-management-description {
+  margin-right: 8px;
+}
+
+.account-management-action {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.deactivate-account-button {
+  width: fit-content;
+}
+
+.account-management-section :deep(.ant-btn.ant-btn-dangerous) {
+  color: var(--error-color);
+  border-color: var(--border-color-light);
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.account-management-section :deep(.ant-btn.ant-btn-dangerous:hover),
+.account-management-section :deep(.ant-btn.ant-btn-dangerous:focus) {
+  color: #fff;
+  border-color: var(--error-color);
+  background-color: var(--error-color);
+}
+
+.account-management-section :deep(.ant-btn.ant-btn-dangerous[disabled]),
+.account-management-section :deep(.ant-btn.ant-btn-dangerous[disabled]:hover) {
+  color: var(--text-color-tertiary);
+  border-color: var(--border-color);
+  background-color: transparent;
+}
+
+.deactivate-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.deactivate-modal-description {
+  margin: 0;
+  color: var(--text-color-secondary);
+  line-height: 1.6;
+}
+
+.deactivate-modal-content :deep(.ant-input) {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+}
+
+.deactivate-modal-content :deep(.ant-input:hover),
+.deactivate-modal-content :deep(.ant-input:focus),
+.deactivate-modal-content :deep(.ant-input-focused) {
+  border-color: var(--error-color);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.12);
+}
+
+@media (max-width: 768px) {
+  .account-management-section {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .account-management-action {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 .patterns-collapse {
@@ -557,5 +826,104 @@ const changeDataSync = async () => {
   font-size: 10px;
   word-break: break-all;
   border: 1px solid var(--border-color);
+}
+</style>
+
+<style>
+.deactivate-account-modal .ant-modal-content {
+  background-color: var(--bg-color-secondary) !important;
+  color: var(--text-color);
+}
+
+.deactivate-account-modal .ant-modal-header,
+.deactivate-account-modal .ant-modal-body,
+.deactivate-account-modal .ant-modal-footer {
+  background-color: transparent !important;
+  color: var(--text-color);
+}
+
+.deactivate-account-modal .ant-modal-title,
+.deactivate-account-modal .ant-modal-close,
+.deactivate-account-modal .ant-modal-close-x,
+.deactivate-account-modal .ant-modal-close-icon {
+  color: var(--text-color);
+}
+
+.deactivate-account-modal .ant-modal-body {
+  color: var(--text-color);
+}
+
+.deactivate-account-modal .ant-modal-footer {
+  margin: 0 !important;
+  border-top: none !important;
+  padding: 12px 0 !important;
+  display: flex !important;
+  justify-content: flex-end !important;
+}
+
+.deactivate-account-modal .ant-modal-footer .ant-btn {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  border-color: var(--border-color-light);
+  box-shadow: none;
+}
+
+.deactivate-account-modal .ant-modal-footer .ant-btn:hover,
+.deactivate-account-modal .ant-modal-footer .ant-btn:focus {
+  background-color: var(--hover-bg-color);
+  color: var(--text-color);
+  border-color: var(--border-color-light);
+}
+
+.deactivate-account-modal .ant-modal-footer .ant-btn-dangerous:not(.ant-btn-primary),
+.deactivate-account-modal .ant-modal-footer .ant-btn-color-dangerous:not(.ant-btn-primary),
+.deactivate-account-modal .ant-modal-footer .ant-btn-dangerous.ant-btn-variant-outlined:not(.ant-btn-primary) {
+  background-color: transparent;
+  color: var(--error-color);
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.deactivate-account-modal .ant-modal-footer .ant-btn-dangerous.ant-btn-primary,
+.deactivate-account-modal .ant-modal-footer .ant-btn-color-dangerous.ant-btn-primary {
+  background-color: var(--error-color);
+  color: #ffffff;
+  border-color: var(--error-color);
+}
+
+.deactivate-account-modal .ant-modal-footer .ant-btn-dangerous:hover,
+.deactivate-account-modal .ant-modal-footer .ant-btn-dangerous:focus,
+.deactivate-account-modal .ant-modal-footer .ant-btn-color-dangerous:hover,
+.deactivate-account-modal .ant-modal-footer .ant-btn-color-dangerous:focus {
+  background-color: var(--error-color);
+  opacity: 0.85;
+  color: #ffffff;
+  border-color: var(--error-color);
+}
+
+.deactivate-account-modal .ant-modal-footer .ant-btn-dangerous:disabled,
+.deactivate-account-modal .ant-modal-footer .ant-btn-dangerous[disabled],
+.deactivate-account-modal .ant-modal-footer .ant-btn-color-dangerous:disabled,
+.deactivate-account-modal .ant-modal-footer .ant-btn-color-dangerous[disabled] {
+  background-color: transparent;
+  color: var(--text-color-secondary);
+  border-color: var(--border-color-light);
+  opacity: 0.72;
+}
+
+.deactivate-account-modal .ant-input {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  border-color: var(--border-color);
+}
+
+.deactivate-account-modal .ant-input::placeholder {
+  color: var(--text-color-tertiary);
+}
+
+.deactivate-account-modal .ant-input:hover,
+.deactivate-account-modal .ant-input:focus,
+.deactivate-account-modal .ant-input-focused {
+  border-color: var(--error-color);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.12);
 }
 </style>

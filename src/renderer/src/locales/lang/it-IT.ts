@@ -98,6 +98,7 @@ export default {
     pleaseInputPrivateKey: 'Inserisci la chiave privata',
     localhost: 'Localhost',
     favoriteBar: 'Favoriti',
+    recentConnections: 'Connessioni recenti',
     executeCommandToAllWindows: 'Esegui comando in tutte le finestre',
     broadcastTo: 'Trasmetti a {count} terminali',
     reloadAliasDataFailed: 'Ricaricamento dati alias fallito',
@@ -290,6 +291,19 @@ export default {
     extensions: 'Estensioni',
     about: 'Informazioni',
     documentation: 'Documentazione',
+    accountManagement: 'Gestione account',
+    deactivateAccount: 'Elimina account',
+    deactivateAccountDescription:
+      'Se non vuoi più usare questo account, puoi eliminarlo qui. L’operazione cancellerà lo stato di accesso corrente su questo dispositivo.',
+    deactivateAccountConfirmTitle: 'Conferma eliminazione account',
+    deactivateAccountConfirmDescription:
+      'Eliminare l’account è un’azione ad alto rischio. Per continuare, inserisci la parola di conferma qui sotto.',
+    deactivateAccountConfirmKeyword: 'ELIMINA',
+    deactivateAccountInputPlaceholder: 'Inserisci "{keyword}" per continuare',
+    deactivateAccountSuccess: 'Account eliminato',
+    deactivateAccountSuccessDescription: 'Il tuo account è stato eliminato e lo stato di accesso corrente è stato cancellato.',
+    deactivateAccountFailed: 'Impossibile eliminare l’account',
+    deactivateAccountUserMissing: 'Impossibile determinare l’account utente corrente.',
     privacy: 'Privacy',
     trustedDevices: 'Dispositivi attendibili',
     trustedDevicesDescription:
@@ -382,6 +396,9 @@ export default {
     kbSearchEnabled: KB_SEARCH_ENABLED_LABELS['it-IT'],
     kbSearchEnabledDescribe:
       "Cerca automaticamente contenuti rilevanti nella base di conoscenza quando si avvia una nuova conversazione e consenti all'IA di cercare nella base di conoscenza durante le conversazioni",
+    experienceExtractionEnabled: 'Acquisizione automatica dell’esperienza',
+    experienceExtractionEnabledDescribe:
+      'Dopo il completamento riuscito di un’attività, salva automaticamente l’esperienza riutilizzabile nella base di conoscenza e, insieme alla ricerca nella base di conoscenza, migliora significativamente l’efficienza e la stabilità dell’IA su attività simili.',
     features: 'Funzionalità',
     enableCheckpoints: 'Abilita checkpoint',
     enableCheckpointsDescribe: "Abilita l'estensione a salvare checkpoint dello spazio di lavoro durante il task",
@@ -517,7 +534,7 @@ export default {
     saveBackgroundFailed: 'Salvataggio immagine di sfondo fallito'
   },
   extensions: {
-    extensions: 'Estensioni',
+    plugins: 'Plugins',
     alias: 'Alias',
     aliasDescription: 'Configurazione alias globale',
     fuzzySearch: 'Ricerca approssimativa',
@@ -827,7 +844,7 @@ export default {
     welcome: 'Cosa posso fare per te nel terminale?',
     welcomeTips: ['Cosa posso fare per te nel terminale?', '@ per il contesto, / per i comandi', 'Premi Shift + Tab per cambiare modalità'],
     loginPrompt: 'Login per utilizzare funzionalità AI, nuovi utenti possono usarle gratuitamente per due settimane',
-    searchHost: 'Cerca per IP',
+    searchHost: 'Cerca per IP, hostname o nota bastion',
     noMatchingHosts: 'Nessun host corrispondente',
     hosts: 'Host',
     docs: 'Documenti',
@@ -985,7 +1002,8 @@ export default {
     clearSelection: 'Cancella',
     addSelected: 'Aggiungi selezionati({count})',
     switchNotSupportAgent: 'Dispositivi di rete non supportano modalità Agent, automaticamente cambiato a modalità Comando',
-    contextTruncated: 'Compressione dei messaggi precedenti per liberare spazio nel contesto. I messaggi recenti sono conservati.'
+    contextTruncating: 'Compressione automatica delle informazioni di contesto in corso',
+    contextTruncated: 'Le informazioni di contesto sono state compresse automaticamente'
   },
   keyChain: {
     keyChain: 'Keychain',

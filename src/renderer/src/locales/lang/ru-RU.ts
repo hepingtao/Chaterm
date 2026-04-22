@@ -98,6 +98,7 @@ export default {
     pleaseInputPrivateKey: 'Пожалуйста, введите приватный ключ',
     localhost: 'Локальный хост',
     favoriteBar: 'Избранное',
+    recentConnections: 'Недавние подключения',
     executeCommandToAllWindows: 'Выполнить команду во всех окнах',
     broadcastTo: 'Трансляция в {count} терминалов',
     reloadAliasDataFailed: 'Не удалось перезагрузить данные псевдонимов',
@@ -290,6 +291,19 @@ export default {
     extensions: 'Расширения',
     about: 'Обо мне',
     documentation: 'Документация',
+    accountManagement: 'Управление аккаунтом',
+    deactivateAccount: 'Удалить аккаунт',
+    deactivateAccountDescription:
+      'Если вы больше не хотите использовать этот аккаунт, вы можете удалить его здесь. Это также очистит текущее состояние входа на этом устройстве.',
+    deactivateAccountConfirmTitle: 'Подтвердите удаление аккаунта',
+    deactivateAccountConfirmDescription:
+      'Удаление аккаунта является рискованным действием. Чтобы продолжить, введите ключевое слово подтверждения ниже.',
+    deactivateAccountConfirmKeyword: 'УДАЛИТЬ',
+    deactivateAccountInputPlaceholder: 'Введите "{keyword}", чтобы продолжить',
+    deactivateAccountSuccess: 'Аккаунт удалён',
+    deactivateAccountSuccessDescription: 'Ваш аккаунт удалён, а текущее состояние входа очищено.',
+    deactivateAccountFailed: 'Не удалось удалить аккаунт',
+    deactivateAccountUserMissing: 'Не удалось определить текущий аккаунт пользователя.',
     privacy: 'Конфиденциальность',
     trustedDevices: 'Доверенные устройства',
     trustedDevicesDescription:
@@ -381,6 +395,9 @@ export default {
     kbSearchEnabled: KB_SEARCH_ENABLED_LABELS['ru-RU'],
     kbSearchEnabledDescribe:
       'Автоматически искать релевантный контент в базе знаний при начале нового разговора и позволять ИИ искать в базе знаний во время разговоров',
+    experienceExtractionEnabled: 'Автоматическое накопление опыта',
+    experienceExtractionEnabledDescribe:
+      'После успешного завершения задачи автоматически сохранять переиспользуемый опыт в базе знаний и вместе с поиском по базе знаний значительно повышать эффективность и стабильность ИИ на похожих задачах.',
     features: 'Функции',
     enableCheckpoints: 'Включить точки сохранения',
     enableCheckpointsDescribe: 'Включает расширение для сохранения точек сохранения рабочего пространства в течение всего задания',
@@ -516,7 +533,7 @@ export default {
     saveBackgroundFailed: 'Не удалось сохранить фоновое изображение'
   },
   extensions: {
-    extensions: 'Расширения',
+    plugins: 'Плагины',
     alias: 'Псевдоним',
     aliasDescription: 'Глобальная конфигурация псевдонимов',
     fuzzySearch: 'Поиск похожих',
@@ -825,7 +842,7 @@ export default {
     welcome: 'Что я могу сделать для вас в терминале?',
     welcomeTips: ['Что я могу сделать для вас в терминале?', '@ для контекста, / для команд', 'Нажмите Shift + Tab для переключения режима'],
     loginPrompt: 'Войдите, чтобы использовать функции ИИ, новые пользователи могут использовать бесплатно в течение двух недель',
-    searchHost: 'Поиск по IP',
+    searchHost: 'Поиск по IP, имени хоста или примечанию bastion',
     noMatchingHosts: 'Нет совпадающих хостов',
     hosts: 'Хосты',
     docs: 'Документы',
@@ -983,7 +1000,8 @@ export default {
     clearSelection: 'Очистить',
     addSelected: 'Добавить выбранные({count})',
     switchNotSupportAgent: 'Сетевые устройства не поддерживают режим Agent, автоматически переключен на режим Command',
-    contextTruncated: 'Сжатие ранних сообщений для освобождения контекстного пространства. Недавние сообщения сохранены.'
+    contextTruncating: 'Идёт автоматическое сжатие контекстной информации',
+    contextTruncated: 'Контекстная информация автоматически сжата'
   },
   keyChain: {
     keyChain: 'KeyChain',

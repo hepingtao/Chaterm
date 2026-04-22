@@ -114,6 +114,23 @@
             :ref="
               (el) => {
                 if (tab.id === currentChatId) {
+                  historyTopSentinel = el as HTMLElement
+                }
+              }
+            "
+            class="history-top-sentinel"
+            aria-hidden="true"
+          />
+          <div
+            v-if="getTabHasOlderHistory(tab.id)"
+            class="history-load-hint"
+          >
+            {{ $t('ai.historyLoadHint') }}
+          </div>
+          <div
+            :ref="
+              (el) => {
+                if (tab.id === currentChatId) {
                   chatResponse = el as HTMLElement
                 }
               }
@@ -143,9 +160,14 @@
                   <div
                     v-if="message.say === 'context_truncated'"
                     class="context-truncated-notice"
+                    :class="{ 'is-compressing': isContextTruncationInProgress(message) }"
                   >
-                    <CompressOutlined class="context-truncated-icon" />
-                    <span>{{ $t('ai.contextTruncated') }}</span>
+                    <span class="context-truncated-line" />
+                    <span class="context-truncated-content">
+                      <CompressOutlined class="context-truncated-icon" />
+                      <span>{{ getContextTruncationNotice(message) }}</span>
+                    </span>
+                    <span class="context-truncated-line" />
                   </div>
                   <div
                     v-else
@@ -233,6 +255,7 @@
                       :ask="message.ask"
                       :say="message.say"
                       :partial="message.partial"
+                      :message-content-parts="message.contentParts"
                       :executed-command="message.executedCommand"
                       :host-id="message.hostId"
                       :host-name="message.hostName"
@@ -249,6 +272,7 @@
                       :ask="message.ask"
                       :say="message.say"
                       :partial="message.partial"
+                      :message-content-parts="message.contentParts"
                       :executed-command="message.executedCommand"
                       :host-id="message.hostId"
                       :host-name="message.hostName"
@@ -846,6 +870,7 @@ const {
   messageFeedbacks,
   buttonsDisabled,
   getTabUserAssistantPairs,
+  getTabHasOlderHistory,
   getTabChatTypeValue,
   getTabLastChatMessageId,
   getTabResponseLoading
@@ -863,7 +888,15 @@ const { currentTodos, shouldShowTodoAfterMessage, getTodosForMessage, markLatest
 // Host state management
 const { updateHosts, updateHostsForCommandMode, getCurentTabAssetInfo } = useHostState()
 // Auto scroll
-const { chatContainer, chatResponse, scrollToBottom, initializeAutoScroll, handleTabSwitch, getMessagePairStyle } = useAutoScroll()
+const { chatContainer, chatResponse, historyTopSentinel, scrollToBottom, initializeAutoScroll, handleTabSwitch, getMessagePairStyle } = useAutoScroll(
+  {
+    onReachHistoryTop: (container) => {
+      const tabId = currentChatId.value
+      if (!tabId) return
+      void loadOlderHistoryForTab(tabId, { container })
+    }
+  }
+)
 
 // Message options management
 const { handleOptionSelect, getSelectedOption, handleCustomInputChange, getCustomInput, canSubmitOption, handleOptionSubmit } = useMessageOptions()
@@ -956,6 +989,7 @@ const interruptAndSendIfBusy = async (sendType: string) => {
 const {
   createNewEmptyTab,
   restoreHistoryTab,
+  loadOlderHistoryForTab,
   handleTabRemove,
   renameTab,
   editingTabId,
@@ -1003,6 +1037,40 @@ const {
 // i18n
 const { t } = i18n.global
 const favoriteLabel = computed(() => t('ai.favorite'))
+
+type ContextTruncationStatus = 'compressing' | 'completed'
+
+interface ContextTruncationNoticeMessage {
+  text?: string
+  content?: string | MessageContent
+  partial?: boolean
+}
+
+const parseContextTruncationStatus = (message: ContextTruncationNoticeMessage): ContextTruncationStatus => {
+  const rawText = typeof message.content === 'string' ? message.content : message.text
+  if (!rawText) {
+    return message.partial ? 'compressing' : 'completed'
+  }
+
+  try {
+    const parsed = JSON.parse(rawText) as { status?: ContextTruncationStatus }
+    if (parsed.status === 'compressing' || parsed.status === 'completed') {
+      return parsed.status
+    }
+  } catch {
+    // Keep compatibility with legacy persisted plain-text messages.
+  }
+
+  return message.partial ? 'compressing' : 'completed'
+}
+
+const isContextTruncationInProgress = (message: ContextTruncationNoticeMessage): boolean => {
+  return parseContextTruncationStatus(message) === 'compressing'
+}
+
+const getContextTruncationNotice = (message: ContextTruncationNoticeMessage): string => {
+  return isContextTruncationInProgress(message) ? t('ai.contextTruncating') : t('ai.contextTruncated')
+}
 
 // Event bus listeners
 useEventBusListeners({

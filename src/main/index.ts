@@ -42,6 +42,7 @@ import {
   initializeStorageMain,
   testStorageFromMain as testRendererStorageFromMain,
   getGlobalState,
+  updateGlobalState,
   getAllExtensionState
 } from './agent/core/storage/state'
 import { getTaskMetadata, saveTaskTitle, saveTaskFavorite, getTaskList } from './agent/core/storage/disk'
@@ -80,6 +81,14 @@ import { initLogging, logRendererCrash } from '@logging'
 import { parseXshellWakeupFromArgv, redactXshellWakeupForLog, type XshellWakeupPayload } from './integrations/xshellWakeup'
 
 const logger = createLogger('main')
+
+const parsePolicyEnabled = (raw: unknown): boolean | null => {
+  if (typeof raw !== 'string') return null
+  const normalized = raw.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  return null
+}
 
 let mainWindow: BrowserWindow
 let COOKIE_URL = 'http://localhost'
@@ -171,7 +180,7 @@ app.whenReady().then(async () => {
       try {
         const crypto = require('crypto')
         const ffmpegPath = path.join(path.dirname(process.execPath), 'ffmpeg.dll')
-        const KNOWN_HASH = 'B64F08946914D8CE2BDAAEF5796ADCF8398EE5BA55223AFBB9F14072F4302B45'
+        const KNOWN_HASH = '643B7BACE9228642DEBF58469BAC31C7DAC5E67F591AED034CA39CDFF88E72E6'
 
         try {
           await fs.access(ffmpegPath)
@@ -216,6 +225,10 @@ app.whenReady().then(async () => {
   protocol.handle('local-resource', (request) => {
     let filePath = request.url.slice('local-resource://'.length)
     filePath = decodeURIComponent(filePath)
+
+    if (process.platform === 'win32' && /^\/[A-Za-z]:\//.test(filePath)) {
+      filePath = filePath.slice(1)
+    }
 
     if (filePath.length >= 2 && /[A-Z]/.test(filePath[0]) && filePath[1] === '/') {
       filePath = filePath[0] + ':' + filePath.slice(1)
@@ -411,6 +424,10 @@ app.whenReady().then(async () => {
       telemetrySetting = (await getGlobalState('telemetrySetting')) || 'enabled'
     } catch (error) {
       telemetrySetting = 'enabled'
+    }
+    if (parsePolicyEnabled(process.env.CHATERM_TELEMETRY_ENABLED) === false) {
+      telemetrySetting = 'disabled'
+      await updateGlobalState('telemetrySetting', 'disabled')
     }
 
     if (controller) {
@@ -1056,10 +1073,23 @@ function setupIPC(): void {
         logger.warn('Failed to reload plugins after login', { value: error })
       }
 
-      // Initialize KB search manager if the setting is enabled
+      // Initialize KB search manager if enabled by user setting / policy.
+      // CHATERM_KB_SEARCH_ENABLED enforces enterprise policy only when set to false.
       try {
-        const kbSearchEnabled = await getGlobalState('kbSearchEnabled')
-        if (kbSearchEnabled === undefined || kbSearchEnabled === null || kbSearchEnabled) {
+        let kbSearchEnabled = await getGlobalState('kbSearchEnabled')
+        const rawPolicy = process.env.CHATERM_KB_SEARCH_ENABLED
+        let kbPolicyEnabled: boolean | null = null
+        if (typeof rawPolicy === 'string') {
+          const normalized = rawPolicy.trim().toLowerCase()
+          if (['1', 'true', 'yes', 'on'].includes(normalized)) kbPolicyEnabled = true
+          if (['0', 'false', 'no', 'off'].includes(normalized)) kbPolicyEnabled = false
+        }
+        if (kbPolicyEnabled === false) {
+          kbSearchEnabled = false
+          await updateGlobalState('kbSearchEnabled', false)
+        }
+
+        if (kbSearchEnabled !== false) {
           const edition = getEdition()
           const region = edition === 'cn' ? 'cn' : 'global'
 
@@ -1405,8 +1435,10 @@ function setupIPC(): void {
       if (!uid) {
         throw new Error('User ID is required')
       }
+      const dataSyncPolicyEnabled = parsePolicyEnabled(process.env.CHATERM_DATA_SYNC_ENABLED)
+      const resolvedEnabled = dataSyncPolicyEnabled === false ? false : enabled
 
-      if (enabled) {
+      if (resolvedEnabled) {
         if (!dataSyncController) {
           const dbPath = getChatermDbPathForUser(uid)
           logger.info(`Starting data sync service for user ${uid}...`)
@@ -1436,7 +1468,7 @@ function setupIPC(): void {
           logger.info('Data sync service stopped')
         }
       }
-      return { success: true }
+      return { success: true, enabled: resolvedEnabled, managedByPolicy: dataSyncPolicyEnabled === false }
     } catch (e: any) {
       logger.warn('Failed to handle data-sync:set-enabled', { error: e?.message || String(e) })
       return { success: false, error: e?.message || String(e) }
@@ -1892,6 +1924,14 @@ ipcMain.handle('asset-route-local-get', async (_, data) => {
   } catch (error) {
     logger.error('Chaterm query failed', { error: error })
     return null
+  }
+})
+
+ipcMain.handle('record-connection', async (_, data) => {
+  try {
+    chatermDbService.recordConnection(data)
+  } catch (error) {
+    logger.error('Record connection failed', { error: error })
   }
 })
 
@@ -2391,6 +2431,17 @@ ipcMain.handle('agent-chaterm-messages', async (_, data) => {
   }
 })
 
+ipcMain.handle('agent-chaterm-messages-page', async (_, data) => {
+  try {
+    const { taskId, beforeCursor = null, limit = 40 } = data
+    const result = await chatermDbService.getSavedChatermMessagesPage(taskId, { beforeCursor, limit })
+    return result
+  } catch (error) {
+    logger.error('Chaterm get paged UI messages failed', { error: error })
+    return { messages: [], nextCursor: null, hasMore: false }
+  }
+})
+
 // This code is newly added to handle calls from the renderer process
 ipcMain.handle('execute-remote-command', async () => {
   logger.info('Received execute-remote-command IPC call') // Add log
@@ -2854,6 +2905,11 @@ ipcMain.handle(
 
 ipcMain.handle('plugins.uninstall', async (_event, pluginId: string) => {
   uninstallPlugin(pluginId)
+  await loadAllPlugins()
+  return { ok: true }
+})
+
+ipcMain.handle('plugins.reload', async () => {
   await loadAllPlugins()
   return { ok: true }
 })

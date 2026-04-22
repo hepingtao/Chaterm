@@ -50,6 +50,7 @@ import { buildRemoteGlobCommand, parseRemoteGlobOutput, buildRemoteGrepCommand, 
 import { broadcastInteractionClosed } from '../../services/interaction-detector/ipc-handlers'
 import { getOffloadDir, shouldOffload, writeToolOutput } from '../offload'
 import { getKnowledgeBaseRoot, getKbSearchManager } from '../../../services/knowledgebase'
+import type { KbSearchResult } from '../../../services/knowledgebase/search/types'
 import { webFetch } from '../../services/web-fetch'
 
 interface StreamMetrics {
@@ -69,6 +70,7 @@ import { AssistantMessageContent, parseAssistantMessageV2, ToolParamName, ToolUs
 import { RemoteTerminalManager, ConnectionInfo, RemoteTerminalInfo, RemoteTerminalProcessResultPromise } from '../../integrations/remote-terminal'
 import { LocalTerminalManager, LocalCommandProcess } from '../../integrations/local-terminal'
 import { getK8sAgentManager } from '../../integrations/k8s'
+import { createExperienceManager } from '../../services/experience'
 import { createLlmCaller } from '../../services/interaction-detector/llm-caller'
 import type { InteractionResult } from '../../services/interaction-detector/types'
 import { getFormatResponse } from '@core/prompts/responses'
@@ -82,8 +84,10 @@ import { ContextManager } from '@core/context/context-management/ContextManager'
 import {
   getSavedApiConversationHistory,
   getChatermMessages,
+  getTaskMetadata,
   saveApiConversationHistory,
   saveChatermMessages,
+  saveTaskMetadata,
   touchTaskUpdatedAt
 } from '@core/storage/disk'
 
@@ -97,7 +101,7 @@ import { SkillsManager } from '@services/skills'
 import { ChatermDatabaseService } from '../../../storage/db/chaterm.service'
 import type { McpTool } from '@shared/mcp'
 
-import type { ContentPart, ContextDocRef, ContextPastChatRef, ContextRefs, Host } from '@shared/WebviewMessage'
+import type { ContentPart, ContextDocRef, ContextPastChatRef, ContextRefs, Host, ToolResultPayload } from '@shared/WebviewMessage'
 import type { ToolResult } from '@shared/ToolResult'
 import { ExternalAssetCache } from '../../../plugin/pluginIpc'
 import type { InteractionType } from '../../services/interaction-detector/types'
@@ -238,7 +242,7 @@ export class Task {
   apiConversationHistory: Anthropic.MessageParam[] = []
   chatermMessages: ChatermMessage[] = []
   private commandSecurityManager: CommandSecurityManager
-  private askResponsePayload?: { response: ChatermAskResponse; text?: string; contentParts?: ContentPart[] }
+  private askResponsePayload?: { response: ChatermAskResponse; text?: string; contentParts?: ContentPart[]; toolResult?: ToolResultPayload }
   private nextUserInputContentParts?: ContentPart[]
   private lastMessageTs?: number
   private consecutiveAutoApprovedRequestsCount: number = 0
@@ -250,6 +254,9 @@ export class Task {
   checkpointTrackerErrorMessage?: string
   conversationHistoryDeletedRange?: [number, number]
   isInitialized = false
+  /** Resolves once the DB rewrite (if any) in resumeTaskFromHistory is complete. */
+  readonly dbReady: Promise<void>
+  private resolveDbReady!: () => void
   summarizeUpToTs?: number // Limit conversation history for current API request only
 
   // Metadata tracking
@@ -301,6 +308,7 @@ export class Task {
   private didRejectTool = false
   private didAlreadyUseTool = false
   private didCompleteReadingStream = false
+  private experienceExtractionQueue: Promise<void> = Promise.resolve()
   // private didAutomaticallyRetryFailedApiRequest = false
   private messages: Messages = getMessages(DEFAULT_LANGUAGE_SETTINGS)
 
@@ -520,6 +528,9 @@ export class Task {
     this.postStateToWebview = postStateToWebview
     this.postMessageToWebview = postMessageToWebview
     this.reinitExistingTaskFromId = reinitExistingTaskFromId
+    this.dbReady = new Promise<void>((resolve) => {
+      this.resolveDbReady = resolve
+    })
     this.mcpHub = mcpHub
     this.skillsManager = skillsManager
     this.remoteTerminalManager = new RemoteTerminalManager()
@@ -568,9 +579,11 @@ export class Task {
 
     // Continue with task initialization
     if (task) {
+      this.resolveDbReady() // new task, no DB rewrite needed
       this.startTask(task, initialUserContentParts)
     } else {
       // taskId-only = resume, same as the old historyItem path
+      // resolveDbReady is called inside resumeTaskFromHistory after DB operations complete
       this.resumeTaskFromHistory()
     }
 
@@ -639,6 +652,66 @@ export class Task {
       return userConfig?.language || 'en-US'
     } catch {
       return 'en-US'
+    }
+  }
+
+  private createSingleTurnLlmCaller(): (systemPrompt: string, userPrompt: string) => Promise<string> {
+    return async (systemPrompt: string, userPrompt: string): Promise<string> => {
+      const stream = this.api.createMessage(systemPrompt, [{ role: 'user', content: userPrompt }])
+      let responseText = ''
+      for await (const chunk of stream) {
+        if (chunk.type === 'text') {
+          responseText += chunk.text
+        }
+      }
+      return responseText
+    }
+  }
+
+  private normalizeBooleanToolParam(value: string | undefined): boolean | null {
+    if (value === undefined || value === null) return null
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true') return true
+    if (normalized === 'false' || normalized === '') return false
+    return false
+  }
+
+  private enqueueExperienceExtraction(): void {
+    const queue = this.experienceExtractionQueue ?? Promise.resolve()
+    this.experienceExtractionQueue = queue
+      .catch(() => undefined)
+      .then(async () => {
+        await this.triggerExperienceExtraction()
+      })
+  }
+
+  private async triggerExperienceExtraction(): Promise<void> {
+    const experienceExtractionEnabled = await getGlobalState('experienceExtractionEnabled')
+    if (experienceExtractionEnabled === false) {
+      logger.info('experience.extract.skipped', {
+        event: 'experience.extract.skipped',
+        taskId: this.taskId,
+        reason: 'disabled_by_user'
+      })
+      return
+    }
+
+    const manager = createExperienceManager({
+      completeWithLlm: this.createSingleTurnLlmCaller()
+    })
+
+    const metadata = await getTaskMetadata(this.taskId)
+    const outcome = await manager.extractFromCompletedTask({
+      taskId: this.taskId,
+      conversationHistory: cloneDeep(this.apiConversationHistory),
+      locale: await this.getUserLocale(),
+      taskExperienceLedger: cloneDeep(metadata.experience_ledger || []),
+      timestamp: new Date().toISOString()
+    })
+
+    if (JSON.stringify(outcome.taskExperienceLedger) !== JSON.stringify(metadata.experience_ledger || [])) {
+      metadata.experience_ledger = outcome.taskExperienceLedger
+      await saveTaskMetadata(this.taskId, metadata)
     }
   }
 
@@ -1257,6 +1330,7 @@ export class Task {
     response: ChatermAskResponse
     text?: string
     contentParts?: ContentPart[]
+    toolResult?: ToolResultPayload
   }> {
     if (this.abort) {
       throw new Error('Chaterm instance aborted')
@@ -1385,7 +1459,13 @@ export class Task {
     }
   }
 
-  async handleWebviewAskResponse(askResponse: ChatermAskResponse, text?: string, truncateAtMessageTs?: number, contentParts?: ContentPart[]) {
+  async handleWebviewAskResponse(
+    askResponse: ChatermAskResponse,
+    text?: string,
+    truncateAtMessageTs?: number,
+    contentParts?: ContentPart[],
+    toolResult?: ToolResultPayload
+  ) {
     logger.debug('Handling webview ask response', {
       event: 'agent.task.ask_response.received',
       askResponse,
@@ -1400,7 +1480,8 @@ export class Task {
     this.askResponsePayload = {
       response: askResponse,
       text,
-      contentParts
+      contentParts,
+      toolResult
     }
   }
 
@@ -1415,7 +1496,7 @@ export class Task {
     }
 
     if (partial !== undefined) {
-      await this.handleSayPartialMessage(type, text, partial, hostInfo)
+      await this.handleSayPartialMessage(type, text, partial, hostInfo, contentParts)
     } else {
       // this is a new non-partial message, so add it like normal
       const sayTs = Date.now()
@@ -1432,7 +1513,13 @@ export class Task {
     }
   }
 
-  private async handleSayPartialMessage(type: ChatermSay, text?: string, partial?: boolean, hostInfo?: HostInfo): Promise<void> {
+  private async handleSayPartialMessage(
+    type: ChatermSay,
+    text?: string,
+    partial?: boolean,
+    hostInfo?: HostInfo,
+    contentParts?: ContentPart[]
+  ): Promise<void> {
     const lastMessage = this.chatermMessages.at(-1)
     // Check if updating previous partial message with same type AND same host
     const isUpdatingPreviousPartial =
@@ -1441,6 +1528,7 @@ export class Task {
       if (isUpdatingPreviousPartial) {
         lastMessage.text = text
         lastMessage.partial = partial
+        lastMessage.contentParts = contentParts ?? lastMessage.contentParts
         await this.postMessageToWebview({
           type: 'partialMessage',
           partialMessage: lastMessage
@@ -1454,11 +1542,12 @@ export class Task {
           type: 'say',
           say: type,
           text,
+          contentParts,
           partial,
           ...(hostInfo ?? {})
         })
         await this.postStateToWebview()
-        if (type === 'command_output') {
+        if (type === 'command_output' || type === 'context_truncated') {
           const newMsg = this.chatermMessages.at(-1)!
           await this.postMessageToWebview({
             type: 'partialMessage',
@@ -1473,6 +1562,7 @@ export class Task {
         this.lastMessageTs = lastMessage.ts
         lastMessage.text = text
         lastMessage.partial = false
+        lastMessage.contentParts = contentParts ?? lastMessage.contentParts
 
         // instead of streaming partialMessage events, we do a save and post like normal to persist to disk
         await this.saveChatermMessagesAndUpdateHistory()
@@ -1489,6 +1579,7 @@ export class Task {
           type: 'say',
           say: type,
           text,
+          contentParts,
           ...(hostInfo ?? {})
         }
         await this.addToChatermMessages(newMessage)
@@ -1578,16 +1669,22 @@ export class Task {
 
     // Remove incomplete api_req_started (no cost and no cancel reason indicates interrupted request)
     const lastApiReqStartedIndex = findLastIndex(modifiedChatermMessages, (m) => m.type === 'say' && m.say === 'api_req_started')
+    let needsRewrite = false
     if (lastApiReqStartedIndex !== -1) {
       const lastApiReqStarted = modifiedChatermMessages[lastApiReqStartedIndex]
       const { cost, cancelReason }: ChatermApiReqInfo = JSON.parse(lastApiReqStarted.text || '{}')
       if (cost === undefined && cancelReason === undefined) {
         modifiedChatermMessages.splice(lastApiReqStartedIndex, 1)
+        needsRewrite = true
       }
     }
 
-    await this.overwriteChatermMessages(modifiedChatermMessages)
-    this.chatermMessages = await getChatermMessages(this.taskId)
+    if (needsRewrite) {
+      await this.overwriteChatermMessages(modifiedChatermMessages)
+      this.chatermMessages = await getChatermMessages(this.taskId)
+    } else {
+      this.chatermMessages = modifiedChatermMessages
+    }
     this.apiConversationHistory = await getSavedApiConversationHistory(this.taskId)
     await this.clearEphemeralToolResults()
     await this.contextManager.initializeContextHistory(this.taskId)
@@ -1602,6 +1699,7 @@ export class Task {
     }
 
     this.isInitialized = true
+    this.resolveDbReady()
 
     // Wait for user to send a message to continue
     const { text, contentParts } = await this.ask('resume_task', '', false)
@@ -2046,9 +2144,10 @@ export class Task {
     const userLocale = await this.getUserLocale()
     this.contextManager.setLanguage(userLocale)
 
-    // Notify the user before the potentially slow truncation + summarization process
-    if (this.contextManager.needsTruncation(this.chatermMessages, this.api, previousApiReqIndex)) {
-      await this.say('context_truncated', JSON.stringify({ contextWindow: this.api.getModel().info.contextWindow }), false)
+    // Notify the user before the potentially slow truncation + summarization process.
+    const needsContextTruncation = this.contextManager.needsTruncation(this.chatermMessages, this.api, previousApiReqIndex)
+    if (needsContextTruncation) {
+      await this.say('context_truncated', JSON.stringify({ status: 'compressing', contextWindow: this.api.getModel().info.contextWindow }), true)
     }
 
     const contextManagementMetadata = await this.contextManager.getNewContextMessagesAndMetadata(
@@ -2068,6 +2167,10 @@ export class Task {
         taskId: this.taskId,
         deletedRange: contextManagementMetadata.conversationHistoryDeletedRange
       })
+    }
+
+    if (needsContextTruncation) {
+      await this.say('context_truncated', JSON.stringify({ status: 'completed', contextWindow: this.api.getModel().info.contextWindow }), false)
     }
 
     // Apply summarizeUpToTs filter if specified
@@ -3104,7 +3207,7 @@ export class Task {
   }
 
   private async askApproval(toolDescription: string, type: ChatermAsk, partialMessage?: string): Promise<boolean> {
-    const { response, text, contentParts } = await this.ask(type, partialMessage, false)
+    const { response, text, contentParts, toolResult } = await this.ask(type, partialMessage, false)
     const approved = response === 'yesButtonClicked' || response === 'autoApproveReadOnlyClicked'
 
     // If user clicked "auto-approve read-only" button, enable session-level auto-approval for subsequent read-only commands
@@ -3121,6 +3224,14 @@ export class Task {
         await this.saveCheckpoint()
       }
       this.didRejectTool = true
+    } else if (toolResult) {
+      await this.pushToolResult(toolDescription, toolResult.output, {
+        toolName: toolResult.toolName ?? 'execute_command',
+        hosts: this.hosts,
+        isError: toolResult.isError
+      })
+      await this.saveUserMessage(toolResult.output, undefined, 'command_output')
+      await this.saveCheckpoint()
     } else if (text) {
       await this.pushAdditionalToolFeedback(text)
       await this.saveUserMessage(text, contentParts)
@@ -3221,6 +3332,7 @@ export class Task {
     const result: string | undefined = block.params.result
     const command: string | undefined = block.params.command
     const ip: string | undefined = block.params.ip
+    const depositExperienceRaw: string | undefined = block.params.depositExperience
 
     const addNewChangesFlagToLastCompletionResultMessage = async () => {
       const hasNewChanges = await this.doesLatestTaskCompletionHaveNewChanges()
@@ -3267,7 +3379,6 @@ export class Task {
           await this.say('completion_result', result, false)
           await this.saveCheckpoint(true)
           await addNewChangesFlagToLastCompletionResultMessage()
-          telemetryService.captureTaskCompleted(this.taskId)
         } else {
           await this.saveCheckpoint(true)
         }
@@ -3283,7 +3394,18 @@ export class Task {
         await this.say('completion_result', result, false)
         await this.saveCheckpoint(true)
         await addNewChangesFlagToLastCompletionResultMessage()
-        telemetryService.captureTaskCompleted(this.taskId)
+      }
+
+      telemetryService.captureTaskCompleted(this.taskId)
+      const depositExperience = this.normalizeBooleanToolParam(depositExperienceRaw)
+      if (depositExperience === true) {
+        this.enqueueExperienceExtraction()
+      } else {
+        logger.info('experience.extract.skipped', {
+          event: 'experience.extract.skipped',
+          taskId: this.taskId,
+          reason: depositExperienceRaw === undefined ? 'deposit_experience_missing' : 'deposit_experience_false'
+        })
       }
 
       // Auto-complete all in_progress todos when task is completed (intranet feature)
@@ -4812,6 +4934,31 @@ USERNAME:${localSystemInfo.userName}`
     return getKbSearchEnabledLabel(locale)
   }
 
+  private buildKbSearchUiMessage(results: KbSearchResult[], locale: string): { text: string; contentParts: ContentPart[] } {
+    const kbLabel = this.getKbSearchLabel(locale)
+    const kbRoot = getKnowledgeBaseRoot()
+    const text = `${kbLabel}:\n${results.map((r) => `  ${r.path} L${r.startLine}-${r.endLine}`).join('\n')}\n`
+    const contentParts: ContentPart[] = [{ type: 'text', text: `${kbLabel}:` }]
+
+    for (const result of results) {
+      const relPath = result.path.replace(/\\/g, '/')
+      contentParts.push({
+        type: 'chip',
+        chipType: 'doc',
+        ref: {
+          absPath: path.join(kbRoot, relPath).replace(/\\/g, '/'),
+          relPath,
+          name: path.basename(relPath),
+          type: 'file',
+          startLine: result.startLine,
+          endLine: result.endLine
+        }
+      })
+    }
+
+    return { text, contentParts }
+  }
+
   private async handleKbSearchToolUse(block: ToolUse): Promise<void> {
     const toolDescription = this.getToolDescription(block)
     const query = block.params.query
@@ -4834,8 +4981,9 @@ USERNAME:${localSystemInfo.userName}`
       if (results.length === 0) {
         await this.pushToolResult(toolDescription, 'No relevant results found in the knowledge base.')
       } else {
-        const kbLabel = this.getKbSearchLabel(await this.getUserLocale())
-        await this.say('text', `${kbLabel}:\n${results.map((r) => `  ${r.path} L${r.startLine}-${r.endLine}`).join('\n')}\n`, false)
+        const locale = await this.getUserLocale()
+        const uiMessage = this.buildKbSearchUiMessage(results, locale)
+        await this.say('text', uiMessage.text, false, undefined, uiMessage.contentParts)
         const formatted = results
           .map((r, i) => `[${i + 1}] ${r.path} (lines ${r.startLine}-${r.endLine}, score: ${r.score.toFixed(3)})\n${r.snippet}`)
           .join('\n\n---\n\n')
@@ -4896,8 +5044,9 @@ USERNAME:${localSystemInfo.userName}`
       const results = await mgr.search(query)
       if (results.length === 0) return null
 
-      const kbLabel = this.getKbSearchLabel(await this.getUserLocale())
-      await this.say('text', `${kbLabel}:\n${results.map((r) => `  ${r.path} L${r.startLine}-${r.endLine}`).join('\n')}\n`, false)
+      const locale = await this.getUserLocale()
+      const uiMessage = this.buildKbSearchUiMessage(results, locale)
+      await this.say('text', uiMessage.text, false, undefined, uiMessage.contentParts)
 
       const formatted = results.map((r) => `[${r.path}:${r.startLine}-${r.endLine}] (score: ${r.score.toFixed(3)})\n${r.snippet}`).join('\n\n---\n\n')
       return `\n\n<knowledge_base_context>\nThe following knowledge base documents may be relevant to your task:\n\n${formatted}\n</knowledge_base_context>`

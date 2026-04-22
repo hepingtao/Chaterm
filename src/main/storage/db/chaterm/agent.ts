@@ -1,6 +1,12 @@
 import Database from 'better-sqlite3'
 import type { TaskListItem } from '../../../agent/core/context/context-tracking/ContextTrackerTypes'
+import type { ChatermMessage, ChatermMessagesPage } from '../../../agent/shared/ExtensionMessage'
 const logger = createLogger('db')
+
+interface HistoryPageOptions {
+  beforeCursor?: number | null
+  limit?: number
+}
 
 export async function deleteChatermHistoryByTaskIdLogic(db: Database.Database, taskId: string): Promise<void> {
   try {
@@ -135,51 +141,95 @@ export async function getSavedChatermMessagesLogic(db: Database.Database, taskId
       `)
     const rows = stmt.all(taskId)
 
-    return rows.map((row) => {
-      // Parse hosts with backward compatibility
-      let hosts: any[] | undefined = undefined
-      if (row.hosts) {
-        try {
-          // Try parsing as JSON (new format: Host[])
-          const parsed = JSON.parse(row.hosts)
-          if (Array.isArray(parsed)) {
-            hosts = parsed
-          }
-        } catch (e) {
-          // Fallback for old format: comma-separated string
-          const hostStrings = row.hosts.split(',').filter(Boolean)
-          // Convert string[] to Host[] format with minimal info
-          hosts = hostStrings.map((ip: string) => ({
-            host: ip.trim(),
-            uuid: ip.trim(),
-            connection: 'personal'
-          }))
-        }
-      }
-
-      return {
-        ts: row.ts,
-        type: row.type,
-        ask: row.ask_type,
-        say: row.say_type,
-        text: row.text,
-        contentParts: row.content_parts ? JSON.parse(row.content_parts) : undefined,
-        reasoning: row.reasoning,
-        images: row.images ? JSON.parse(row.images) : undefined,
-        partial: row.partial === 1,
-        lastCheckpointHash: row.last_checkpoint_hash,
-        isCheckpointCheckedOut: row.is_checkpoint_checked_out === 1,
-        isOperationOutsideWorkspace: row.is_operation_outside_workspace === 1,
-        conversationHistoryIndex: row.conversation_history_index,
-        conversationHistoryDeletedRange: row.conversation_history_deleted_range ? JSON.parse(row.conversation_history_deleted_range) : undefined,
-        mcpToolCall: row.mcp_tool_call_data ? JSON.parse(row.mcp_tool_call_data) : undefined,
-        hosts
-      }
-    })
+    return getSavedChatermMessagesLogicFromRows(rows)
   } catch (error) {
     logger.error('Failed to get Cline messages', { error: error })
     return []
   }
+}
+
+export async function getSavedChatermMessagesPageLogic(
+  db: Database.Database,
+  taskId: string,
+  options: HistoryPageOptions = {}
+): Promise<ChatermMessagesPage> {
+  const limit = Math.max(1, Math.min(options.limit ?? 40, 200))
+  const beforeCursor = typeof options.beforeCursor === 'number' ? options.beforeCursor : null
+
+  try {
+    const baseQuery = `
+      SELECT id, ts, type, ask_type, say_type, text, content_parts, reasoning, images, partial,
+             last_checkpoint_hash, is_checkpoint_checked_out, is_operation_outside_workspace,
+             conversation_history_index, conversation_history_deleted_range, mcp_tool_call_data,
+             hosts
+      FROM agent_ui_messages_v1
+      WHERE task_id = ?
+    `
+    const paginationClause = beforeCursor != null ? 'AND id < ?' : ''
+    const orderAndLimitClause = 'ORDER BY id DESC LIMIT ?'
+    const stmt = db.prepare(`${baseQuery} ${paginationClause} ${orderAndLimitClause}`)
+    const rows = beforeCursor != null ? stmt.all(taskId, beforeCursor, limit + 1) : stmt.all(taskId, limit + 1)
+
+    const hasMore = rows.length > limit
+    const pageRows = hasMore ? rows.slice(0, limit) : rows
+    const oldestRow = pageRows[pageRows.length - 1] as { id?: number } | undefined
+    const nextCursor = hasMore && typeof oldestRow?.id === 'number' ? oldestRow.id : null
+
+    const messages = (await getSavedChatermMessagesLogicFromRows(pageRows)).reverse()
+
+    return {
+      messages,
+      nextCursor,
+      hasMore
+    }
+  } catch (error) {
+    logger.error('Failed to get paged Cline messages', { error: error })
+    return {
+      messages: [],
+      nextCursor: null,
+      hasMore: false
+    }
+  }
+}
+
+async function getSavedChatermMessagesLogicFromRows(rows: Array<Record<string, any>>): Promise<ChatermMessage[]> {
+  return rows.map((row) => {
+    let hosts: any[] | undefined = undefined
+    if (row.hosts) {
+      try {
+        const parsed = JSON.parse(row.hosts)
+        if (Array.isArray(parsed)) {
+          hosts = parsed
+        }
+      } catch (e) {
+        const hostStrings = row.hosts.split(',').filter(Boolean)
+        hosts = hostStrings.map((ip: string) => ({
+          host: ip.trim(),
+          uuid: ip.trim(),
+          connection: 'personal'
+        }))
+      }
+    }
+
+    return {
+      ts: row.ts,
+      type: row.type,
+      ask: row.ask_type,
+      say: row.say_type,
+      text: row.text,
+      contentParts: row.content_parts ? JSON.parse(row.content_parts) : undefined,
+      reasoning: row.reasoning,
+      images: row.images ? JSON.parse(row.images) : undefined,
+      partial: row.partial === 1,
+      lastCheckpointHash: row.last_checkpoint_hash,
+      isCheckpointCheckedOut: row.is_checkpoint_checked_out === 1,
+      isOperationOutsideWorkspace: row.is_operation_outside_workspace === 1,
+      conversationHistoryIndex: row.conversation_history_index,
+      conversationHistoryDeletedRange: row.conversation_history_deleted_range ? JSON.parse(row.conversation_history_deleted_range) : undefined,
+      mcpToolCall: row.mcp_tool_call_data ? JSON.parse(row.mcp_tool_call_data) : undefined,
+      hosts
+    }
+  })
 }
 
 export async function saveChatermMessagesLogic(db: Database.Database, taskId: string, uiMessages: any[]): Promise<void> {
@@ -234,7 +284,7 @@ export async function saveChatermMessagesLogic(db: Database.Database, taskId: st
 export async function getTaskMetadataLogic(db: Database.Database, taskId: string): Promise<any> {
   try {
     const stmt = db.prepare(`
-        SELECT files_in_context, model_usage, hosts, todos, title, favorite
+        SELECT files_in_context, model_usage, hosts, todos, experience_ledger, title, favorite
         FROM agent_task_metadata_v1
         WHERE task_id = ?
       `)
@@ -246,28 +296,30 @@ export async function getTaskMetadataLogic(db: Database.Database, taskId: string
         model_usage: JSON.parse(row.model_usage || '[]'),
         hosts: JSON.parse(row.hosts || '[]'),
         todos: row.todos ? JSON.parse(row.todos) : [],
+        experience_ledger: row.experience_ledger ? JSON.parse(row.experience_ledger) : [],
         title: row.title || undefined,
         favorite: row.favorite === 1
       }
     }
 
-    return { files_in_context: [], model_usage: [], hosts: [], todos: [], title: undefined, favorite: false }
+    return { files_in_context: [], model_usage: [], hosts: [], todos: [], experience_ledger: [], title: undefined, favorite: false }
   } catch (error) {
     logger.error('Failed to get task metadata', { error: error })
-    return { files_in_context: [], model_usage: [], hosts: [], todos: [], title: undefined, favorite: false }
+    return { files_in_context: [], model_usage: [], hosts: [], todos: [], experience_ledger: [], title: undefined, favorite: false }
   }
 }
 
 export async function saveTaskMetadataLogic(db: Database.Database, taskId: string, metadata: any): Promise<void> {
   try {
     const upsertStmt = db.prepare(`
-        INSERT INTO agent_task_metadata_v1 (task_id, files_in_context, model_usage, hosts, todos, title, favorite)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO agent_task_metadata_v1 (task_id, files_in_context, model_usage, hosts, todos, experience_ledger, title, favorite)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id) DO UPDATE SET
           files_in_context = excluded.files_in_context,
           model_usage = excluded.model_usage,
           hosts = excluded.hosts,
           todos = excluded.todos,
+          experience_ledger = excluded.experience_ledger,
           title = CASE WHEN excluded.title IS NOT NULL THEN excluded.title ELSE agent_task_metadata_v1.title END,
           favorite = CASE WHEN excluded.favorite IS NOT NULL THEN excluded.favorite ELSE agent_task_metadata_v1.favorite END
       `)
@@ -278,6 +330,7 @@ export async function saveTaskMetadataLogic(db: Database.Database, taskId: strin
       JSON.stringify(metadata.model_usage || []),
       JSON.stringify(metadata.hosts || []),
       JSON.stringify(metadata.todos || []),
+      JSON.stringify(metadata.experience_ledger || []),
       metadata.title !== undefined ? metadata.title : null,
       metadata.favorite !== undefined ? (metadata.favorite ? 1 : 0) : null
     )

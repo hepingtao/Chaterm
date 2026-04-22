@@ -3,6 +3,7 @@ import { join } from 'path'
 import * as fs from 'fs'
 import { v4 as uuidv4 } from 'uuid'
 import { upgradeAgentTaskMetadataSupport } from './migrations/add-todos-support'
+import { upgradeExperienceLedgerSupport } from './migrations/add-experience-ledger-support'
 import { upgradeMcpToolStateSupport } from './migrations/add-mcp-tool-state-support'
 import { upgradeMcpToolCallSupport } from './migrations/add-mcp-tool-call-support'
 import { upgradeContentPartsSupport } from './migrations/add-content-parts-support'
@@ -12,6 +13,7 @@ import { upgradeBastionCommentSupport } from './migrations/add-bastion-comment-s
 import { upgradeHostInfoSupport } from './migrations/add-host-info-support'
 import { upgradeTaskTitleSupport } from './migrations/add-task-title-support'
 import { upgradeK8sClustersSupport } from './migrations/add-k8s-clusters-support'
+import { upgradeConnectionHistorySupport } from './migrations/add-connection-history-support'
 import { IndexDBMigrator } from './indexdb-migrator'
 import { getUserDataPath } from '../../config/edition'
 const logger = createLogger('db')
@@ -314,6 +316,7 @@ async function applyAllMigrations(db: Database.Database): Promise<void> {
   upgradeTAssetsTable(db)
   upgradeUserSnippetTable(db)
   await upgradeAgentTaskMetadataSupport(db)
+  await upgradeExperienceLedgerSupport(db)
   await upgradeMcpToolStateSupport(db)
   await upgradeMcpToolCallSupport(db)
   await upgradeContentPartsSupport(db)
@@ -324,6 +327,7 @@ async function applyAllMigrations(db: Database.Database): Promise<void> {
   await upgradeHostInfoSupport(db)
   await upgradeTaskTitleSupport(db)
   await upgradeK8sClustersSupport(db)
+  await upgradeConnectionHistorySupport(db)
 }
 
 export async function initDatabase(userId?: number): Promise<Database.Database> {

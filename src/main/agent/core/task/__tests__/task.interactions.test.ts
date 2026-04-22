@@ -9,6 +9,20 @@ const { telemetryMocks } = vi.hoisted(() => ({
   }
 }))
 
+const { experienceMocks } = vi.hoisted(() => ({
+  experienceMocks: {
+    extractFromCompletedTask: vi.fn().mockResolvedValue({ taskExperienceLedger: [], wroteAny: false }),
+    createExperienceManager: vi.fn()
+  }
+}))
+
+const { knowledgebaseMocks } = vi.hoisted(() => ({
+  knowledgebaseMocks: {
+    getKbSearchManager: vi.fn(),
+    getKnowledgeBaseRoot: vi.fn(() => '/mock/knowledgebase')
+  }
+}))
+
 vi.mock('electron', () => ({
   app: { getAppPath: () => '' },
   BrowserWindow: { fromWebContents: () => null },
@@ -41,6 +55,17 @@ vi.mock('@api/index', () => ({
   ApiHandler: class {},
   buildApiHandler: vi.fn(() => ({}))
 }))
+vi.mock('@core/storage/state', () => ({
+  getGlobalState: vi.fn(async () => ({})),
+  getUserConfig: vi.fn(async () => ({ language: 'zh-CN' }))
+}))
+vi.mock('../../../../services/knowledgebase', () => ({
+  getKbSearchManager: knowledgebaseMocks.getKbSearchManager,
+  getKnowledgeBaseRoot: knowledgebaseMocks.getKnowledgeBaseRoot
+}))
+vi.mock('../../../services/experience', () => ({
+  createExperienceManager: experienceMocks.createExperienceManager
+}))
 vi.mock('../../../storage/chat_sync/index', () => ({
   ChatSyncScheduler: {
     getInstance: vi.fn(() => ({
@@ -56,12 +81,22 @@ describe('Task interaction-heavy branches', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    experienceMocks.createExperienceManager.mockReturnValue({
+      extractFromCompletedTask: experienceMocks.extractFromCompletedTask
+    })
     task = Object.create((Task as unknown as { prototype: object }).prototype) as any
     task.taskId = 'task-interactions'
+    task.apiConversationHistory = [{ role: 'user', content: 'Fix SSH timeout on bastion' }]
     task.chatermMessages = []
     task.userMessageContent = []
+    task.api = {
+      createMessage: vi.fn(async function* () {
+        yield { type: 'text', text: 'ok' }
+      })
+    }
     task.autoApprovalSettings = { enabled: false, enableNotifications: false }
     task.messages = { userProvidedFeedback: 'feedback: {feedback}' }
+    task.getUserLocale = vi.fn().mockResolvedValue('zh-CN')
 
     task.getToolDescription = vi.fn(() => '[mock-tool]')
     task.removeClosingTag = vi.fn((_partial: boolean, _tag: string, text?: string) => text ?? '')
@@ -77,6 +112,8 @@ describe('Task interaction-heavy branches', () => {
     task.executeCommandTool = vi.fn().mockResolvedValue('cmd ok')
     task.completeAllInProgressTodos = vi.fn().mockResolvedValue(undefined)
     task.clearEphemeralToolResults = vi.fn().mockResolvedValue(undefined)
+    task.triggerExperienceExtraction = vi.fn().mockResolvedValue(undefined)
+    task.enqueueExperienceExtraction = vi.fn()
     task.doesLatestTaskCompletionHaveNewChanges = vi.fn().mockResolvedValue(false)
     task.performCommandSecurityCheck = vi.fn().mockResolvedValue({
       needsSecurityApproval: false,
@@ -164,6 +201,7 @@ describe('Task interaction-heavy branches', () => {
     expect(task.askApproval).toHaveBeenCalledTimes(1)
     expect(task.executeCommandTool).not.toHaveBeenCalled()
     expect(task.saveCheckpoint).toHaveBeenCalled()
+    expect(task.triggerExperienceExtraction).not.toHaveBeenCalled()
   })
 
   it('handleAttemptCompletionToolUse should push empty tool result on acceptance', async () => {
@@ -171,13 +209,26 @@ describe('Task interaction-heavy branches', () => {
 
     await task.handleAttemptCompletionToolUse({
       name: 'attempt_completion',
-      params: { result: 'all good' },
+      params: { result: 'all good', depositExperience: 'true' },
       partial: false
     })
 
     expect(task.completeAllInProgressTodos).toHaveBeenCalledTimes(1)
     expect(task.clearEphemeralToolResults).toHaveBeenCalledTimes(1)
     expect(task.pushToolResult).toHaveBeenCalledWith('[mock-tool]', '')
+    expect(task.enqueueExperienceExtraction).toHaveBeenCalledWith()
+  })
+
+  it('handleAttemptCompletionToolUse should skip experience extraction when depositExperience is false', async () => {
+    task.ask = vi.fn().mockResolvedValue({ response: 'yesButtonClicked', text: '', contentParts: [] })
+
+    await task.handleAttemptCompletionToolUse({
+      name: 'attempt_completion',
+      params: { result: 'all good', depositExperience: 'false' },
+      partial: false
+    })
+
+    expect(task.enqueueExperienceExtraction).not.toHaveBeenCalled()
   })
 
   it('handleExecuteCommandToolUse should route missing params to handleMissingParam', async () => {
@@ -200,5 +251,77 @@ describe('Task interaction-heavy branches', () => {
     })
 
     expect(task.ask).toHaveBeenCalledWith('command', 'pwd', true)
+  })
+
+  it('handleKbSearchToolUse should send structured contentParts for kb results', async () => {
+    knowledgebaseMocks.getKbSearchManager.mockReturnValue({
+      search: vi.fn().mockResolvedValue([
+        {
+          path: 'rss2.md',
+          startLine: 1,
+          endLine: 3,
+          score: 0.98,
+          snippet: 'rss snippet'
+        }
+      ])
+    })
+
+    await task.handleKbSearchToolUse({
+      name: 'kb_search',
+      params: { query: 'rss', max_results: '5' },
+      partial: false
+    })
+
+    expect(task.say).toHaveBeenCalledWith('text', expect.stringContaining('rss2.md L1-3'), false, undefined, [
+      { type: 'text', text: '知识库检索:' },
+      {
+        type: 'chip',
+        chipType: 'doc',
+        ref: {
+          absPath: '/mock/knowledgebase/rss2.md',
+          relPath: 'rss2.md',
+          name: 'rss2.md',
+          type: 'file',
+          startLine: 1,
+          endLine: 3
+        }
+      }
+    ])
+    expect(task.pushToolResult).toHaveBeenCalledWith('[mock-tool]', expect.stringContaining('Found 1 results:'))
+    expect(task.saveCheckpoint).toHaveBeenCalledTimes(1)
+  })
+
+  it('performKbSearch should send structured contentParts for automatic kb context', async () => {
+    knowledgebaseMocks.getKbSearchManager.mockReturnValue({
+      search: vi.fn().mockResolvedValue([
+        {
+          path: 'rss2.md',
+          startLine: 1,
+          endLine: 1,
+          score: 0.88,
+          snippet: 'rss snippet'
+        }
+      ])
+    })
+
+    const result = await task.performKbSearch([{ type: 'text', text: 'How to configure rss?' }] as any)
+
+    expect(task.say).toHaveBeenCalledWith('text', expect.stringContaining('rss2.md L1-1'), false, undefined, [
+      { type: 'text', text: '知识库检索:' },
+      {
+        type: 'chip',
+        chipType: 'doc',
+        ref: {
+          absPath: '/mock/knowledgebase/rss2.md',
+          relPath: 'rss2.md',
+          name: 'rss2.md',
+          type: 'file',
+          startLine: 1,
+          endLine: 1
+        }
+      }
+    ])
+    expect(result).toContain('<knowledge_base_context>')
+    expect(result).toContain('[rss2.md:1-1]')
   })
 })

@@ -79,7 +79,7 @@
         >
           <img
             v-if="view.icon.includes('/')"
-            :src="view.icon"
+            :src="pluginViewIconSrc(view.icon)"
             alt=""
           />
           <i
@@ -176,10 +176,16 @@ import eventBus from '@/utils/eventBus'
 import { shortcutService } from '@/services/shortcutService'
 import { dataSyncService } from '@/services/dataSyncService'
 import { chatSyncService } from '@/services/chatSyncService'
+import { convertFileLocalResourceSrc } from '@/utils/convertFileLocalResourceSrc'
+import { reconcileEnterprisePluginStateAfterMetadataChange } from '../AiTab/composables/useModelConfiguration'
 
 const logger = createRendererLogger('leftTab')
 let storageEventHandler: ((e: StorageEvent) => void) | null = null
+let removePluginMetadataListener: (() => void) | null = null
 const pluginViews = ref<any[]>([])
+
+/** file:// URLs cannot be used in img src in the renderer; map via custom protocol (see main process). */
+const pluginViewIconSrc = (icon: string) => convertFileLocalResourceSrc(icon)
 const userStore = userInfoStore(pinia)
 const activeKey = ref('workspace')
 const showUserMenu = ref<boolean>(false)
@@ -325,8 +331,9 @@ onMounted(async () => {
   } catch (e) {
     logger.error('Get View Error', { error: e })
   }
-  api.onPluginMetadataChanged(async () => {
+  removePluginMetadataListener = api.onPluginMetadataChanged(async () => {
     await refreshPluginViews()
+    await reconcileEnterprisePluginStateAfterMetadataChange()
   })
   storageEventHandler = (e: StorageEvent) => {
     if (e.key === 'login-skipped') {
@@ -342,6 +349,10 @@ onUnmounted(() => {
   if (storageEventHandler) {
     window.removeEventListener('storage', storageEventHandler)
     storageEventHandler = null
+  }
+  if (removePluginMetadataListener) {
+    removePluginMetadataListener()
+    removePluginMetadataListener = null
   }
 })
 </script>

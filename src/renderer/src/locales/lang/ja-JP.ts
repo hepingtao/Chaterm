@@ -98,6 +98,7 @@ export default {
     pleaseInputPrivateKey: '秘密鍵を入力してください',
     localhost: 'ローカルホスト',
     favoriteBar: 'お気に入り',
+    recentConnections: '最近の接続',
     executeCommandToAllWindows: 'すべてのウィンドウでコマンドを実行',
     broadcastTo: '{count} 個のターミナルにブロードキャスト',
     reloadAliasDataFailed: 'エイリアスデータの再読み込みに失敗しました',
@@ -290,6 +291,18 @@ export default {
     extensions: '拡張機能',
     about: 'について',
     documentation: 'ドキュメント',
+    accountManagement: 'アカウント管理',
+    deactivateAccount: 'アカウントを削除',
+    deactivateAccountDescription:
+      'このアカウントを今後利用しない場合は、ここで削除できます。削除すると、この端末の現在のログイン状態も消去されます。',
+    deactivateAccountConfirmTitle: 'アカウント削除の確認',
+    deactivateAccountConfirmDescription: 'アカウント削除は高リスクの操作です。続行するには、下の確認キーワードを入力してください。',
+    deactivateAccountConfirmKeyword: '削除',
+    deactivateAccountInputPlaceholder: '続行するには「{keyword}」と入力してください',
+    deactivateAccountSuccess: 'アカウントを削除しました',
+    deactivateAccountSuccessDescription: 'アカウントが削除され、この端末の現在のログイン状態も消去されました。',
+    deactivateAccountFailed: 'アカウントを削除できませんでした',
+    deactivateAccountUserMissing: '現在のユーザーアカウントを特定できません。',
     privacy: 'プライバシー',
     trustedDevices: '信頼できるデバイス',
     trustedDevicesDescription:
@@ -378,6 +391,9 @@ export default {
     kbSearchEnabled: KB_SEARCH_ENABLED_LABELS['ja-JP'],
     kbSearchEnabledDescribe:
       '新しい会話を開始する際にナレッジベースの関連コンテンツを自動検索し、会話中にAIがナレッジベースを検索することを許可します',
+    experienceExtractionEnabled: '自動経験蓄積',
+    experienceExtractionEnabledDescribe:
+      'タスク成功後、再利用可能な経験をナレッジベースへ自動的に蓄積し、「ナレッジベース検索」と組み合わせて、類似タスクにおける AI の効率と安定性を大幅に向上させます。',
     features: '機能',
     enableCheckpoints: 'チェックポイントを有効にする',
     enableCheckpointsDescribe: 'タスク全体を通じてワークスペースのチェックポイントを保存できるようにします',
@@ -512,7 +528,7 @@ export default {
     saveBackgroundFailed: '背景画像の保存に失敗しました'
   },
   extensions: {
-    extensions: '拡張機能',
+    plugins: 'プラグイン',
     alias: 'エイリアス',
     aliasDescription: 'グローバルエイリアス設定',
     fuzzySearch: 'あいまい検索',
@@ -818,7 +834,7 @@ export default {
     welcome: 'ターミナルで何をお手伝いできますか？',
     welcomeTips: ['ターミナルで何をお手伝いできますか？', '@ でコンテキスト、/ でコマンドを選択', 'Shift + Tab を押してモードを切り替え'],
     loginPrompt: 'AI機能を使用するにはログインしてください。新規ユーザーは2週間無料でご利用いただけます',
-    searchHost: 'IPで検索',
+    searchHost: 'IP、ホスト名または備考で検索',
     noMatchingHosts: '一致するホストがありません',
     hosts: 'ホスト',
     docs: 'ドキュメント',
@@ -976,7 +992,8 @@ export default {
     clearSelection: 'クリア',
     addSelected: '選択項目を追加({count})',
     switchNotSupportAgent: 'ネットワーク機器はAgentモードをサポートしていません。Commandモードに自動切り替えしました',
-    contextTruncated: 'コンテキスト領域を確保するため、以前のメッセージを圧縮しています。最近のメッセージは保持されます。'
+    contextTruncating: 'コンテキスト情報を自動圧縮しています',
+    contextTruncated: 'コンテキスト情報は自動圧縮されました'
   },
   keyChain: {
     keyChain: 'キーチェーン',

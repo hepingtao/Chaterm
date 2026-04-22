@@ -47,7 +47,10 @@
       </div>
 
       <!-- Knowledge Base Search -->
-      <div class="setting-item">
+      <div
+        v-if="!kbSearchPolicyHidden"
+        class="setting-item"
+      >
         <a-checkbox
           v-model:checked="kbSearchEnabled"
           @change="handleKbSearchEnabledChange(kbSearchEnabled)"
@@ -56,6 +59,18 @@
         </a-checkbox>
         <p class="setting-description">
           {{ $t('user.kbSearchEnabledDescribe') }}
+        </p>
+      </div>
+
+      <div class="setting-item">
+        <a-checkbox
+          v-model:checked="experienceExtractionEnabled"
+          @change="handleExperienceExtractionEnabledChange(experienceExtractionEnabled)"
+        >
+          {{ $t('user.experienceExtractionEnabled') }}
+        </a-checkbox>
+        <p class="setting-description">
+          {{ $t('user.experienceExtractionEnabledDescribe') }}
         </p>
       </div>
 
@@ -246,7 +261,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { notification } from 'ant-design-vue'
 import { updateGlobalState, getGlobalState } from '@renderer/agent/storage/state'
 import { AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from '@/agent/storage/shared'
@@ -262,6 +277,7 @@ const enableExtendedThinking = ref(true)
 const reasoningEffort = ref('low')
 const shellIntegrationTimeout = ref(4)
 const kbSearchEnabled = ref(true)
+const experienceExtractionEnabled = ref(true)
 const autoApprovalSettings = ref<AutoApprovalSettings>(DEFAULT_AUTO_APPROVAL_SETTINGS)
 const chatSettings = ref<ChatSettings>(DEFAULT_CHAT_SETTINGS)
 const customInstructions = ref('')
@@ -277,6 +293,17 @@ const defaultProxyConfig: ProxyConfig = {
   password: ''
 }
 const proxyConfig = ref<ProxyConfig>(defaultProxyConfig)
+
+const parseKbSearchPolicy = (): boolean | null => {
+  const raw = import.meta.env.RENDERER_KB_SEARCH_ENABLED
+  if (typeof raw !== 'string') return null
+  const normalized = raw.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  return null
+}
+const kbSearchPolicyEnabled = parseKbSearchPolicy()
+const kbSearchPolicyHidden = computed(() => kbSearchPolicyEnabled === false)
 
 // Add specific watch for autoApprovalSettings.enabled
 watch(
@@ -365,7 +392,34 @@ const loadSavedConfig = async () => {
     customInstructions.value = ((await getGlobalState('customInstructions')) as string) || ''
 
     const savedKbSearchEnabled = await getGlobalState('kbSearchEnabled')
-    kbSearchEnabled.value = savedKbSearchEnabled === undefined || savedKbSearchEnabled === null ? true : (savedKbSearchEnabled as boolean)
+    if (kbSearchPolicyEnabled === false) {
+      kbSearchEnabled.value = false
+      await updateGlobalState('kbSearchEnabled', false)
+      try {
+        if (window.api?.kbSetSearchEnabled) {
+          await window.api.kbSetSearchEnabled(false)
+        }
+      } catch {
+        // Guest or KB IPC not ready; persisted flag still applies on next login.
+      }
+    } else if (savedKbSearchEnabled === undefined || savedKbSearchEnabled === null) {
+      kbSearchEnabled.value = true
+      await updateGlobalState('kbSearchEnabled', true)
+      try {
+        if (window.api?.kbSetSearchEnabled) {
+          await window.api.kbSetSearchEnabled(true)
+        }
+      } catch {
+        // Guest or KB IPC not ready; persisted flag still applies on next login.
+      }
+    } else {
+      kbSearchEnabled.value = savedKbSearchEnabled as boolean
+    }
+    const savedExperienceExtractionEnabled = await getGlobalState('experienceExtractionEnabled')
+    experienceExtractionEnabled.value =
+      savedExperienceExtractionEnabled === undefined || savedExperienceExtractionEnabled === null
+        ? true
+        : (savedExperienceExtractionEnabled as boolean)
     needProxy.value = ((await getGlobalState('needProxy')) as boolean) || false
     proxyConfig.value = ((await getGlobalState('proxyConfig')) as ProxyConfig) || defaultProxyConfig
 
@@ -422,6 +476,7 @@ const saveConfig = async () => {
     await updateGlobalState('reasoningEffort', reasoningEffort.value)
     await updateGlobalState('shellIntegrationTimeout', shellIntegrationTimeout.value)
     await updateGlobalState('kbSearchEnabled', kbSearchEnabled.value)
+    await updateGlobalState('experienceExtractionEnabled', experienceExtractionEnabled.value)
     await updateGlobalState('needProxy', needProxy.value)
     const proxyConfigToSave: ProxyConfig = {
       ...proxyConfig.value
@@ -559,12 +614,28 @@ watch(
 // Handle KB search enabled toggle
 const handleKbSearchEnabledChange = async (checked: boolean) => {
   try {
+    if (kbSearchPolicyEnabled === false) {
+      kbSearchEnabled.value = false
+      await updateGlobalState('kbSearchEnabled', false)
+      if (window.api?.kbSetSearchEnabled) {
+        await window.api.kbSetSearchEnabled(false)
+      }
+      return
+    }
     await updateGlobalState('kbSearchEnabled', checked)
     if (window.api?.kbSetSearchEnabled) {
       await window.api.kbSetSearchEnabled(checked)
     }
   } catch (error) {
     logger.error('Failed to update kbSearchEnabled', { error })
+  }
+}
+
+const handleExperienceExtractionEnabledChange = async (checked: boolean) => {
+  try {
+    await updateGlobalState('experienceExtractionEnabled', checked)
+  } catch (error) {
+    logger.error('Failed to update experienceExtractionEnabled', { error })
   }
 }
 
@@ -650,6 +721,12 @@ const openSecurityConfig = async () => {
 :deep(.ant-input),
 :deep(.ant-input-password) {
   color: var(--text-color);
+}
+
+:deep(.ant-checkbox-wrapper-disabled),
+:deep(.ant-checkbox-wrapper-disabled .ant-checkbox + span) {
+  color: var(--text-color-secondary) !important;
+  opacity: 1;
 }
 
 :deep(.ant-checkbox) {
