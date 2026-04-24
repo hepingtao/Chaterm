@@ -15,6 +15,17 @@ export const isSubmitting = ref(false)
 const USER_SELECTION_TIMEOUT = 30000 // 30 seconds
 
 let userSelectionTimerInterval: NodeJS.Timeout | null = null
+let pendingAutoSubmitTimer: NodeJS.Timeout | null = null
+
+// Auto-submit timer (3s after last user interaction)
+const startAutoSubmitTimer = () => {
+  if (pendingAutoSubmitTimer) {
+    clearTimeout(pendingAutoSubmitTimer)
+  }
+  pendingAutoSubmitTimer = setTimeout(() => {
+    submitUserSelection()
+  }, 3000)
+}
 
 // Start user selection timer
 const startUserSelectionTimer = (durationMs = USER_SELECTION_TIMEOUT) => {
@@ -52,10 +63,14 @@ export const resetUserSelectionDialog = () => {
   selectedUserId.value = null
   currentConnectionId.value = null
   isSubmitting.value = false
-  // Clear timer
+  // Clear timers
   if (userSelectionTimerInterval) {
     clearInterval(userSelectionTimerInterval)
     userSelectionTimerInterval = null
+  }
+  if (pendingAutoSubmitTimer) {
+    clearTimeout(pendingAutoSubmitTimer)
+    pendingAutoSubmitTimer = null
   }
 }
 
@@ -75,6 +90,7 @@ export const handleUserSelectionRequest = (data: any) => {
   showUserSelectionDialog.value = true
   resetErrors()
   startUserSelectionTimer()
+  startAutoSubmitTimer()
 }
 
 // Handle user selection timeout
@@ -90,10 +106,17 @@ export const handleUserSelect = (userId: number) => {
   logger.info('User selected', { userId })
   selectedUserId.value = userId
   resetErrors()
+  startAutoSubmitTimer()
 }
 
 // Submit user selection
 export const submitUserSelection = async () => {
+  // Clear auto-submit timer
+  if (pendingAutoSubmitTimer) {
+    clearTimeout(pendingAutoSubmitTimer)
+    pendingAutoSubmitTimer = null
+  }
+
   logger.info('Attempting to submit user selection', { selectedUserId: selectedUserId.value })
 
   // Reset error state
