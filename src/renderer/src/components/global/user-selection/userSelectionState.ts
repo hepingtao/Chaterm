@@ -65,8 +65,13 @@ export const handleUserSelectionRequest = (data: any) => {
 
   currentConnectionId.value = data.id
   userList.value = data.users || []
-  // Automatically select the first user by default
-  selectedUserId.value = userList.value.length > 0 ? userList.value[0].id : null
+  // Automatically select the first user by default, prefer 'itouchtv' if present
+  const itouchTvUser = userList.value.find((u) => u.username === 'itouchtv')
+  selectedUserId.value = itouchTvUser
+    ? itouchTvUser.id
+    : userList.value.length > 0
+      ? userList.value[0].id
+      : null
   showUserSelectionDialog.value = true
   resetErrors()
   startUserSelectionTimer()
