@@ -43,12 +43,14 @@ const mockSendToMain = vi.fn()
 const mockSetMcpToolAutoApprove = vi.fn()
 const mockCancelTask = vi.fn()
 const mockGracefulCancelTask = vi.fn()
+const mockCrossExecuteCommand = vi.fn()
 global.window = {
   api: {
     sendToMain: mockSendToMain,
     setMcpToolAutoApprove: mockSetMcpToolAutoApprove,
     cancelTask: mockCancelTask,
-    gracefulCancelTask: mockGracefulCancelTask
+    gracefulCancelTask: mockGracefulCancelTask,
+    crossExecuteCommand: mockCrossExecuteCommand
   }
 } as any
 
@@ -136,7 +138,9 @@ describe('useCommandInteraction', () => {
 
       expect(eventBus.emit).toHaveBeenCalledWith('executeTerminalCommand', {
         command: 'ls -la',
-        tabId: 'test-tab-1'
+        tabId: 'test-tab-1',
+        targetHost: undefined,
+        targetTerminalTabId: undefined
       })
       expect(message.actioned).toBe(true)
     })
@@ -183,7 +187,9 @@ describe('useCommandInteraction', () => {
 
       expect(eventBus.emit).toHaveBeenCalledWith('executeTerminalCommand', {
         command: 'pwd',
-        tabId: 'test-tab-1'
+        tabId: 'test-tab-1',
+        targetHost: undefined,
+        targetTerminalTabId: undefined
       })
     })
   })
@@ -215,14 +221,15 @@ describe('useCommandInteraction', () => {
 
       expect(eventBus.emit).toHaveBeenCalledWith('executeTerminalCommand', {
         command: 'echo "test"\n',
-        tabId: 'test-tab-1'
+        tabId: 'test-tab-1',
+        targetHost: undefined,
+        targetTerminalTabId: undefined
       })
       expect(session.responseLoading).toBe(true)
       expect(message.executedCommand).toBe('echo "test"')
     })
 
-    it('should warn when applying to wrong server', async () => {
-      const { notification } = await import('ant-design-vue')
+    it('should emit command with targetHost when chatType is cmd', async () => {
       mockGetCurentTabAssetInfo.mockResolvedValue({
         ip: '192.168.1.100',
         uuid: 'server-1',
@@ -253,8 +260,47 @@ describe('useCommandInteraction', () => {
 
       await handleApplyCommand()
 
-      expect(notification.warning).toHaveBeenCalled()
-      expect(eventBus.emit).not.toHaveBeenCalled()
+      expect(eventBus.emit).toHaveBeenCalledWith('executeTerminalCommand', {
+        command: 'ls\n',
+        tabId: 'test-tab-1',
+        targetHost: '127.0.0.1',
+        targetTerminalTabId: undefined
+      })
+    })
+
+    it('should emit command with target terminal tab id when cmd host has tab session', async () => {
+      const { handleApplyCommand } = useCommandInteraction({
+        getCurentTabAssetInfo: mockGetCurentTabAssetInfo,
+        markdownRendererRefs: mockMarkdownRendererRefs,
+        currentTodos: mockCurrentTodos,
+        clearTodoState: mockClearTodoState,
+        scrollToBottom: mockScrollToBottom
+      })
+
+      const mockState = vi.mocked(useSessionState)()
+      mockState.chatTypeValue.value = 'cmd'
+      mockState.hosts.value = [{ host: '192.168.1.100', uuid: 'server-1', connection: 'personal', tabSessionId: 'terminal-tab-1' }]
+      const session = mockState.currentSession.value!
+      session.chatHistory.push({
+        id: 'msg-1',
+        role: 'assistant',
+        content: 'uptime',
+        type: 'ask',
+        ask: 'command',
+        say: '',
+        ts: 100
+      })
+
+      await handleApplyCommand()
+
+      const expectedPayload = {
+        command: 'uptime\n',
+        tabId: 'test-tab-1',
+        targetHost: '192.168.1.100',
+        targetTerminalTabId: 'terminal-tab-1'
+      }
+      expect(eventBus.emit).toHaveBeenCalledWith('executeTerminalCommand', expectedPayload)
+      expect(mockCrossExecuteCommand).toHaveBeenCalledWith(expectedPayload)
     })
   })
 

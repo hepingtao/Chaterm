@@ -8,7 +8,18 @@ import { ApiConfiguration } from './api'
 import { TelemetrySetting } from './TelemetrySetting'
 import { z } from 'zod'
 
-export type Host = { host: string; uuid: string; connection: string; organizationUuid?: string; assetType?: string }
+export type Host = {
+  host: string
+  uuid: string
+  connection: string
+  organizationUuid?: string
+  assetType?: string
+  /**
+   * Dock/terminal tab id used to route commands to a specific terminal session,
+   * even when that terminal is not the currently active tab/window.
+   */
+  tabSessionId?: string
+}
 
 export type CommandGenerationContext = {
   platform: string
@@ -90,6 +101,7 @@ export interface WebviewMessage {
   feedbackType?: TaskFeedbackType
   instruction?: string // For command generation
   modelName?: string
+  chatMode?: 'chat' | 'cmd' | 'agent'
   tabId?: string
   context?: CommandGenerationContext
   command?: string // For explain command

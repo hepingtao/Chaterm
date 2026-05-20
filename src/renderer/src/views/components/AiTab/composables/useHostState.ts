@@ -16,6 +16,7 @@ export interface HostInfo {
   uuid: string
   connection: string
   assetType?: string
+  tabSessionId?: string
 }
 
 /**
@@ -56,7 +57,7 @@ export const useHostState = () => {
       // Determine connection type based on assetType
       // getBastionHostType returns 'jumpserver' | 'qizhi' | null
       const bastionType = getBastionHostType(assetInfo.assetType)
-      assetInfo.connection = bastionType || 'personal'
+      assetInfo.connection = assetInfo.type === 'k8s' ? 'k8s' : bastionType || 'personal'
       return assetInfo
     } catch (error) {
       logger.error('Error getting asset information', { error: error })
@@ -86,7 +87,8 @@ export const useHostState = () => {
         host: hostInfo.ip,
         uuid: hostInfo.uuid,
         connection: hostInfo.connection,
-        assetType: hostInfo.assetType
+        assetType: hostInfo.assetType,
+        tabSessionId: hostInfo.tabSessionId
       }
       hosts.value = [newHost]
     } else {
@@ -105,7 +107,8 @@ export const useHostState = () => {
         ip: assetInfo.ip,
         uuid: assetInfo.uuid,
         connection: assetInfo.connection || 'personal',
-        assetType: assetInfo.assetType
+        assetType: assetInfo.assetType,
+        tabSessionId: assetInfo.tabSessionId
       })
     } else {
       updateHosts(null)

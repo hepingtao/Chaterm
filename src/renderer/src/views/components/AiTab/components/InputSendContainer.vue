@@ -28,7 +28,7 @@
         <!-- Host Tags -->
         <a-tag
           v-for="item in hosts"
-          :key="item.uuid"
+          :key="item.tabSessionId || item.uuid"
           color="blue"
           class="context-tag"
         >

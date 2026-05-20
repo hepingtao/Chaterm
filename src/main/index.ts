@@ -43,7 +43,8 @@ import {
   testStorageFromMain as testRendererStorageFromMain,
   getGlobalState,
   updateGlobalState,
-  getAllExtensionState
+  getAllExtensionState,
+  getUserConfig
 } from './agent/core/storage/state'
 import { getTaskMetadata, saveTaskTitle, saveTaskFavorite, getTaskList } from './agent/core/storage/disk'
 import { createMainWindow, type WindowCreationResult } from './windowManager'
@@ -57,6 +58,7 @@ import * as fsSync from 'fs'
 import { pathToFileURL } from 'url'
 import { loadAllPlugins } from './plugin/pluginLoader'
 import {
+  getInstalledPlugin,
   getAllPluginVersions,
   installPlugin,
   listPlugins,
@@ -82,6 +84,14 @@ import { parseXshellWakeupFromArgv, redactXshellWakeupForLog, type XshellWakeupP
 
 const logger = createLogger('main')
 
+type PreinstalledPluginConfig = {
+  id: string
+  fileName?: string
+  required?: boolean
+  autoInstall?: boolean
+  source?: 'preinstalled' | 'store' | 'local'
+}
+
 const parsePolicyEnabled = (raw: unknown): boolean | null => {
   if (typeof raw !== 'string') return null
   const normalized = raw.trim().toLowerCase()
@@ -90,7 +100,103 @@ const parsePolicyEnabled = (raw: unknown): boolean | null => {
   return null
 }
 
+const parseDeployStatus = (raw: unknown): number => {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+  if (typeof raw !== 'string') return 0
+  const parsed = Number.parseInt(raw.trim(), 10)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const parsePreinstalledPluginConfig = (): PreinstalledPluginConfig[] => {
+  const raw = process.env.CHATERM_PREINSTALLED_PLUGINS
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is PreinstalledPluginConfig => typeof item?.id === 'string' && item.id.trim().length > 0)
+  } catch (error) {
+    logger.warn('Failed to parse preinstalled plugin config', { error: error })
+    return []
+  }
+}
+
+const compareVersion = (a?: string | null, b?: string | null): number => {
+  if (!a && !b) return 0
+  if (!a) return -1
+  if (!b) return 1
+  const pa = a.split('.').map((n) => Number.parseInt(n, 10) || 0)
+  const pb = b.split('.').map((n) => Number.parseInt(n, 10) || 0)
+  const length = Math.max(pa.length, pb.length)
+  for (let i = 0; i < length; i++) {
+    const va = pa[i] || 0
+    const vb = pb[i] || 0
+    if (va > vb) return 1
+    if (va < vb) return -1
+  }
+  return 0
+}
+
+const getPreinstalledPluginPackagePath = (plugin: PreinstalledPluginConfig): string => {
+  const fileName = plugin.fileName || `${plugin.id}.chaterm`
+  const resourceDir = app.isPackaged ? process.resourcesPath : path.join(process.cwd(), 'resources')
+  return path.join(resourceDir, 'preinstalled-plugins', fileName)
+}
+
+const bootstrapPreinstalledPlugins = async () => {
+  if (parseDeployStatus(process.env.CHATERM_DEPLOY_STATUS) === 0) {
+    return
+  }
+
+  const configuredPlugins = parsePreinstalledPluginConfig().filter((plugin) => plugin.autoInstall !== false)
+  if (configuredPlugins.length === 0) {
+    return
+  }
+
+  for (const plugin of configuredPlugins) {
+    const packagePath = getPreinstalledPluginPackagePath(plugin)
+    if (!fsSync.existsSync(packagePath)) {
+      logger.warn('Preinstalled plugin package not found', { pluginId: plugin.id, packagePath })
+      continue
+    }
+
+    const installed = getInstalledPlugin(plugin.id)
+    let shouldInstall = !installed
+
+    try {
+      const zip = new (require('adm-zip'))(packagePath)
+      const entry = zip.getEntry('plugin.json')
+      if (!entry) {
+        logger.warn('Preinstalled plugin package missing plugin.json', { pluginId: plugin.id, packagePath })
+        continue
+      }
+      const manifest = JSON.parse(zip.readAsText(entry)) as PluginManifest
+      if (!installed || compareVersion(installed.version, manifest.version) < 0) {
+        shouldInstall = true
+      } else {
+        shouldInstall = false
+      }
+    } catch (error) {
+      logger.warn('Failed to inspect preinstalled plugin package', { pluginId: plugin.id, packagePath, error: error })
+      continue
+    }
+
+    if (!shouldInstall) {
+      continue
+    }
+
+    if (installed) {
+      uninstallPlugin(plugin.id, { force: true })
+    }
+
+    installPlugin(packagePath, {
+      source: plugin.source || 'preinstalled',
+      required: plugin.required === true
+    })
+  }
+}
+
 let mainWindow: BrowserWindow
+let aiBoundWindow: BrowserWindow | null = null
 let COOKIE_URL = 'http://localhost'
 let browserWindow: BrowserWindow | null = null
 let lastWidth: number = 1344 // Default window width
@@ -135,46 +241,10 @@ async function createWindow(): Promise<void> {
   })
 }
 
-// Send request to renderer process and wait for response
+// Read user config directly from KV store (no renderer window dependency).
+// Used by SSH/terminal modules for proxy, keepalive, and other settings.
 export async function getUserConfigFromRenderer(): Promise<any> {
-  if (!mainWindow) throw new Error('mainWindow not ready')
-
-  const wc = mainWindow.webContents
-
-  // Wait for renderer process to load
-  if (wc.isLoadingMainFrame()) {
-    await new Promise<void>((resolve) => wc.once('did-finish-load', () => resolve()))
-  }
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      cleanup()
-      reject(new Error('getUserConfigFromRenderer timed out'))
-    }, 5000)
-
-    const responseHandler = (_event: Electron.IpcMainEvent, config: any) => {
-      clearTimeout(timeout)
-      cleanup()
-      resolve(config)
-    }
-
-    const errorHandler = (_event: Electron.IpcMainEvent, errMsg: string) => {
-      clearTimeout(timeout)
-      cleanup()
-      reject(new Error(errMsg))
-    }
-
-    const cleanup = () => {
-      ipcMain.removeListener('userConfig:get-response', responseHandler)
-      ipcMain.removeListener('userConfig:get-error', errorHandler)
-    }
-
-    ipcMain.on('userConfig:get-response', responseHandler)
-    ipcMain.on('userConfig:get-error', errorHandler)
-
-    logger.info('Main process sending userConfig:get to renderer process')
-    wc.send('userConfig:get')
-  })
+  return getUserConfig()
 }
 
 app.whenReady().then(async () => {
@@ -362,11 +432,20 @@ app.whenReady().then(async () => {
 
   try {
     // Create a message sender that routes messages to dedicated IPC channels
+    // Determine target window for AI messages: use AI-bound window if set, otherwise main window.
+    const getAiTargetWindow = (): BrowserWindow | null => {
+      if (aiBoundWindow && !aiBoundWindow.isDestroyed()) {
+        return aiBoundWindow
+      }
+      return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+    }
+
     const messageSender = (message) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
+      const target = getAiTargetWindow()
+      if (target) {
         // Route commandGenerationResponse to its dedicated channel
         if (message.type === 'commandGenerationResponse') {
-          mainWindow.webContents.send('command-generation-response', {
+          target.webContents.send('command-generation-response', {
             command: message.command,
             error: message.error,
             tabId: message.tabId
@@ -376,7 +455,7 @@ app.whenReady().then(async () => {
 
         // Route explainCommandResponse to its dedicated channel
         if (message.type === 'explainCommandResponse') {
-          mainWindow.webContents.send('command-explain-response', {
+          target.webContents.send('command-explain-response', {
             explanation: message.explanation,
             error: message.error,
             tabId: message.tabId,
@@ -387,24 +466,24 @@ app.whenReady().then(async () => {
 
         // Route mcpServersUpdate to its dedicated channel for backward compatibility
         if (message.type === 'mcpServersUpdate') {
-          mainWindow.webContents.send('mcp:status-update', message.mcpServers)
+          target.webContents.send('mcp:status-update', message.mcpServers)
           return Promise.resolve(true)
         }
 
         // Route mcpServerUpdate (singular) to its dedicated channel for granular updates
         if (message.type === 'mcpServerUpdate') {
-          mainWindow.webContents.send('mcp:server-update', message.mcpServer)
+          target.webContents.send('mcp:server-update', message.mcpServer)
           return Promise.resolve(true)
         }
 
         // Route mcpConfigFileChanged to its dedicated channel
         if (message.type === 'mcpConfigFileChanged') {
-          mainWindow.webContents.send('mcp:config-file-changed', message.content)
+          target.webContents.send('mcp:config-file-changed', message.content)
           return Promise.resolve(true)
         }
 
         // Default: send to the general channel for other message types
-        mainWindow.webContents.send('main-to-webview', message)
+        target.webContents.send('main-to-webview', message)
         return Promise.resolve(true)
       }
       return Promise.resolve(false)
@@ -1075,6 +1154,13 @@ function setupIPC(): void {
         }
       }
 
+      // Install preloaded plugins after the current user is resolved so they go to the correct user scope.
+      try {
+        await bootstrapPreinstalledPlugins()
+      } catch (error) {
+        logger.warn('Failed to bootstrap preinstalled plugins after login', { value: error })
+      }
+
       // Reload plugins after user login to switch to per-user plugin directory
       try {
         await loadAllPlugins()
@@ -1416,6 +1502,86 @@ function setupIPC(): void {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.close()
     }
+  })
+
+  // ─── Multi-window AI Support ──────────────────────────────────────────────────
+
+  ipcMain.handle('window:register-ai', (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender)
+    if (senderWindow) {
+      aiBoundWindow = senderWindow
+      logger.info('[MultiWindow] AI window registered', { id: senderWindow.id })
+    }
+  })
+
+  ipcMain.handle('window:unregister-ai', () => {
+    aiBoundWindow = null
+    logger.info('[MultiWindow] AI window unregistered')
+  })
+
+  // Cross-window command execution: broadcast to all windows so the correct SSH component handles it
+  ipcMain.handle(
+    'window:cross-execute-command',
+    (event, payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string }) => {
+      const senderWebContentsId = event.sender.id
+      // Broadcast to other windows; the sender already dispatched the local renderer event.
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed() && win.webContents.id !== senderWebContentsId) {
+          win.webContents.send('terminal:cross-execute-command', { ...payload, senderWebContentsId })
+        }
+      })
+    }
+  )
+
+  // Cross-window output relay: send output back to the requesting window
+  ipcMain.handle('window:relay-output', (_event, payload: { senderWebContentsId: number; content: string; tabId?: string; toolResult?: any }) => {
+    const targetWc = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === payload.senderWebContentsId)?.webContents
+    if (targetWc && !targetWc.isDestroyed()) {
+      targetWc.send('terminal:cross-output', {
+        content: payload.content,
+        tabId: payload.tabId,
+        toolResult: payload.toolResult
+      })
+    }
+  })
+
+  ipcMain.handle('window:create-terminal', async () => {
+    const { is } = await import('@electron-toolkit/utils')
+    const terminalWindow = new BrowserWindow({
+      width: 1060,
+      height: 600,
+      minWidth: 800,
+      minHeight: 400,
+      title: 'Chaterm - Terminal',
+      show: false,
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        sandbox: false,
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    })
+
+    terminalWindow.on('ready-to-show', () => {
+      terminalWindow.show()
+    })
+
+    // Close when all windows closed behavior
+    terminalWindow.on('closed', () => {
+      // Clean up if this terminal window was the AI-bound window
+      if (aiBoundWindow === terminalWindow) {
+        aiBoundWindow = null
+      }
+    })
+
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      await terminalWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + '?mode=terminal')
+    } else {
+      await terminalWindow.loadFile(join(__dirname, '../renderer/index.html'), { query: { mode: 'terminal' } })
+    }
+
+    return { success: true, windowId: terminalWindow.id }
   })
 
   ipcMain.handle('cancel-task', async (_event, payload?: { tabId?: string }) => {
@@ -2876,7 +3042,7 @@ ipcMain.handle('capture-telemetry-event', async (_, { eventType, data }) => {
 // Plugins
 
 ipcMain.handle('plugins.install', async (_event, pluginFilePath: string) => {
-  const record = installPlugin(pluginFilePath)
+  const record = installPlugin(pluginFilePath, { source: 'local', required: false })
   await loadAllPlugins()
   return record
 })
@@ -2893,10 +3059,11 @@ ipcMain.handle(
     }
   ) => {
     const { pluginId, version, fileName, data } = payload
+    const installedPlugin = getInstalledPlugin(pluginId)
 
     // Uninstall the old version
     try {
-      await uninstallPlugin(pluginId)
+      await uninstallPlugin(pluginId, { force: true })
     } catch (e) {
       logger.warn('uninstall before update failed, continue install', { value: e })
     }
@@ -2912,7 +3079,10 @@ ipcMain.handle(
     const buffer = Buffer.from(data) // ArrayBuffer -> Buffer
     await fsSync.promises.writeFile(tmpFilePath, buffer)
 
-    const record = installPlugin(tmpFilePath)
+    const record = installPlugin(tmpFilePath, {
+      source: installedPlugin?.source || 'store',
+      required: installedPlugin?.required === true
+    })
     await loadAllPlugins()
     return record
   }
@@ -2959,6 +3129,8 @@ ipcMain.handle('plugins.listUi', async () => {
       id: p.id,
       version: p.version,
       enabled: p.enabled,
+      required: p.required === true,
+      source: p.source || 'local',
       name,
       description,
       iconUrl,

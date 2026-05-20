@@ -36,3 +36,8 @@ test_data/
 coverage/
 .Trae/
 .worktrees/
+
+.claude/
+.omc/
+.qoder/
+.sisyphus/

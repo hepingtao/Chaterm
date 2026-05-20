@@ -34,7 +34,7 @@
         <template v-if="displayedOpenedHosts.length > 0">
           <div
             v-for="(host, index) in displayedOpenedHosts"
-            :key="'opened-' + host.uuid"
+            :key="'opened-' + (host.tabSessionId || host.uuid)"
             class="menu-item opened-host-item"
             :class="{ 'keyboard-selected': keyboardSelectedIndex === index }"
             @click.stop="onHostClick(host)"
@@ -437,7 +437,7 @@ interface MainMenuItem {
   svgSrc?: string
 }
 
-const showHostsMenuItem = computed(() => chatTypeValue.value === 'agent')
+const showHostsMenuItem = computed(() => chatTypeValue.value !== 'chat')
 
 const mainMenuItems = computed<MainMenuItem[]>(() => {
   const items: MainMenuItem[] = []

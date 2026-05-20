@@ -84,32 +84,28 @@ function migrateLegacyDatabase(userId: number, dbType: 'complete' | 'chaterm'): 
   return false
 }
 
-function getInitChatermDbPath(): string {
+function resolveDbPath(dbFileName: string): string {
+  const devPath = join(__dirname, `../../src/renderer/src/assets/db/${dbFileName}`)
+  if (fs.existsSync(devPath)) {
+    return devPath
+  }
   try {
     const { app } = require('electron')
     if (app.isPackaged) {
-      return join((process as any).resourcesPath, 'db', 'init_chaterm.db')
-    } else {
-      return join(__dirname, '../../src/renderer/src/assets/db/init_chaterm.db')
+      return join((process as any).resourcesPath, 'db', dbFileName)
     }
-  } catch (error) {
-    // Fallback for test environment
-    return join(process.cwd(), 'test_data', 'init_chaterm.db')
+  } catch (_) {
+    // electron not available (test environment)
   }
+  return devPath
+}
+
+function getInitChatermDbPath(): string {
+  return resolveDbPath('init_chaterm.db')
 }
 
 function getInitDbPath(): string {
-  try {
-    const { app } = require('electron')
-    if (app.isPackaged) {
-      return join((process as any).resourcesPath, 'db', 'init_data.db')
-    } else {
-      return join(__dirname, '../../src/renderer/src/assets/db/init_data.db')
-    }
-  } catch (error) {
-    // Fallback for test environment
-    return join(process.cwd(), 'test_data', 'init_data.db')
-  }
+  return resolveDbPath('init_data.db')
 }
 
 export function setCurrentUserId(userId: number | null): void {

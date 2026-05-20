@@ -57,6 +57,7 @@ const isConnected = ref(false)
 const isCollectingOutput = ref(false)
 const commandOutput = ref('')
 const currentCommandTabId = ref<string | undefined>(undefined)
+const currentCommandSenderId = ref<number | undefined>(undefined)
 const currentCommand = ref<string>('')
 const commandOutputProcessTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
@@ -186,6 +187,7 @@ const handleCommandOutput = (data: string) => {
 
   if (lastNonEmptyLine && isTerminalPromptLine(lastNonEmptyLine)) {
     const tabId = currentCommandTabId.value
+    const senderWebContentsId = currentCommandSenderId.value
 
     // Use a short timer to allow any remaining data chunks to arrive
     if (commandOutputProcessTimer.value) clearTimeout(commandOutputProcessTimer.value)
@@ -196,6 +198,7 @@ const handleCommandOutput = (data: string) => {
       const outputText = commandOutput.value
       commandOutput.value = ''
       currentCommandTabId.value = undefined
+      currentCommandSenderId.value = undefined
 
       // Extract output lines, strip command echo and prompt
       const lines = outputText.split('\n')
@@ -251,11 +254,11 @@ const handleCommandOutput = (data: string) => {
         toolName: 'execute_command'
       }
 
-      if (finalOutput) {
-        const formattedOutput = `Terminal output:\n\`\`\`\n${finalOutput}\n\`\`\``
-        eventBus.emit('sendMessageToAi', { content: formattedOutput, tabId, toolResult })
-      } else {
-        eventBus.emit('sendMessageToAi', { content: 'Command executed successfully, no output returned', tabId, toolResult })
+      const content = finalOutput ? `Terminal output:\n\`\`\`\n${finalOutput}\n\`\`\`` : 'Command executed successfully, no output returned'
+
+      eventBus.emit('sendMessageToAi', { content, tabId, toolResult })
+      if (senderWebContentsId !== undefined) {
+        window.api.relayOutput({ senderWebContentsId, content, tabId, toolResult })
       }
     }, 150)
   }
@@ -411,8 +414,22 @@ onMounted(() => {
   cleanupFns.push(() => eventBus.off('updateTheme', handleUpdateTheme))
 
   // Handle executeTerminalCommand for AI command mode
-  const handleExecuteCommand = (payload: { command: string; tabId?: string }) => {
-    if (!props.isActive) return
+  const handleExecuteCommand = (payload: {
+    command: string
+    tabId?: string
+    targetHost?: string
+    targetTerminalTabId?: string
+    _senderWebContentsId?: number
+  }) => {
+    if (payload.targetTerminalTabId) {
+      if (payload.targetTerminalTabId !== props.activeTabId) return
+    } else if (payload.targetHost) {
+      const cluster = props.serverInfo.data?.data || props.serverInfo.data
+      const hostMatches = cluster?.server_url === payload.targetHost || props.serverInfo.data?.server_url === payload.targetHost
+      if (!hostMatches) return
+    } else if (!props.isActive) {
+      return
+    }
     if (!payload?.command) {
       logger.warn('handleExecuteCommand: command is empty')
       return
@@ -422,6 +439,7 @@ onMounted(() => {
       isCollectingOutput.value = true
       commandOutput.value = ''
       currentCommandTabId.value = payload.tabId
+      currentCommandSenderId.value = payload._senderWebContentsId
       currentCommand.value = payload.command.replace(/\r?\n$/, '').trim()
       k8sApi.writeToTerminal(terminalId.value, payload.command)
       terminal.value?.focus()
@@ -429,6 +447,17 @@ onMounted(() => {
   }
   eventBus.on('executeTerminalCommand', handleExecuteCommand)
   cleanupFns.push(() => eventBus.off('executeTerminalCommand', handleExecuteCommand))
+
+  const crossWindowCommandCleanup = window.api.onCrossExecuteCommand((payload) => {
+    eventBus.emit('executeTerminalCommand', {
+      command: payload.command,
+      tabId: payload.tabId,
+      targetHost: payload.targetHost,
+      targetTerminalTabId: payload.targetTerminalTabId,
+      _senderWebContentsId: payload.senderWebContentsId
+    } as any)
+  })
+  cleanupFns.push(crossWindowCommandCleanup)
 })
 
 onBeforeUnmount(() => {

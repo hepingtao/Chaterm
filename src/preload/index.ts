@@ -1487,7 +1487,60 @@ const api = {
   /**
    * Open the log directory in the system file manager
    */
-  openLogDir: () => ipcRenderer.invoke('logging:openDir')
+  openLogDir: () => ipcRenderer.invoke('logging:openDir'),
+
+  // ─── Multi-window AI Support ──────────────────────────────────────────────────
+
+  /**
+   * Register the current window as the AI-bound window.
+   * All AI messages will be routed to this window.
+   */
+  registerAiWindow: () => ipcRenderer.invoke('window:register-ai'),
+
+  /**
+   * Unregister the AI-bound window.
+   * AI messages will fall back to the main window.
+   */
+  unregisterAiWindow: () => ipcRenderer.invoke('window:unregister-ai'),
+
+  /**
+   * Create a new terminal-only window.
+   */
+  createTerminalWindow: () => ipcRenderer.invoke('window:create-terminal'),
+
+  // ─── Cross-window Command Routing ─────────────────────────────────────────────
+
+  /**
+   * Broadcast a terminal command to all windows for execution.
+   */
+  crossExecuteCommand: (payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string }) =>
+    ipcRenderer.invoke('window:cross-execute-command', payload),
+
+  /**
+   * Relay command output back to the requesting window.
+   */
+  relayOutput: (payload: { senderWebContentsId: number; content: string; tabId?: string; toolResult?: any }) =>
+    ipcRenderer.invoke('window:relay-output', payload),
+
+  /**
+   * Listen for cross-window command execution requests.
+   */
+  onCrossExecuteCommand: (
+    callback: (payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string; senderWebContentsId: number }) => void
+  ) => {
+    const handler = (_event: any, payload: any) => callback(payload)
+    ipcRenderer.on('terminal:cross-execute-command', handler)
+    return () => ipcRenderer.removeListener('terminal:cross-execute-command', handler)
+  },
+
+  /**
+   * Listen for cross-window output relay.
+   */
+  onCrossOutput: (callback: (payload: { content: string; tabId?: string; toolResult?: any }) => void) => {
+    const handler = (_event: any, payload: any) => callback(payload)
+    ipcRenderer.on('terminal:cross-output', handler)
+    return () => ipcRenderer.removeListener('terminal:cross-output', handler)
+  }
 }
 // Custom API for browser control
 

@@ -101,6 +101,7 @@ export interface TreeHostOption {
   connection: string
   organizationUuid?: string
   assetType?: string
+  tabSessionId?: string
   children?: TreeHostOption[]
   expanded?: boolean
 }
@@ -126,6 +127,7 @@ export interface HostOption {
   selectable: boolean
   organizationUuid?: string
   assetType?: string
+  tabSessionId?: string
   children?: TreeHostOption[]
   expanded?: boolean
   level: number

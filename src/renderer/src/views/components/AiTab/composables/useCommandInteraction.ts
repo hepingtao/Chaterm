@@ -53,35 +53,25 @@ export function useCommandInteraction(params: CommandInteractionOptions) {
       lastMessage.executedCommand = content
     }
 
-    if (chatTypeValue.value === 'cmd' && hosts.value.length > 0) {
-      const targetHost = hosts.value[0]
-      const currentAssetInfo = await params.getCurentTabAssetInfo()
+    const targetHost = chatTypeValue.value === 'cmd' && hosts.value.length > 0 ? hosts.value[0] : null
 
-      if (!currentAssetInfo || currentAssetInfo.ip !== targetHost.host) {
-        notification.warning({
-          message: t('ai.cannotExecuteCommand'),
-          description: t('ai.wrongServerWindow', {
-            targetServer: targetHost.host,
-            currentWindow: currentAssetInfo?.ip || t('ai.nonTerminalWindow')
-          }),
-          duration: 5,
-          placement: 'topRight'
-        })
-        return
-      }
+    const emitPayload = {
+      command: content,
+      tabId: currentChatId.value ?? undefined,
+      targetHost: targetHost?.host,
+      targetTerminalTabId: targetHost?.tabSessionId
     }
 
-    if (operation === 'copy') {
-      eventBus.emit('executeTerminalCommand', {
-        command: content,
-        tabId: currentChatId.value ?? undefined
-      })
-    } else if (operation === 'apply') {
-      eventBus.emit('executeTerminalCommand', {
-        command: content + '\n',
-        tabId: currentChatId.value ?? undefined
-      })
+    const dispatchedPayload = operation === 'apply' ? { ...emitPayload, command: content + '\n' } : emitPayload
+
+    eventBus.emit('executeTerminalCommand', dispatchedPayload)
+    if (operation === 'apply') {
       session.responseLoading = true
+    }
+
+    // Also broadcast cross-window so terminal components in other windows can handle it
+    if (targetHost?.host || targetHost?.tabSessionId) {
+      window.api.crossExecuteCommand(dispatchedPayload)
     }
 
     session.lastChatMessageId = ''

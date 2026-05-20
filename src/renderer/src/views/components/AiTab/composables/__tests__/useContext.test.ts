@@ -147,6 +147,15 @@ describe('useContext', () => {
 
       expect(isHostSelected(mockHostOption)).toBe(false)
     })
+
+    it('should use terminal tab id when present so duplicate host tabs remain distinct', () => {
+      const { isHostSelected } = useContext()
+
+      hosts.value = [{ host: 'server1.example.com', uuid: 'uuid-1', connection: 'ssh', tabSessionId: 'terminal-tab-1' }]
+
+      expect(isHostSelected({ ...mockHostOption, tabSessionId: 'terminal-tab-1' })).toBe(true)
+      expect(isHostSelected({ ...mockHostOption, tabSessionId: 'terminal-tab-2' })).toBe(false)
+    })
   })
 
   describe('onHostClick', () => {

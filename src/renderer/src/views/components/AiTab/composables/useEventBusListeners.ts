@@ -23,7 +23,7 @@ interface UseEventBusListenersParams {
   ) => Promise<void>
   initModel: () => Promise<void>
   getCurentTabAssetInfo: () => Promise<AssetInfo | null>
-  updateHosts: (hostInfo: { ip: string; uuid: string; connection: string; assetType?: string } | null) => void
+  updateHosts: (hostInfo: { ip: string; uuid: string; connection: string; assetType?: string; tabSessionId?: string } | null) => void
   isAgentMode?: boolean
 }
 
@@ -40,6 +40,7 @@ interface TabInfo {
     asset_type?: string
   }
   connection?: string
+  tabSessionId?: string
 }
 
 /**
@@ -89,7 +90,8 @@ export function useEventBusListeners(params: UseEventBusListenersParams) {
         ip: assetInfo.ip,
         uuid: assetInfo.uuid,
         connection: assetInfo.connection ? assetInfo.connection : 'personal',
-        assetType: assetInfo.assetType
+        assetType: assetInfo.assetType,
+        tabSessionId: assetInfo.tabSessionId
       })
     } else {
       updateHosts(null)
@@ -97,11 +99,6 @@ export function useEventBusListeners(params: UseEventBusListenersParams) {
   }
 
   const handleSendMessageToAi = async (payload: { content: string; tabId?: string; toolResult?: ToolResultPayload }) => {
-    if (isAgentMode) {
-      logger.debug('Ignoring sendMessageToAi event in agent mode')
-      return
-    }
-
     const { content, tabId, toolResult } = payload
 
     if (!content || content.trim() === '') {
@@ -143,7 +140,8 @@ export function useEventBusListeners(params: UseEventBusListenersParams) {
         ip: tabInfo.ip,
         uuid: tabInfo.data.uuid,
         connection: tabInfo.connection || 'personal',
-        assetType: tabInfo.data.asset_type
+        assetType: tabInfo.data.asset_type,
+        tabSessionId: tabInfo.tabSessionId
       })
     } else {
       updateHosts(null)
@@ -173,12 +171,24 @@ export function useEventBusListeners(params: UseEventBusListenersParams) {
     chatTypeValue.value = AiTypeOptions[nextIndex].value
   }
 
+  let crossOutputCleanup: (() => void) | null = null
+
   onMounted(async () => {
     eventBus.on('sendMessageToAi', handleSendMessageToAi)
     eventBus.on('chatToAi', handleChatToAi)
     eventBus.on('activeTabChanged', handleActiveTabChanged)
     eventBus.on('SettingModelOptionsChanged', handleSettingModelOptionsChanged)
     eventBus.on('switchAiMode', handleSwitchAiMode)
+
+    // Listen for cross-window command output relay
+    crossOutputCleanup = window.api.onCrossOutput((payload) => {
+      eventBus.emit('sendMessageToAi', {
+        content: payload.content,
+        tabId: payload.tabId,
+        toolResult: payload.toolResult
+      })
+    })
+
     await initAssetInfo()
   })
 
@@ -188,5 +198,9 @@ export function useEventBusListeners(params: UseEventBusListenersParams) {
     eventBus.off('activeTabChanged', handleActiveTabChanged)
     eventBus.off('SettingModelOptionsChanged', handleSettingModelOptionsChanged)
     eventBus.off('switchAiMode', handleSwitchAiMode)
+    if (crossOutputCleanup) {
+      crossOutputCleanup()
+      crossOutputCleanup = null
+    }
   })
 }

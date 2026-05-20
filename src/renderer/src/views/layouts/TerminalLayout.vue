@@ -344,6 +344,7 @@ import { shortcutService } from '@/services/shortcutService'
 import { captureExtensionUsage, ExtensionNames, ExtensionStatus } from '@/utils/telemetry'
 import Dashboard from '@renderer/views/components/Ssh/components/dashboard.vue'
 import { useAiSidebarModelRefresh } from './composables/useAiSidebarModelRefresh'
+import { useMultiWindowAi } from './composables/useMultiWindowAi'
 import { isFocusInAiTab } from '@/utils/domUtils'
 
 import 'dockview-vue/dist/styles/dockview.css'
@@ -477,6 +478,7 @@ interface LeftSidebarState {
 const savedAiSidebarState = ref<AiSidebarState | null>(null)
 const aiTabRef = ref<InstanceType<typeof AiTab> | null>(null)
 useAiSidebarModelRefresh(showAiSidebar, aiTabRef)
+useMultiWindowAi(showAiSidebar)
 
 const handleAiTabStateChanged = (state: AiSidebarState) => {
   savedAiSidebarState.value = state
@@ -2214,7 +2216,7 @@ const getActiveTabAssetInfo = async () => {
       type: 'k8s',
       outputContext: 'Output context not applicable for this tab type.',
       tabSessionId: activePanel.id,
-      assetType: undefined
+      assetType: 'k8s'
     }
   }
 
@@ -2252,25 +2254,41 @@ const getAllOpenedHosts = () => {
     return []
   }
 
-  const hostsMap = new Map<string, { uuid: string; ip: string; title: string; organizationId?: string; assetType?: string }>()
+  const hostsMap = new Map<
+    string,
+    { uuid: string; ip: string; title: string; organizationId?: string; assetType?: string; connection?: string; tabSessionId?: string }
+  >()
 
   for (const panel of dockApi.panels) {
     const params = panel.params
     if (!params) continue
 
+    if (params.type === 'k8s') {
+      const cluster = params.data?.data || params.data
+      if (!cluster?.id || !cluster?.server_url) continue
+      hostsMap.set(panel.id, {
+        uuid: cluster.id,
+        ip: cluster.server_url,
+        title: panel.api.title || params.title || cluster.name || cluster.server_url,
+        assetType: 'k8s',
+        connection: 'k8s',
+        tabSessionId: panel.id
+      })
+      continue
+    }
+
     const ip = params.data?.ip || params.ip
     const uuid = params.data?.uuid || params.uuid
     if (!ip || !uuid) continue
 
-    // Skip if already added (dedupe by uuid)
-    if (hostsMap.has(uuid)) continue
-
-    hostsMap.set(uuid, {
+    hostsMap.set(panel.id, {
       uuid,
       ip,
       title: panel.api.title || params.title || ip,
       organizationId: params.organizationId || params.data?.organizationId,
-      assetType: params.data?.asset_type
+      assetType: params.data?.asset_type,
+      connection: params.data?.connection || 'personal',
+      tabSessionId: panel.id
     })
   }
 
@@ -2579,12 +2597,13 @@ const handleActivePanelChange = async () => {
         ip: cluster.server_url,
         data: {
           uuid: cluster.id,
-          asset_type: undefined
+          asset_type: 'k8s'
         },
         connection: 'k8s',
         title: activePanel.api.title || params.title || cluster.name,
         organizationId: undefined,
-        type: 'k8s'
+        type: 'k8s',
+        tabSessionId: activePanel.id
       })
     }
     return
@@ -2608,7 +2627,8 @@ const handleActivePanelChange = async () => {
       connection: params.data?.connection || 'personal',
       title: activePanel.api.title || params.title,
       organizationId: params.organizationId || params.data?.organizationId,
-      type: panelType
+      type: panelType,
+      tabSessionId: activePanel.id
     })
   }
 }
@@ -2920,6 +2940,17 @@ const createNewPanel = (isClone: boolean, direction: 'left' | 'right' | 'above' 
   }
 
   params.id = newIdV4
+
+  // Tag clone/split origin so bastion plugins (e.g. qizhi) can auto-apply the
+  // previously selected user instead of re-prompting for multi-user assets.
+  if (params.connectData) {
+    if (isClone) {
+      params.connectData = { ...params.connectData, source: 'clone' }
+    } else if (direction !== 'within') {
+      params.connectData = { ...params.connectData, source: 'split' }
+    }
+  }
+
   dockApi.addPanel({
     id: newId,
     component: sourceComponent,

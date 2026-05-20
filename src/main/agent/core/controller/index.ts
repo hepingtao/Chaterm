@@ -144,7 +144,14 @@ export class Controller {
     }
   }
 
-  async initTask(hosts: Host[], task?: string, taskId?: string, contentParts?: ContentPart[], modelName?: string) {
+  async initTask(
+    hosts: Host[],
+    task?: string,
+    taskId?: string,
+    contentParts?: ContentPart[],
+    modelName?: string,
+    chatMode?: 'chat' | 'cmd' | 'agent'
+  ) {
     const resolvedTaskId = taskId
     mark('chaterm/agent/willCreateTask')
     logger.info('Initializing task', {
@@ -197,7 +204,8 @@ export class Controller {
       task,
       undefined, // chatTitle - Don't pass generated title initially
       taskId,
-      contentParts
+      contentParts,
+      chatMode
     )
 
     this.tasks.set(newTask.taskId, newTask)
@@ -251,12 +259,13 @@ export class Controller {
     }
 
     const targetTaskId = message.tabId ?? message.taskId
+
     try {
       const targetTask = targetTaskId ? this.getTaskFromId(targetTaskId) : undefined
 
       switch (message.type) {
         case 'newTask':
-          await this.initTask(message.hosts!, message.text, message.taskId, message.contentParts, message.modelName)
+          await this.initTask(message.hosts!, message.text, message.taskId, message.contentParts, message.modelName, message.chatMode)
           if (message.taskId && message.hosts) {
             await updateTaskHosts(message.taskId, message.hosts)
           }
@@ -307,7 +316,13 @@ export class Controller {
                   taskId: task.taskId
                 })
               }
-              await task.handleWebviewAskResponse(message.askResponse!, message.text, message.truncateAtMessageTs, message.contentParts)
+              await task.handleWebviewAskResponse(
+                message.askResponse!,
+                message.text,
+                message.truncateAtMessageTs,
+                message.contentParts,
+                message.toolResult
+              )
             }
           }
           break

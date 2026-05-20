@@ -7,7 +7,7 @@ import type { Host, HostOption, HostItemType, ContextMenuLevel, DocOption, ChatO
 import { formatHosts, hostLabelOrTitleMatches, isSwitchAssetType } from '../utils'
 import { isBastionHostType } from '../types'
 import { useSessionState } from './useSessionState'
-import { useHostState } from './useHostState'
+
 import { focusChatInput } from './useTabManagement'
 import i18n from '@/locales'
 import { Notice } from '@/views/components/Notice'
@@ -46,8 +46,6 @@ export const useContext = (options: UseContextOptions = {}) => {
   const chatInputParts = options.chatInputParts ?? globalChatInputParts
   const hosts = options.hosts ?? sessionHosts
 
-  const { getCurentTabAssetInfo } = useHostState()
-
   // ========== Local UI State (per instance) ==========
   // Popup position in viewport coordinates (used with position: fixed)
   // createMode uses bottom positioning (expands upward), editMode uses top positioning
@@ -68,10 +66,10 @@ export const useContext = (options: UseContextOptions = {}) => {
 
   const mainMenuItems = computed<ContextMenuLevel[]>(() => {
     const items: ContextMenuLevel[] = []
-    if (chatTypeValue.value !== 'chat' && chatTypeValue.value !== 'cmd') {
+    if (chatTypeValue.value !== 'chat') {
       items.push('hosts')
     }
-    items.push('docs', 'chats', 'skills')
+    items.push('docs', 'skills', 'chats')
     return items
   })
 
@@ -143,6 +141,7 @@ export const useContext = (options: UseContextOptions = {}) => {
             selectable: child.selectable,
             organizationUuid: child.organizationUuid,
             assetType: child.assetType,
+            tabSessionId: child.tabSessionId,
             level: 1
           })
         }
@@ -157,7 +156,11 @@ export const useContext = (options: UseContextOptions = {}) => {
     //   return []
     // }
     if (chatTypeValue.value === 'cmd') {
-      return flattenedHostOptions.value
+      const cmdSearchTerm = searchValue.value.toLowerCase()
+      if (!cmdSearchTerm) {
+        return flattenedHostOptions.value
+      }
+      return flattenedHostOptions.value.filter((item) => hostLabelOrTitleMatches(item, cmdSearchTerm))
     }
 
     const searchTerm = searchValue.value.toLowerCase()
@@ -192,6 +195,8 @@ export const useContext = (options: UseContextOptions = {}) => {
               type: child.type as HostItemType,
               selectable: child.selectable,
               organizationUuid: child.organizationUuid,
+              assetType: child.assetType,
+              tabSessionId: child.tabSessionId,
               level: 1
             })
           }
@@ -233,8 +238,8 @@ export const useContext = (options: UseContextOptions = {}) => {
 
   // Filtered opened hosts for main menu quick selection
   const filteredOpenedHosts = computed(() => {
-    // Only show opened hosts in agent mode
-    if (chatTypeValue.value !== 'agent') {
+    // Show opened hosts in agent and command modes so commands can target inactive terminals.
+    if (chatTypeValue.value === 'chat') {
       return []
     }
     const searchTerm = searchValue.value.toLowerCase()
@@ -257,8 +262,18 @@ export const useContext = (options: UseContextOptions = {}) => {
     return displayedOpenedHosts.value.length + mainMenuItems.value.length
   })
 
+  const isSameHostSelection = (
+    selectedHost: Pick<Host, 'uuid' | 'tabSessionId'>,
+    candidate: Pick<HostOption, 'uuid' | 'tabSessionId'> | Pick<Host, 'uuid' | 'tabSessionId'>
+  ): boolean => {
+    if (selectedHost.tabSessionId && candidate.tabSessionId) {
+      return selectedHost.tabSessionId === candidate.tabSessionId
+    }
+    return selectedHost.uuid === candidate.uuid
+  }
+
   const isHostSelected = (hostOption: HostOption): boolean => {
-    return hosts.value.some((h) => h.uuid === hostOption.uuid)
+    return hosts.value.some((h) => isSameHostSelection(h, hostOption))
   }
 
   const isLocalhostHostOption = (item: Pick<HostOption, 'isLocalHost' | 'label'>): boolean => {
@@ -280,7 +295,8 @@ export const useContext = (options: UseContextOptions = {}) => {
       uuid: item.uuid,
       connection: item.isLocalHost ? 'localhost' : item.connect,
       organizationUuid: item.organizationUuid,
-      assetType: item.assetType
+      assetType: item.assetType,
+      tabSessionId: item.tabSessionId
     }
   }
 
@@ -307,7 +323,7 @@ export const useContext = (options: UseContextOptions = {}) => {
         placement: 'bottomRight'
       })
     } else {
-      const existingIndex = hosts.value.findIndex((h) => h.uuid === item.uuid)
+      const existingIndex = hosts.value.findIndex((h) => isSameHostSelection(h, item))
 
       if (existingIndex > -1) {
         hosts.value = hosts.value.filter((_, i) => i !== existingIndex)
@@ -352,7 +368,7 @@ export const useContext = (options: UseContextOptions = {}) => {
       }
 
       // Check if host is already selected
-      const existing = hosts.value.find((h) => h.uuid === opt.uuid)
+      const existing = hosts.value.find((h) => isSameHostSelection(h, opt))
       if (!existing) {
         newHosts.push(hostOptionToHost(opt))
       }
@@ -371,7 +387,7 @@ export const useContext = (options: UseContextOptions = {}) => {
     if (selectable.length === 0) return false
 
     // Check if all visible selectable hosts are in the selected hosts
-    return selectable.every((opt) => hosts.value.some((h) => h.uuid === opt.uuid))
+    return selectable.every((opt) => hosts.value.some((h) => isSameHostSelection(h, opt)))
   })
 
   // ========== Pending Selection Operations (agent mode batch) ==========
@@ -394,7 +410,7 @@ export const useContext = (options: UseContextOptions = {}) => {
   }
 
   const removeHost = (hostToRemove: Host) => {
-    const index = hosts.value.findIndex((h) => h.uuid === hostToRemove.uuid)
+    const index = hosts.value.findIndex((h) => isSameHostSelection(h, hostToRemove))
     if (index > -1) {
       hosts.value = hosts.value.filter((_, i) => i !== index)
       autoUpdateHost.value = false
@@ -745,31 +761,13 @@ export const useContext = (options: UseContextOptions = {}) => {
 
   const fetchHostOptionsForCommandMode = async (search: string) => {
     try {
-      const assetInfo = await getCurentTabAssetInfo()
-
-      if (assetInfo && assetInfo.ip) {
-        const currentHostOption: HostOption = {
-          key: assetInfo.uuid,
-          value: assetInfo.uuid,
-          uuid: assetInfo.uuid,
-          label: assetInfo.ip,
-          connect: assetInfo.connection || 'personal',
-          title: assetInfo.title || assetInfo.ip,
-          isLocalHost: assetInfo.ip === '127.0.0.1' || assetInfo.ip === 'localhost',
-          type: 'personal',
-          selectable: true,
-          level: 0,
-          assetType: assetInfo.assetType
-        }
-
-        if (!search || currentHostOption.label.includes(search) || (currentHostOption.title && currentHostOption.title.includes(search))) {
-          hostOptions.value.splice(0, hostOptions.value.length, currentHostOption)
-        } else {
-          hostOptions.value.splice(0, hostOptions.value.length)
-        }
-      } else {
-        hostOptions.value.splice(0, hostOptions.value.length)
-      }
+      await fetchOpenedHosts()
+      const searchTerm = search.toLowerCase()
+      const options = openedHostsList.value.filter((host) => {
+        if (!searchTerm) return true
+        return host.label.toLowerCase().includes(searchTerm) || (host.title && host.title.toLowerCase().includes(searchTerm))
+      })
+      hostOptions.value.splice(0, hostOptions.value.length, ...options)
     } catch (error) {
       logger.error('Failed to fetch host options for command mode', { error: error })
       hostOptions.value.splice(0, hostOptions.value.length)
@@ -789,37 +787,48 @@ export const useContext = (options: UseContextOptions = {}) => {
     const TIMEOUT_MS = 3000
 
     try {
-      const hosts = await new Promise<Array<{ uuid: string; ip: string; title: string; organizationId?: string; assetType?: string }>>(
-        (resolve, reject) => {
-          const timeout = setTimeout(() => {
-            eventBus.off('allOpenedHostsResult', handleResult)
-            reject(new Error('Timeout getting opened hosts'))
-          }, TIMEOUT_MS)
+      const hosts = await new Promise<
+        Array<{ uuid: string; ip: string; title: string; organizationId?: string; assetType?: string; connection?: string; tabSessionId?: string }>
+      >((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          eventBus.off('allOpenedHostsResult', handleResult)
+          reject(new Error('Timeout getting opened hosts'))
+        }, TIMEOUT_MS)
 
-          const handleResult = (result: Array<{ uuid: string; ip: string; title: string; organizationId?: string; assetType?: string }>) => {
-            clearTimeout(timeout)
-            eventBus.off('allOpenedHostsResult', handleResult)
-            resolve(result)
-          }
-          eventBus.on('allOpenedHostsResult', handleResult)
-          eventBus.emit('getAllOpenedHosts')
+        const handleResult = (
+          result: Array<{
+            uuid: string
+            ip: string
+            title: string
+            organizationId?: string
+            assetType?: string
+            connection?: string
+            tabSessionId?: string
+          }>
+        ) => {
+          clearTimeout(timeout)
+          eventBus.off('allOpenedHostsResult', handleResult)
+          resolve(result)
         }
-      )
+        eventBus.on('allOpenedHostsResult', handleResult)
+        eventBus.emit('getAllOpenedHosts')
+      })
 
       // Convert to HostOption format
       openedHostsList.value = hosts.map((h) => ({
-        key: h.uuid,
-        value: h.uuid,
+        key: h.tabSessionId || h.uuid,
+        value: h.tabSessionId || h.uuid,
         uuid: h.uuid,
         label: h.ip,
-        connect: 'personal',
+        connect: h.connection || 'personal',
         title: h.title || h.ip,
         isLocalHost: h.ip === '127.0.0.1' || h.ip === 'localhost',
         type: 'personal' as const,
         selectable: true,
         level: 0,
         organizationUuid: h.organizationId,
-        assetType: h.assetType
+        assetType: h.assetType,
+        tabSessionId: h.tabSessionId
       }))
     } catch (error) {
       logger.error('Failed to fetch opened hosts', { error: error })

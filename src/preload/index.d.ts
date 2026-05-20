@@ -902,6 +902,47 @@ interface ApiType {
    * Open the log directory in the system file manager
    */
   openLogDir: () => Promise<void>
+
+  // ─── Multi-window AI Support ──────────────────────────────────────────────────
+
+  /**
+   * Register the current window as the AI-bound window.
+   */
+  registerAiWindow: () => Promise<void>
+
+  /**
+   * Unregister the AI-bound window.
+   */
+  unregisterAiWindow: () => Promise<void>
+
+  /**
+   * Create a new terminal-only window.
+   */
+  createTerminalWindow: () => Promise<{ success: boolean; windowId: number }>
+
+  // ─── Cross-window Command Routing ─────────────────────────────────────────────
+
+  /**
+   * Broadcast a terminal command to all windows for execution.
+   */
+  crossExecuteCommand: (payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string }) => Promise<void>
+
+  /**
+   * Relay command output back to the requesting window.
+   */
+  relayOutput: (payload: { senderWebContentsId: number; content: string; tabId?: string; toolResult?: any }) => Promise<void>
+
+  /**
+   * Listen for cross-window command execution requests.
+   */
+  onCrossExecuteCommand: (
+    callback: (payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string; senderWebContentsId: number }) => void
+  ) => () => void
+
+  /**
+   * Listen for cross-window output relay.
+   */
+  onCrossOutput: (callback: (payload: { content: string; tabId?: string; toolResult?: any }) => void) => () => void
 }
 
 declare global {

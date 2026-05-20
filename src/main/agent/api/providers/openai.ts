@@ -28,23 +28,15 @@ function isAzureEndpoint(baseUrl: string | undefined): boolean {
   }
 }
 
-/**
- * Normalize the base URL for OpenAI SDK:
- * - URL ending with '#': strip '#', skip /v1 prefix (user wants direct path)
- * - URL already containing '/v1' path segment: use as-is
- * - Otherwise: auto-append /v1
- */
 function normalizeBaseUrl(url: string | undefined): string | undefined {
   if (!url) return url
   const trimmed = url.trim()
   if (!trimmed) return trimmed
 
-  // '#' at end = skip /v1 version prefix
   if (trimmed.endsWith('#')) {
     return trimmed.slice(0, -1)
   }
 
-  // Check if URL already contains /v1 path segment
   try {
     const parsed = new URL(trimmed)
     const segments = parsed.pathname.split('/').filter(Boolean)
@@ -55,9 +47,85 @@ function normalizeBaseUrl(url: string | undefined): string | undefined {
     return trimmed
   }
 
-  // Auto-add /v1
   const separator = trimmed.endsWith('/') ? '' : '/'
   return `${trimmed}${separator}v1`
+}
+
+interface OpenAIStreamDelta {
+  content?: string | null
+  reasoning_content?: string | null
+  reasoning?: string | null
+  thinking?: string | null
+  role?: string | null
+  tool_calls?: Array<{ index: number; id?: string; type?: string; function?: { name?: string; arguments?: string } }> | null
+}
+
+interface OpenAIStreamChoice {
+  index: number
+  delta: OpenAIStreamDelta
+  finish_reason: string | null
+}
+
+interface OpenAIStreamChunk {
+  id: string
+  object: string
+  created: number
+  model: string
+  choices: OpenAIStreamChoice[]
+  usage?: { prompt_tokens: number; completion_tokens: number } | null
+}
+
+async function* parseSSEStream(response: Response): AsyncGenerator<OpenAIStreamChunk> {
+  if (!response.body) {
+    throw new Error('Response body is empty')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith(':')) continue
+
+        if (trimmed.startsWith('data: ')) {
+          const data = trimmed.slice(6)
+          if (data === '[DONE]') return
+
+          try {
+            const chunk: OpenAIStreamChunk = JSON.parse(data)
+            yield chunk
+          } catch {
+            logger.warn('[OpenAI SSE] failed to parse chunk', { event: 'agent.openai.sse.parse_error', dataPreview: data.slice(0, 200) })
+          }
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      const trimmed = buffer.trim()
+      if (trimmed.startsWith('data: ') && trimmed.slice(6) !== '[DONE]') {
+        try {
+          const chunk: OpenAIStreamChunk = JSON.parse(trimmed.slice(6))
+          yield chunk
+        } catch {
+          // ignore
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 export class OpenAiHandler implements ApiHandler {
@@ -66,8 +134,6 @@ export class OpenAiHandler implements ApiHandler {
 
   constructor(options: ApiHandlerOptions) {
     this.options = options
-    // Azure API shape slightly differs from the core API shape: https://github.com/openai/openai-node?tab=readme-ov-file#microsoft-azure-openai
-    // Use azureApiVersion to determine if this is an Azure endpoint, since the URL may not always contain 'azure.com'
     let httpAgent: Agent | undefined = undefined
     if (this.options.needProxy !== false) {
       const proxyConfig = this.options.proxyConfig
@@ -125,7 +191,7 @@ export class OpenAiHandler implements ApiHandler {
     if (this.options.openAiModelInfo?.maxTokens && this.options.openAiModelInfo.maxTokens > 0) {
       maxTokens = Number(this.options.openAiModelInfo.maxTokens)
     } else {
-      maxTokens = undefined
+      maxTokens = 8192
     }
 
     if (isDeepseekReasoner || isR1FormatRequired) {
@@ -137,39 +203,83 @@ export class OpenAiHandler implements ApiHandler {
       reasoningEffort = (this.options.o3MiniReasoningEffort as ChatCompletionReasoningEffort) || 'medium'
     }
 
-    const stream = await this.client.chat.completions.create({
+    const requestPayload: Record<string, unknown> = {
       model: modelId,
       messages: openAiMessages,
       ...(supportsTemperature && { temperature }),
       max_tokens: maxTokens,
-      reasoning_effort: reasoningEffort,
-      stream: true,
-      stream_options: { include_usage: true }
-    })
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta
-      if (delta?.content) {
-        yield {
-          type: 'text',
-          text: delta.content
-        }
-      }
-
-      if (delta && 'reasoning_content' in delta && delta.reasoning_content) {
-        yield {
-          type: 'reasoning',
-          reasoning: (delta.reasoning_content as string | undefined) || ''
-        }
-      }
-
-      if (chunk.usage) {
-        yield {
-          type: 'usage',
-          inputTokens: chunk.usage.prompt_tokens || 0,
-          outputTokens: chunk.usage.completion_tokens || 0
-        }
-      }
+      stream: true
     }
+    if (reasoningEffort) {
+      requestPayload.reasoning_effort = reasoningEffort
+    }
+
+    const baseUrl = this.client.baseURL
+    const apiKey = this.options.openAiApiKey
+    const timeoutMs = this.options.requestTimeoutMs || 60000
+
+    const url = `${baseUrl}/chat/completions`
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      ...(this.options.openAiHeaders || {})
+    }
+
+    logger.info('[OpenAI Stream] sending request via fetch', { event: 'agent.openai.stream.fetch_start', model: modelId, hasApiKey: !!apiKey })
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestPayload),
+      signal: AbortSignal.timeout(timeoutMs)
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '')
+      throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorText.slice(0, 500)}`)
+    }
+
+    let chunkCount = 0
+    try {
+      for await (const chunk of parseSSEStream(response)) {
+        chunkCount++
+        const delta = chunk.choices[0]?.delta
+
+        if (delta?.content) {
+          yield {
+            type: 'text',
+            text: delta.content
+          }
+        }
+
+        const reasoningContent = delta?.reasoning_content || delta?.reasoning || delta?.thinking
+
+        if (reasoningContent) {
+          yield {
+            type: 'reasoning',
+            reasoning: reasoningContent || ''
+          }
+        }
+
+        if (chunk.usage) {
+          yield {
+            type: 'usage',
+            inputTokens: chunk.usage.prompt_tokens || 0,
+            outputTokens: chunk.usage.completion_tokens || 0
+          }
+        }
+      }
+    } catch (streamError) {
+      logger.error('[OpenAI Stream] error during iteration', {
+        event: 'agent.openai.stream.error',
+        model: modelId,
+        chunksReceived: chunkCount,
+        error: streamError instanceof Error ? streamError.message : String(streamError)
+      })
+      throw streamError
+    }
+
+    logger.info('[OpenAI Stream] iteration ended', { event: 'agent.openai.stream.end', model: modelId, totalChunks: chunkCount })
   }
 
   private async *createMessageViaResponses(systemPrompt: string, messages: Anthropic.Messages.MessageParam[]): ApiStream {
@@ -227,7 +337,6 @@ export class OpenAiHandler implements ApiHandler {
 
   async validateApiKey(): Promise<{ isValid: boolean; error?: string }> {
     try {
-      // Validate proxy
       if (this.options.needProxy) {
         await checkProxyConnectivity(this.options.proxyConfig!)
       }

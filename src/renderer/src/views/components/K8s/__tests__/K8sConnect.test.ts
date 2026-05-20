@@ -66,6 +66,8 @@ const mockWindowApi = {
   k8sTerminalClose: mockK8sTerminalClose,
   k8sOnTerminalData: mockK8sOnTerminalData,
   k8sOnTerminalExit: mockK8sOnTerminalExit,
+  onCrossExecuteCommand: vi.fn(() => vi.fn()),
+  relayOutput: vi.fn().mockResolvedValue(undefined),
   addEventListener: vi.fn(),
   removeEventListener: vi.fn()
 }
@@ -474,6 +476,19 @@ describe('K8s Connect Component', () => {
       mockEventBus.emit('executeTerminalCommand', { command: 'kubectl get pods\n', tabId: 'tab-1' })
       await nextTick()
       expect(k8sApi.writeToTerminal).not.toHaveBeenCalled()
+    })
+
+    it('should write command to inactive terminal when target terminal tab matches', async () => {
+      wrapper = createWrapper({ isActive: false, activeTabId: 'k8s-tab-1' })
+      await flushPromises()
+      vi.mocked(k8sApi.writeToTerminal).mockClear()
+      mockEventBus.emit('executeTerminalCommand', {
+        command: 'kubectl get pods\n',
+        tabId: 'chat-tab-1',
+        targetTerminalTabId: 'k8s-tab-1'
+      })
+      await nextTick()
+      expect(k8sApi.writeToTerminal).toHaveBeenCalledWith('mock-uuid-123', 'kubectl get pods\n')
     })
 
     it('should not write command when payload has no command', async () => {

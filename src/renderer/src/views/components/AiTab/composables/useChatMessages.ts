@@ -124,7 +124,8 @@ export function useChatMessages(
         host: h.host,
         uuid: h.uuid,
         connection: h.connection,
-        ...(h.assetType ? { assetType: h.assetType } : {})
+        ...(h.assetType ? { assetType: h.assetType } : {}),
+        ...(h.tabSessionId ? { tabSessionId: h.tabSessionId } : {})
       }))
 
       let message: WebviewMessage
@@ -135,7 +136,8 @@ export function useChatMessages(
           text: userContent,
           hosts: hostsArray,
           taskId: tabId || currentChatId.value,
-          contentParts
+          contentParts,
+          chatMode: targetTab.chatType as 'chat' | 'cmd' | 'agent'
         }
       } else if (sendType === 'commandSend') {
         message = {
@@ -564,7 +566,12 @@ export function useChatMessages(
       if (!partial.partial) {
         session.showSendButton = true
         if (
-          (partial.type === 'ask' && (partial.ask === 'command' || partial.ask === 'mcp_tool_call' || partial.ask === 'followup')) ||
+          (partial.type === 'ask' &&
+            (partial.ask === 'command' ||
+              partial.ask === 'mcp_tool_call' ||
+              partial.ask === 'followup' ||
+              partial.ask === 'resume_task' ||
+              partial.ask === 'completion_result')) ||
           partial.say === 'command_blocked'
         ) {
           session.responseLoading = false
@@ -584,14 +591,9 @@ export function useChatMessages(
       const isWaitingForUserResponse =
         lastStateChatermMessages?.type === 'ask' ||
         lastStateChatermMessages?.say === 'command_blocked' ||
-        lastStateChatermMessages?.say === 'completion_result'
-      if (
-        chatermMessages.length > 0 &&
-        lastStateChatermMessages?.partial != undefined &&
-        !lastStateChatermMessages.partial &&
-        session.responseLoading &&
-        isWaitingForUserResponse
-      ) {
+        lastStateChatermMessages?.say === 'completion_result' ||
+        lastStateChatermMessages?.say === 'command_output'
+      if (chatermMessages.length > 0 && !lastStateChatermMessages?.partial && session.responseLoading && isWaitingForUserResponse) {
         session.responseLoading = false
       }
     } else if (message?.type === 'todoUpdated') {

@@ -830,8 +830,27 @@ onMounted(async () => {
     connectSSH()
   }
 
-  const handleExecuteCommand = (payload: { command: string; tabId?: string }) => {
-    if (props.activeTabId !== props.currentConnectionId || !props.isActive) return
+  const handleExecuteCommand = (payload: {
+    command: string
+    tabId?: string
+    targetHost?: string
+    targetTerminalTabId?: string
+    _senderWebContentsId?: number
+  }) => {
+    if (payload.targetTerminalTabId) {
+      // Terminal tab specified: route directly to this terminal, even when inactive.
+      if (payload.targetTerminalTabId !== props.currentConnectionId) return
+    } else if (payload.targetHost) {
+      // Target host specified: only execute if this connection matches the target host
+      const hostMatches =
+        props.connectData &&
+        (props.connectData.ip === payload.targetHost ||
+          props.connectData.hostname === payload.targetHost ||
+          props.connectData.host === payload.targetHost)
+      if (!hostMatches) return
+    } else {
+      if (props.activeTabId !== props.currentConnectionId || !props.isActive) return
+    }
 
     if (!payload?.command) {
       logger.warn('handleExecuteCommand: command is empty')
@@ -844,6 +863,9 @@ onMounted(async () => {
 
     commandMarkerToTabId.value.set(uniqueMarker, tabId)
     commandMarkerToCommand.value.set(uniqueMarker, payload.command)
+    if (payload._senderWebContentsId !== undefined) {
+      commandMarkerToSenderId.value.set(uniqueMarker, payload._senderWebContentsId)
+    }
 
     sendMarkedData(payload.command, uniqueMarker)
     termInstance.focus()
@@ -890,6 +912,17 @@ onMounted(async () => {
 
   eventBus.on('executeTerminalCommand', handleExecuteCommand)
   eventBus.on('autoExecuteCode', autoExecuteCode)
+
+  // Listen for cross-window command execution requests
+  crossWindowCommandCleanup = window.api.onCrossExecuteCommand((payload) => {
+    eventBus.emit('executeTerminalCommand', {
+      command: payload.command,
+      tabId: payload.tabId,
+      targetHost: payload.targetHost,
+      targetTerminalTabId: payload.targetTerminalTabId,
+      _senderWebContentsId: payload.senderWebContentsId
+    } as any)
+  })
   eventBus.on('getCursorPosition', handleGetCursorPosition)
   eventBus.on('sendOrToggleAiFromTerminalForTab', handleSendOrToggleAiForTab)
   eventBus.on('updateTheme', handleUpdateTheme)
@@ -951,6 +984,10 @@ onMounted(async () => {
     eventBus.off('triggerAiSuggest')
     window.removeEventListener('keydown', handleGlobalKeyDown)
     window.removeEventListener('message', handlePostMessage)
+    if (crossWindowCommandCleanup) {
+      crossWindowCommandCleanup()
+      crossWindowCommandCleanup = null
+    }
   })
 
   if (terminal.value?.textarea) {
@@ -1033,6 +1070,7 @@ onBeforeUnmount(() => {
 
   commandMarkerToTabId.value.clear()
   commandMarkerToCommand.value.clear()
+  commandMarkerToSenderId.value.clear()
   currentCommandMarker.value = null
   currentCommandTabId.value = undefined
 
@@ -4004,10 +4042,12 @@ const handleCommandOutput = (data: string, isInitialCommand: boolean) => {
         if (finalOutput) {
           const formattedOutput = `Terminal output:\n\`\`\`\n${finalOutput}\n\`\`\``
           eventBus.emit('sendMessageToAi', { content: formattedOutput, tabId, toolResult })
+          relayOutputIfCrossWindow(marker, formattedOutput, tabId, toolResult)
         } else {
           const output = 'Command executed successfully, no output returned'
           const messageToSend = isInitialCommand ? `Terminal output:\n\`\`\`\n${output}\n\`\`\`` : output
           eventBus.emit('sendMessageToAi', { content: messageToSend, tabId, toolResult })
+          relayOutputIfCrossWindow(marker, messageToSend, tabId, toolResult)
         }
       } catch (error) {
         logger.error('Error processing command echo output', { error: error })
@@ -4943,6 +4983,9 @@ const handleGlobalKeyDown = (e: KeyboardEvent) => {
   // Search functionality
   // Windows uses the method of listening for key messages, window.addEventListener('message', handlePostMessage)
   if ((isMac ? e.metaKey : e.ctrlKey) && e.key === 'f') {
+    if (isFocusInAiTab(e)) {
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     openSearch()
@@ -5170,6 +5213,18 @@ const commandMarkerToTabId = ref(new Map<string, string | undefined>())
 const commandMarkerToCommand = ref(new Map<string, string>())
 const currentCommandMarker = ref<string | null>(null)
 const currentCommandTabId = ref<string | undefined>(undefined)
+const commandMarkerToSenderId = ref(new Map<string, number>())
+let crossWindowCommandCleanup: (() => void) | null = null
+
+// Relay command output to the requesting window (cross-window scenario)
+const relayOutputIfCrossWindow = (marker: string | null, content: string, tabId: string | undefined, toolResult: any) => {
+  if (!marker) return
+  const senderId = commandMarkerToSenderId.value.get(marker)
+  if (senderId !== undefined) {
+    commandMarkerToSenderId.value.delete(marker)
+    window.api.relayOutput({ senderWebContentsId: senderId, content, tabId, toolResult })
+  }
+}
 
 let cachedSelectionButton: HTMLElement | null = null
 

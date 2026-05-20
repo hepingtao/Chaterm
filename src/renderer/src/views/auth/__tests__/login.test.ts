@@ -649,7 +649,7 @@ describe('Login Component', () => {
       expect(vi.mocked(captureButtonClick)).toHaveBeenCalledWith(LoginFunnelEvents.SKIP_LOGIN, { method: LoginMethods.GUEST })
       expect(vi.mocked(removeToken)).toHaveBeenCalled()
       expect(vi.mocked(setUserInfo)).toHaveBeenCalled()
-      expect(vi.mocked(mockWindowApi.initUserDatabase)).toHaveBeenCalledWith({ uid: 999999999 })
+      expect(vi.mocked(mockWindowApi.initUserDatabase)).toHaveBeenCalledWith({ uid: 5003054 })
       // router.replace is called after initUserDatabase succeeds, but might fail silently
       // Check if it was attempted (even if it failed)
       const replaceCalls = vi.mocked(mockRouter.replace).mock.calls

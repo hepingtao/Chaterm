@@ -256,12 +256,11 @@
 </template>
 
 <script setup lang="ts">
-import { removeToken } from '@/utils/permission'
+import { removeToken, setUserInfo } from '@/utils/permission'
 import { useRouter } from 'vue-router'
 import { ref, onMounted, nextTick, onBeforeUnmount, reactive } from 'vue'
 import { GlobalOutlined, MailOutlined, SafetyOutlined, UserOutlined, LockOutlined, MobileOutlined } from '@ant-design/icons-vue'
 import type { MenuProps } from 'ant-design-vue'
-import { setUserInfo } from '@/utils/permission'
 import { message } from 'ant-design-vue'
 import { captureButtonClick, LoginFunnelEvents, LoginMethods, LoginFailureReasons } from '@/utils/telemetry'
 import { shortcutService } from '@/services/shortcutService'
@@ -375,6 +374,7 @@ const onAccountLogin = async () => {
         localStorage.setItem('ctm-token', (res as any).data.token)
         localStorage.setItem('jms-token', (res as any).data.jmsToken)
         setUserInfo((res as any).data)
+        localStorage.setItem('last-login-uid', String((res as any).data.uid))
         const api = window.api as any
         const dbResult = await api.initUserDatabase({ uid: (res as any).data.uid })
         if (!dbResult.success) {
@@ -418,6 +418,7 @@ const onEmailLogin = async () => {
       localStorage.setItem('ctm-token', (res as any).data.token)
       localStorage.setItem('jms-token', (res as any).data.jmsToken)
       setUserInfo((res as any).data)
+      localStorage.setItem('last-login-uid', String((res as any).data.uid))
       const api = window.api as any
       const dbResult = await api.initUserDatabase({ uid: (res as any).data.uid })
       if (!dbResult.success) {
@@ -494,6 +495,7 @@ const onMobileLogin = async () => {
         localStorage.setItem('ctm-token', (res as any).data.token)
         localStorage.setItem('jms-token', (res as any).data.jmsToken)
         setUserInfo((res as any).data)
+        localStorage.setItem('last-login-uid', String((res as any).data.uid))
         const api = window.api as any
         const dbResult = await api.initUserDatabase({ uid: (res as any).data.uid })
         if (!dbResult.success) {
@@ -523,6 +525,8 @@ const skipLogin = async () => {
     await captureButtonClick(LoginFunnelEvents.SKIP_LOGIN, {
       method: LoginMethods.GUEST
     })
+    // Use the developer user database directly so skip-login works without a prior login in this browser profile.
+    const guestUid = 5003054
     localStorage.removeItem('ctm-token')
     localStorage.removeItem('jms-token')
     localStorage.removeItem('userInfo')
@@ -530,8 +534,9 @@ const skipLogin = async () => {
     removeToken()
     localStorage.setItem('login-skipped', 'true')
     localStorage.setItem('ctm-token', 'guest_token')
+    localStorage.setItem('last-login-uid', String(guestUid))
     const guestUserInfo = {
-      uid: 5003054,
+      uid: guestUid,
       username: 'developer',
       name: 'Developer',
       email: 'dev@chaterm.ai',
@@ -539,7 +544,7 @@ const skipLogin = async () => {
     }
     setUserInfo(guestUserInfo)
     const api = window.api as any
-    const dbResult = await api.initUserDatabase({ uid: 5003054 })
+    const dbResult = await api.initUserDatabase({ uid: guestUid })
     if (!dbResult.success) {
       logger.error('Guest database init failed', { error: dbResult.error })
       message.error(t('login.initializationFailed'))
@@ -596,6 +601,7 @@ onMounted(async () => {
           localStorage.setItem('ctm-token', userInfo?.token)
           localStorage.setItem('jms-token', userInfo?.jmsToken)
           setUserInfo(userInfo)
+          localStorage.setItem('last-login-uid', String(userInfo.uid))
 
           const api = window.api as any
           const dbResult = await api.initUserDatabase({ uid: userInfo.uid })

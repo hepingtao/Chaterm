@@ -16,7 +16,7 @@ import { mark } from '@perf'
 import pWaitFor from 'p-wait-for'
 import { serializeError } from 'serialize-error'
 import { ApiHandler, buildApiHandler } from '@api/index'
-import { ApiStream, ApiStreamUsageChunk, ApiStreamReasoningChunk, ApiStreamTextChunk } from '@api/transform/stream'
+import { ApiStream, ApiStreamChunk, ApiStreamUsageChunk, ApiStreamReasoningChunk, ApiStreamTextChunk } from '@api/transform/stream'
 import { formatContentBlockToMarkdown } from '@integrations/misc/export-markdown'
 import { showSystemNotification } from '@integrations/notifications'
 import { ApiConfiguration, ApiProvider } from '@shared/api'
@@ -239,6 +239,7 @@ export class Task {
   private localTerminalManager: LocalTerminalManager
   customInstructions?: string
   autoApprovalSettings: AutoApprovalSettings
+  private chatMode?: 'chat' | 'cmd' | 'agent'
   apiConversationHistory: Anthropic.MessageParam[] = []
   chatermMessages: ChatermMessage[] = []
   private commandSecurityManager: CommandSecurityManager
@@ -523,7 +524,8 @@ export class Task {
     task?: string,
     chatTitle?: string,
     taskId?: string,
-    initialUserContentParts?: ContentPart[]
+    initialUserContentParts?: ContentPart[],
+    chatMode?: 'chat' | 'cmd' | 'agent'
   ) {
     this.postStateToWebview = postStateToWebview
     this.postMessageToWebview = postMessageToWebview
@@ -539,6 +541,7 @@ export class Task {
     this.responseFormatter = getFormatResponse(DEFAULT_LANGUAGE_SETTINGS)
     this.customInstructions = customInstructions
     this.autoApprovalSettings = autoApprovalSettings
+    this.chatMode = chatMode
     logger.debug('AutoApprovalSettings initialized', {
       event: 'agent.task.auto_approval.init',
       enabled: autoApprovalSettings.enabled
@@ -600,6 +603,19 @@ export class Task {
   setApiProvider(providerId: ApiProvider | string | undefined): void {
     if (!providerId) return
     this.apiProviderId = providerId
+  }
+
+  /**
+   * Get the effective chat mode for this task.
+   * Prefers the per-task mode (passed from renderer at task creation),
+   * falling back to the global chatSettings.  This avoids race conditions
+   * where the renderer mode selector has changed but the async global-state
+   * write has not yet landed.
+   */
+  private async getChatMode(): Promise<'chat' | 'cmd' | 'agent'> {
+    if (this.chatMode) return this.chatMode
+    const chatSettings = await getGlobalState('chatSettings')
+    return chatSettings?.mode || 'agent'
   }
 
   private async updateMessagesLanguage(): Promise<void> {
@@ -978,8 +994,8 @@ export class Task {
       }
     } catch (err) {
       // Check if we're in chat or cmd mode, if so return empty string
-      const chatSettings = await getGlobalState('chatSettings')
-      if (chatSettings?.mode === 'chat' || chatSettings?.mode === 'cmd') {
+      const mode = await this.getChatMode()
+      if (mode === 'chat' || mode === 'cmd') {
         return ''
       }
       await this.ask('ssh_con_failed', err instanceof Error ? err.message : String(err), false)
@@ -1052,8 +1068,8 @@ export class Task {
       })
     } catch (err) {
       // Check if we're in chat or cmd mode, if so return empty string
-      const chatSettings = await getGlobalState('chatSettings')
-      if (chatSettings?.mode === 'chat' || chatSettings?.mode === 'cmd') {
+      const mode = await this.getChatMode()
+      if (mode === 'chat' || mode === 'cmd') {
         return ''
       }
       await this.ask('ssh_con_failed', err instanceof Error ? err.message : String(err), false)
@@ -1146,10 +1162,10 @@ export class Task {
       const isNewConnection = !this.connectedHosts.has(currentConnectionId)
 
       // Check if this is an agent mode + local connection scenario that will fail
-      const chatSettings = await getGlobalState('chatSettings')
+      const mode = await this.getChatMode()
       const isLocalConnection =
         targetHost.connection?.toLowerCase?.() === 'localhost' || targetHost.uuid === 'localhost' || this.isLocalHost(targetHost.host)
-      const shouldSkipConnectionMessages = chatSettings?.mode === 'agent' && isLocalConnection
+      const shouldSkipConnectionMessages = mode === 'agent' && isLocalConnection
 
       if (isNewConnection && !shouldSkipConnectionMessages) {
         // Send connection start message only for new connections
@@ -1632,17 +1648,14 @@ export class Task {
 
     this.isInitialized = true
 
-    // Build initial user content
     let initialUserContent: UserContent = [
       {
         type: 'text',
         text: `<task>\n${task}\n</task>`
       }
     ]
-    // Smart detection: check if todo needs to be created
     if (task) {
       await this.checkAndCreateTodoIfNeeded(task)
-      // Include system messages added by smart detection into initial user content
       if (this.userMessageContent.length > 0) {
         initialUserContent.push(...this.userMessageContent)
       }
@@ -2204,11 +2217,21 @@ export class Task {
     let stream = this.api.createMessage(systemPrompt, conversationHistory)
 
     const iterator = stream[Symbol.asyncIterator]()
+    const apiTimeoutMs = 60000
 
     try {
       // awaiting first chunk to see if it will throw an error
       this.isWaitingForFirstChunk = true
-      const firstChunk = await iterator.next()
+      const firstChunk = await Promise.race([
+        iterator.next(),
+        new Promise<IteratorResult<ApiStreamChunk>>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(new Error(`API first chunk timeout after ${apiTimeoutMs}ms (provider=${this.apiProviderId}, model=${this.api.getModel().id})`)),
+            apiTimeoutMs
+          )
+        )
+      ])
       mark('chaterm/agent/firstToken')
       yield firstChunk.value
       this.isWaitingForFirstChunk = false
@@ -2710,6 +2733,11 @@ export class Task {
     error: unknown,
     abortStream: (cancelReason: ChatermApiReqCancelReason, streamingFailedMessage?: string) => Promise<void>
   ): Promise<void> {
+    logger.error('[Task Diag] handleStreamError', {
+      event: 'agent.task.diag.stream_error',
+      taskId: this.taskId,
+      error: error instanceof Error ? { name: error.name, message: error.message } : String(error)
+    })
     this.abortTask()
     const errorMessage = this.formatErrorWithStatusCode(error)
     await abortStream('streaming_failed', errorMessage)
@@ -2913,9 +2941,9 @@ export class Task {
 
         this.consecutiveMistakeCount = 0
         let didAutoApprove = false
-        const chatSettings = await getGlobalState('chatSettings')
+        const mode = await this.getChatMode()
 
-        if (chatSettings?.mode === 'cmd' || needsSecurityApproval) {
+        if (mode === 'cmd' || needsSecurityApproval) {
           // If security confirmation needed, show security warning first
           if (needsSecurityApproval) {
             this.removeLastPartialMessageIfExistsWithType('ask', 'command')
@@ -2933,7 +2961,7 @@ export class Task {
           }
 
           // Only cmd mode returns directly, wait for frontend to execute command
-          if (chatSettings?.mode === 'cmd') {
+          if (mode === 'cmd') {
             // Wait for frontend to execute command and return result
             return
           }
@@ -2943,10 +2971,9 @@ export class Task {
         const autoApproveResult = this.shouldAutoApproveTool(block.name)
         let [autoApproveSafe, autoApproveAll] = Array.isArray(autoApproveResult) ? autoApproveResult : [autoApproveResult, false]
 
-        // If security confirmation already passed, skip auto-approval logic
         if (
           !needsSecurityApproval &&
-          ((!requiresApprovalPerLLM && autoApproveSafe) || (requiresApprovalPerLLM && autoApproveSafe && autoApproveAll))
+          ((!requiresApprovalPerLLM && autoApproveSafe) || (mode === 'agent' && autoApproveSafe) || (requiresApprovalPerLLM && autoApproveSafe && autoApproveAll))
         ) {
           // In auto-approval mode, commands without security risks execute directly
           this.removeLastPartialMessageIfExistsWithType('ask', 'command')
@@ -2954,14 +2981,11 @@ export class Task {
           this.consecutiveAutoApprovedRequestsCount++
           didAutoApprove = true
         } else if (!needsSecurityApproval) {
-          // Check if read-only commands can be auto-approved:
-          // 1. Global setting: autoExecuteReadOnlyCommands enabled in preferences (read latest from global state)
-          // 2. Session setting: user clicked "auto-approve read-only" button in this session
+          // In agent mode, safe read-only commands auto-execute without explicit approval
           const latestAutoApprovalSettings = await getGlobalState('autoApprovalSettings')
           const globalAutoExecuteReadOnly = latestAutoApprovalSettings?.actions?.autoExecuteReadOnlyCommands ?? false
-          if (!requiresApprovalPerLLM && (globalAutoExecuteReadOnly || this.readOnlyCommandsAutoApproved)) {
-            // Auto-approve read-only command
-            const reason = globalAutoExecuteReadOnly ? 'global setting' : 'session auto-approval'
+          if ((mode === 'agent' || globalAutoExecuteReadOnly || this.readOnlyCommandsAutoApproved) && !requiresApprovalPerLLM) {
+            const reason = mode === 'agent' ? 'agent mode auto (read-only)' : globalAutoExecuteReadOnly ? 'global setting' : 'session auto-approval'
             logger.info(`[Command Execution] Auto-approving read-only command (${reason} enabled)`)
             this.removeLastPartialMessageIfExistsWithType('ask', 'command')
             await this.say('command', command, false)
@@ -3609,8 +3633,8 @@ export class Task {
     const toolDescription = this.getToolDescription(block)
 
     // In chat mode, tools are not allowed - this is a pure conversation mode
-    const chatSettings = await getGlobalState('chatSettings')
-    if (chatSettings?.mode === 'chat') {
+    const mode = await this.getChatMode()
+    if (mode === 'chat') {
       this.userMessageContent.push({
         type: 'text',
         text: this.responseFormatter.toolError(
@@ -4416,7 +4440,7 @@ export class Task {
   }
 
   private async buildSystemPrompt(): Promise<string> {
-    const chatSettings = await getGlobalState('chatSettings')
+    const mode = await this.getChatMode()
 
     // Get user language setting from renderer process
     let userLanguage = DEFAULT_LANGUAGE_SETTINGS
@@ -4445,12 +4469,31 @@ export class Task {
     let systemInformation = `# ${this.messages.systemInformationTitle}\n\n`
 
     // In chat mode, skip system information collection (no server operations)
-    if (chatSettings?.mode === 'chat') {
+    if (mode === 'chat') {
       systemInformation +=
         'Chat mode: No server connection or system information available. This mode is for conversation, learning, and brainstorming only.\n'
     } else if (!this.hosts || this.hosts.length === 0) {
       logger.warn('No hosts configured, skipping system information collection')
       systemInformation += this.messages.noHostsConfigured + '\n'
+    } else if (mode === 'cmd') {
+      // Command mode only needs enough target metadata for command generation.
+      // The renderer writes the approved command into the already-open terminal tab,
+      // so proactively opening a separate SSH connection here is unnecessary and can
+      // trigger duplicate login/MFA prompts.
+      logger.info('Skipping SSH system information collection in command mode', {
+        event: 'agent.task.system_info.skip_cmd',
+        hostCount: this.hosts.length
+      })
+      systemInformation +=
+        'Command mode: commands are generated for the selected/open terminal session. Do not perform server-side SSH preflight for system information; the approved command will be sent to the bound terminal.\n'
+      for (const host of this.hosts) {
+        systemInformation += `
+            ## Host: ${host.host}
+            Type: ${host.assetType || host.connection || this.messages.unknown}
+            Terminal Session: ${host.tabSessionId ? 'Bound to an opened terminal tab' : this.messages.unknown}
+            ====
+          `
+      }
     } else {
       logger.info(`Collecting system information for ${this.hosts.length} host(s)`)
 
@@ -4584,10 +4627,9 @@ USERNAME:${localSystemInfo.userName}`
           `
         } catch (error) {
           logger.error(`Failed to get system information for host ${host.host}`, { error: error })
-          const chatSettings = await getGlobalState('chatSettings')
           const isLocalConnection = host.connection?.toLowerCase?.() === 'localhost' || this.isLocalHost(host.host) || host.uuid === 'localhost'
 
-          if (chatSettings?.mode === 'agent' && isLocalConnection) {
+          if (mode === 'agent' && isLocalConnection) {
             const errorMessage = 'Error: Cannot connect to local target machine in Agent mode, please create a new task and select Command mode.'
             await this.ask('ssh_con_failed', errorMessage, false)
             await this.abortTask()

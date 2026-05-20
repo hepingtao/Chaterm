@@ -115,7 +115,8 @@ export default defineConfig(({ mode }) => {
           '@utils': resolve('src/main/agent/utils'),
           '@api': resolve('src/main/agent/api'),
           '@logging': resolve('src/main/services/logging'),
-          '@perf': resolve('src/main/services/perf')
+          '@perf': resolve('src/main/services/perf'),
+          '@storage': resolve('src/main/storage')
         }
       },
       define: {
@@ -125,7 +126,9 @@ export default defineConfig(({ mode }) => {
         // Main process reads CHATERM_KB_SEARCH_ENABLED at runtime, injected at build time here.
         'process.env.CHATERM_KB_SEARCH_ENABLED': JSON.stringify(env.RENDERER_KB_SEARCH_ENABLED || ''),
         'process.env.CHATERM_TELEMETRY_ENABLED': JSON.stringify(env.RENDERER_TELEMETRY_ENABLED || ''),
-        'process.env.CHATERM_DATA_SYNC_ENABLED': JSON.stringify(env.RENDERER_DATA_SYNC_ENABLED || '')
+        'process.env.CHATERM_DATA_SYNC_ENABLED': JSON.stringify(env.RENDERER_DATA_SYNC_ENABLED || ''),
+        'process.env.CHATERM_DEPLOY_STATUS': JSON.stringify(env.RENDERER_DEPLOY_STATUS || '0'),
+        'process.env.CHATERM_PREINSTALLED_PLUGINS': JSON.stringify(env.RENDERER_PREINSTALLED_PLUGINS || '')
       },
       build: {
         sourcemap: enableSourcemap,
