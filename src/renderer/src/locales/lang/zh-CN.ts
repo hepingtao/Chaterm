@@ -26,6 +26,7 @@ export default {
     userConfig: '设置',
     alias: 'Alias配置',
     assetConfig: '主机管理',
+    onboardingGuide: '入门引导',
     search: '搜索',
     connect: '连接',
     edit: '编辑',
@@ -129,7 +130,10 @@ export default {
     daysAgo: '天前',
     run: '执行',
     jumpserverSupportPlugin: 'Jumpserver Support',
-    noSearchResults: '无搜索结果'
+    noSearchResults: '无搜索结果',
+    database: '数据库',
+    previous: '上一页',
+    next: '下一页'
   },
   term: {
     welcome: '欢迎使用 Chaterm',
@@ -261,11 +265,30 @@ export default {
     watermarkDescribe: '在终端上显示水印',
     watermarkOpen: '开启',
     watermarkClose: '关闭',
+    onboardingGuide: '入门引导',
+    openOnboardingGuide: '打开入门引导',
     language: '语言',
     theme: '主题',
     themeDark: '暗色',
     themeLight: '亮色',
     themeAuto: '自动',
+    themeGroupSystem: '系统',
+    themeGroupDefault: '默认',
+    themeGroupOfficial: '官方主题',
+    themeTermiusDark: 'Graphite Dark',
+    themeTermiusLight: 'Mist Light',
+    themeFlexokiDark: 'Ember Earth',
+    themeFlexokiLight: 'Canvas Paper',
+    themeKanagawaWave: 'Tide Indigo',
+    themeKanagawaDragon: 'Forge Copper',
+    themeKanagawaLotus: 'Dawn Petal',
+    themeHackerBlue: 'Pulse Blue',
+    themeHackerGreen: 'Pulse Green',
+    themeDraculaNight: 'Eclipse Violet',
+    themeCatppuccinMocha: 'Truffle Mocha',
+    themeCatppuccinLatte: 'Cream Latte',
+    themeGruvboxDark: 'Grove Moss',
+    themeNordFrost: 'Fjord Ice',
     defaultLayout: '默认布局',
     defaultLayoutTerminal: 'Terminal',
     defaultLayoutAgents: 'Agents',
@@ -642,6 +665,176 @@ export default {
       toggleLayout: '切换布局（Terminal/Agents）'
     }
   },
+  onboarding: {
+    guide: {
+      title: '从一个模块开始熟悉 Chaterm',
+      description: '选择模块后会自动打开对应页面，并高亮展示关键区域。引导过程中，非高亮区域将暂时不可操作，当前高亮区域仍可点击。',
+      progress: '已完成 {completed}/{total}'
+    },
+    modules: {
+      interfaceGuide: {
+        title: '界面引导',
+        description: '了解左侧模块、功能面板、工作区 Tab、顶部布局控制和 AI 入口。'
+      },
+      systemSettings: {
+        title: '系统设置',
+        description: '熟悉通用设置、主题语言、默认布局，以及终端字体、代理和 SSH Agent 设置。'
+      },
+      addAndConnectHost: {
+        title: '添加并连接主机',
+        description: '创建一台主机并通过点击或双击资产卡片发起真实连接。'
+      },
+      aiChat: {
+        title: '使用 AI 对话',
+        description: '打开右侧 AI 栏，选择 Agent、模型和本地主机，并发起一次真实 AI 请求。'
+      }
+    },
+    spotlight: {
+      previous: '上一步',
+      next: '下一步',
+      finish: '完成',
+      progress: '{current}/{total}',
+      targetMissing: '当前目标暂时不可见。请先完成前置操作，或点击下一步继续。'
+    },
+    tours: {
+      interfaceGuide: {
+        moduleSwitcher: {
+          title: '左侧模块切换栏',
+          description: '这里切换工作空间、资产、文件、知识库等核心模块。'
+        },
+        functionPanel: {
+          title: '左侧功能面板',
+          description: '选中模块后，相关列表、搜索和管理入口会显示在这里。'
+        },
+        workspace: {
+          title: '主工作区 Tab',
+          description: '终端、设置、资产管理和编辑器都会作为 Tab 在主工作区打开。'
+        },
+        topControls: {
+          title: '顶部窗口与布局控制',
+          description: '顶部区域用于切换 Terminal/Agents 布局，并控制左右侧栏显示。'
+        },
+        aiToggle: {
+          title: '右侧 AI 对话入口',
+          description: '点击这里，或使用 Command/Ctrl + L，打开终端右侧的 AI 对话栏。'
+        },
+        aiSidebar: {
+          title: '右侧 AI 侧边栏',
+          description: '这里是终端右侧的 AI 工作区，包含对话列表、消息区域、上下文入口和底部输入控制。'
+        }
+      },
+      systemSettings: {
+        settingEntry: {
+          title: '设置入口',
+          description: '点击左下角齿轮、点击下一步，或使用 Command/Ctrl + , 打开系统设置 Tab。'
+        },
+        sideNav: {
+          title: '设置分类导航',
+          description: '左侧分类用于切换通用、终端、扩展、模型等设置页面。'
+        },
+        general: {
+          title: '通用设置内容',
+          description: '通用页集中管理外观、语言、默认布局、背景和常用偏好。'
+        },
+        background: {
+          title: '背景设置',
+          description: '可以选择预置背景图，也可以上传自定义图片，并调整透明度和亮度。'
+        },
+        backgroundPreset: {
+          title: '选择一个背景',
+          description: '点击被高亮的背景缩略图继续。'
+        },
+        terminalTab: {
+          title: '终端设置分类',
+          description: '点击终端分类，进入终端显示、输入和连接相关选项。'
+        },
+        terminalOptions: {
+          title: '终端字体、代理与 SSH Agent',
+          description: '这里可以调整字体字号、代理配置和 SSH Agent 行为。'
+        },
+        aiPreferencesTab: {
+          title: 'AI 偏好设置',
+          description: '点击这里进入 AI 偏好设置，配置推理、知识库检索和自动执行行为。'
+        },
+        aiPreferencesContent: {
+          title: 'AI 偏好内容',
+          description: '这里可以控制扩展思考、查询类命令自动执行、知识库检索、经验沉淀和代理等 AI 行为。'
+        },
+        aiAutoApproval: {
+          title: '开启自动执行',
+          description: '点击这个开关开启自动执行。开启后，AI 可在无需逐次确认的情况下执行允许的工具。'
+        }
+      },
+      addAndConnectHost: {
+        assetsEntry: {
+          title: '资产入口',
+          description: '先进入资产模块，查看主机与密钥管理入口。'
+        },
+        hostManagement: {
+          title: '主机管理入口',
+          description: '主机管理用于新增、编辑、导入和连接 SSH 主机。'
+        },
+        newHost: {
+          title: '新建主机按钮',
+          description: '点击新建主机后，右侧会展开主机表单。'
+        },
+        formFields: {
+          title: '主机表单关键字段',
+          description: '填写地址、端口、用户名、认证方式、分组和代理等连接信息。'
+        },
+        formSubmit: {
+          title: '保存主机',
+          description: '保存只会创建主机配置，不会伪造连接。'
+        },
+        connectAsset: {
+          title: '从资产卡片发起连接',
+          description: '保存成功后，点击或双击资产卡片发起真实连接尝试，完成本模块。'
+        }
+      },
+      aiChat: {
+        sidebar: {
+          title: '打开右侧 AI 栏',
+          description: '点击右上角入口，或使用 Command/Ctrl + L 打开右侧 AI 栏；左侧模块切换栏的 AI 图标也能打开它。'
+        },
+        sidebarOverview: {
+          title: '右侧 AI 侧边栏',
+          description: '这里承载当前终端工作流里的 AI 对话，包含历史、消息区域、上下文入口和底部输入控制。'
+        },
+        input: {
+          title: 'AI 输入框',
+          description: '输入框用于描述你的目标、问题或需要 AI 检查的终端状态。'
+        },
+        modeAgent: {
+          title: '选择 Agent 模式',
+          description: '这里是模式选择框。下拉已展开，点击 Agent，让 AI 按主机任务执行更完整的排查。'
+        },
+        modelOpen: {
+          title: '点开模型选择',
+          description: '点击这里展开模型列表。'
+        },
+        modelOption: {
+          title: '选择一个模型',
+          description: '点击可用模型，作为这次 AI 请求的调用模型。'
+        },
+        contextOpen: {
+          title: '点开上下文选择',
+          description: '点击添加上下文入口，准备选择本次 Agent 请求的目标主机。'
+        },
+        contextHosts: {
+          title: '进入主机列表',
+          description: '点击主机分类，查看可以作为执行目标的主机。'
+        },
+        localhost: {
+          title: '选择 127.0.0.1',
+          description: '点击本地主机 127.0.0.1，作为这次 Agent 请求的目标。'
+        },
+        send: {
+          title: '发送按钮',
+          description: '输入框已填入“查看主机状态”。点击发送按钮发起真实 AI 请求并完成本模块。'
+        }
+      }
+    }
+  },
   personal: {
     host: '主机管理',
     newHost: '添加主机',
@@ -688,6 +881,7 @@ export default {
     favoriteUpdateError: '更新收藏状态出错',
     defaultGroup: '主机',
     noAssets: '暂无资产',
+    emptyAssetsDescription: '可以手动创建主机，或导入已有会话文件后开始连接。',
     hostType: 'ssh',
     personalAsset: '个人',
     enterpriseAsset: '企业',
@@ -744,6 +938,13 @@ export default {
     exportSuccess: '成功导出 {count} 个资产',
     exportError: '导出失败',
     exportNoData: '没有可导出的资产数据',
+    selectExportHostsTitle: '选择要导出的主机',
+    selectExportHostsDescription: '勾选单台主机或整个分组,勾选分组会包含其下所有主机。',
+    selectExportHostsEmpty: '没有可导出的主机',
+    searchHosts: '搜索主机',
+    selectAll: '全选',
+    clearSelection: '清空',
+    selectedCount: '已选 {count} 台主机',
     importHelp: '导入格式说明',
     importFormatTitle: '资产导入格式说明',
     importFormatGuide: '导入格式说明：',
@@ -964,6 +1165,8 @@ export default {
     sendContentEmpty: '发送内容为空，请输入内容',
     getAssetInfoFailed: '获取当前资产连接信息失败',
     pleaseConnectAsset: '请先建立资产连接',
+    dbContextRequired: '请先选择数据库连接',
+    dbContextMissingField: '请先选择{field}',
     operationFailed: '操作失败',
     noOperableMessage: '没有可操作的消息',
     commandCopied: '命令已复制',
@@ -1175,6 +1378,8 @@ export default {
     download: '下载',
     upload: '上传',
     taskList: '传输列表',
+    collapseTransferList: '收起传输列表',
+    expandTransferList: '展开传输列表',
     doubleClickToOpen: '双击打开',
     sftpConnectFailed: 'SFTP连接失败',
     noDataAvailable: '暂无数据，请先连接到服务器',
@@ -1187,6 +1392,8 @@ export default {
     transferSuccess: '传输完成',
     transferFailed: '传输失败',
     openFolder: '打开文件夹',
+    showHiddenFiles: '显示隐藏文件',
+    hideHiddenFiles: '隐藏隐藏文件',
     uploadSkipped: '已跳过上传',
     transferSkipped: '已跳过传输',
     transferCancel: '已取消传输',
@@ -1263,7 +1470,7 @@ export default {
     disconnectedFromHost: '与远程主机({host})断开连接于 {date}',
     pressEnterToReconnectEn: '按 Enter 键重新连接...',
     connectingTo: '连接到 {ip}',
-    welcomeMessage: '{username}, 欢迎您使用Chaterm智能终端',
+    welcomeMessage: '{username}, 欢迎您使用 Chaterm 智能终端',
     reconnecting: '正在重新连接...',
     terminalConnectionError: '连接错误。请检查终端服务器是否运行。',
     autoReconnect: {
@@ -1292,7 +1499,12 @@ export default {
       mfaFailed: '双重认证失败',
       multipleUsersDetected: '检测到多个用户账号，请选择...',
       connectingWithSelectedAccount: '正在使用所选账号连接...',
-      userSelectionCanceled: '已取消用户选择'
+      userSelectionCanceled: '已取消用户选择',
+      syncFromJumpServer: '同步 JumpServer K8s 资产',
+      sourceTag: 'JumpServer',
+      noBastion: '暂无堡垒机，请先在 SSH 中配置',
+      syncSuccess: '同步完成，新增 {inserted} 个，更新 {updated} 个',
+      syncFailed: '同步失败'
     },
     qizhi: {
       connectingToBastionHost: '正在连接齐治堡垒机...',
@@ -1389,7 +1601,7 @@ export default {
     milliseconds: '毫秒数'
   },
   mcp: {
-    title: '工具与 MCP',
+    title: 'MCP',
     description: '管理 MCP 服务器连接，扩展 AI 能力',
     serverList: 'MCP 服务器',
     addServer: '添加服务器',
@@ -1580,6 +1792,7 @@ export default {
       addCluster: '添加集群',
       clusterAdded: '集群添加成功',
       noClusters: '暂无配置的集群',
+      localClusters: '本地集群',
       noTerminal: '暂无打开的终端会话',
       createTerminal: '创建终端',
       selectClusterFirst: '请先选择一个集群',
@@ -1631,6 +1844,222 @@ export default {
       active: '活跃',
       selectClusterToEdit: '选择一个集群以查看和编辑详情',
       k8sClusterConfig: '集群管理'
+    },
+    jumpserver: {
+      bastionResources: '堡垒机资源',
+      syncFromJumpServer: '同步 JumpServer K8s 资产',
+      sourceTag: 'JumpServer',
+      noBastion: '暂无堡垒机，请先在 SSH 中配置',
+      syncSuccess: '同步完成，新增 {inserted} 个，更新 {updated} 个',
+      syncFailed: '同步失败'
+    }
+  },
+  database: {
+    title: '数据库',
+    group: '分组',
+    rootGroup: '根分组',
+    newGroup: '新建分组',
+    copyName: '复制名称',
+    moveTo: '移动到',
+    deleteGroup: '删除分组',
+    deleteGroupConfirmTitle: '确认删除分组',
+    deleteGroupConfirmContent: '确定要删除分组 "{name}" 吗？此操作无法撤销。',
+    refreshConnected: '刷新已连接会话',
+    searchPlaceholder: '搜索连接或表...',
+    newConnection: '新建连接',
+    newConnectionOf: '新建 {dbType} 连接',
+    comingSoon: '即将支持',
+    editConnection: '编辑数据源',
+    editPasswordPlaceholder: '留空则保留原密码',
+    overview: '概览',
+    overviewLead: '从左侧选择一张表，双击可以打开 SQL 工作区。',
+    overviewTipExplore: '在左侧探索分组、连接和数据库对象。',
+    overviewTipConnection: '点击右上角加号按钮创建新的连接。',
+    overviewTipQuery: '双击表可打开 SQL 工作区，运行并格式化查询。',
+    testConnection: '测试连接',
+    testConnectionPassed: '连接成功',
+    testConnectionInFlight: '正在测试连接...',
+    fixRequiredFields: '请先填写必填字段。',
+    authentication: '身份验证',
+    authUserAndPassword: '用户名与密码',
+    driver: '驱动',
+    driverPlaceholder: '驱动上传能力将在后续阶段提供。',
+    driverClass: '类名',
+    uploadDriver: '上传驱动',
+    sshConfiguration: 'SSH 配置',
+    sshConfigurationPlaceholder: 'SSH 隧道复用将在后续阶段接入。',
+    advancedConfiguration: '高级配置',
+    advancedConfigurationPlaceholder: '高级参数面板占位。',
+    noResults: '无结果',
+    loading: '加载中...',
+    firstPage: '首页',
+    prevPage: '上一页',
+    nextPage: '下一页',
+    lastPage: '末页',
+    refresh: '刷新',
+    addRow: '新增行',
+    deleteRow: '删除行',
+    undo: '撤销',
+    saveChanges: '保存更改',
+    editDisabledSqlResult: '当前视图不支持编辑',
+    deleteDisabledNoRow: '请先选中一行',
+    undoDisabledEmpty: '没有可撤销的操作',
+    saveDisabledClean: '没有待提交的更改',
+    noPkWarning: '未检测到主键，已禁用编辑',
+    saveFailed: '保存失败',
+    setNull: '设为 NULL',
+    total: '总计',
+    totalTooltip: '点击更新总行数',
+    filterApply: '应用',
+    filterClear: '清除筛选',
+    filterLikePlaceholder: '模糊匹配，Enter 应用',
+    filterLocalSearch: '本地搜索 {column}',
+    filterAll: '全部',
+    sortTooltip: '点击切换排序：升序 / 降序 / 取消',
+    filterTooltip: '列筛选',
+    sqlFilterPlaceholder: '输入一个 SQL 表达式来过滤结果 (使用 Ctrl+Space)',
+    wherePlaceholder: "手写 WHERE 表达式（会覆盖列筛选），例如：id > 100 AND name LIKE '%abc%'",
+    orderByPlaceholder: '手写 ORDER BY 表达式（会覆盖列排序），例如：created_at DESC, id ASC',
+    statusResult: '结果',
+    statusTime: '耗时',
+    statusRows: '返回',
+    statusExecutionOk: '执行成功',
+    rowCount: '共 {count} 行',
+    run: '运行',
+    stop: '停止',
+    format: '格式化',
+    formatError: '格式化失败',
+    settings: '设置',
+    addTab: '新建查询标签页',
+    runAll: '执行全部',
+    runSelection: '执行选中',
+    runToCursor: '执行到光标处',
+    runCurrentStatement: '运行当前语句',
+    explain: '解释执行计划',
+    save: '保存',
+    saveAs: '另存为',
+    pickConnection: '连接',
+    pickDatabase: '数据库',
+    pickSchema: 'Schema',
+    sqlEmpty: 'SQL 为空',
+    sqlNoContext: '请先选择连接和数据库',
+    sqlRunning: '执行中…',
+    overviewColSql: 'SQL',
+    overviewColMessage: '消息',
+    overviewColTime: '耗时',
+    noExecutionsYet: '暂无执行记录。',
+    closeResultTab: '关闭结果标签页',
+    fields: {
+      name: '名称',
+      env: '环境',
+      dbType: '数据库类型',
+      host: '主机',
+      port: '端口',
+      user: '用户',
+      password: '密码',
+      database: '数据库',
+      url: 'URL',
+      sslMode: 'SSL 模式'
+    },
+    connectionMenu: {
+      openConnection: '打开连接',
+      closeConnection: '关闭连接',
+      queryConsole: '查询控制台',
+      createDatabase: '新建数据库',
+      editorSource: '编辑数据源',
+      copyName: '复制名称',
+      moveTo: '移动到',
+      moveToRoot: '根节点',
+      refresh: '刷新',
+      remove: '删除数据源',
+      disabledNeedConnection: '请先连接'
+    },
+    createDatabaseModal: {
+      title: '创建数据库',
+      nameLabel: '名称',
+      previewLabel: '预览',
+      nameRequired: '请输入名称',
+      nameInvalid: '名称包含非法字符',
+      submit: '确定',
+      cancel: '取消',
+      createdSuccess: '数据库已创建',
+      executeFailed: '创建数据库失败'
+    },
+    ddlViewerModal: {
+      title: '表 DDL - {table}',
+      copy: '复制',
+      copyFailed: '复制失败'
+    },
+    tableMenu: {
+      openTable: '打开表',
+      queryConsole: '查询控制台',
+      copyName: '复制名称',
+      viewDdl: '查看 DDL',
+      copyTable: '复制表',
+      copyTableName: '复制名称',
+      copyTableSelect: '复制 SELECT 语句',
+      copyTableDdl: '复制 DDL',
+      truncate: '清空表',
+      drop: '删除表',
+      truncateConfirmTitle: '清空表？',
+      truncateConfirmContent: '确定清空表 {table}？所有数据将被永久删除。',
+      dropConfirmTitle: '删除表？',
+      dropConfirmContent: '确定删除表 {table}？此操作无法撤销。',
+      ddlPermissionDenied: '权限不足，无法生成 DDL。当前数据库用户需要 CREATE FUNCTION 权限。',
+      ddlFetchFailed: '获取 DDL 失败：{msg}',
+      nameCopied: '表名已复制',
+      selectCopied: 'SELECT 语句已复制',
+      ddlCopied: 'DDL 已复制',
+      truncated: '表已清空',
+      dropped: '表已删除'
+    },
+    removeConfirm: {
+      title: '删除数据源？',
+      content: '连接 "{name}" 将被删除，此操作无法撤销。'
+    },
+    copiedToClipboard: '已复制到剪贴板',
+    movedSuccess: '连接已移动',
+    dbAi: {
+      title: '数据库 AI',
+      drawerTitle: '数据库 AI 结果',
+      emptyState: '暂无 DB-AI 请求。请在 SQL 编辑器中触发解释、自然语言转 SQL、优化或转换。',
+      emptyInput: '没有可发送到 AI 的内容。',
+      contextRequired: '请先选择连接和数据库。',
+      unknownError: 'DB-AI 请求失败。',
+      reasoning: '推理过程',
+      generatedSql: '生成的 SQL',
+      targetDialect: '目标方言',
+      textOnlyDialectHint: '仅文本转换；只读执行已禁用。',
+      insertIntoEditor: '插入到编辑器',
+      replaceSelection: '替换选中内容',
+      insertedIntoEditor: '已插入到编辑器',
+      replacedSelection: '已替换选中内容',
+      copy: '复制 SQL',
+      copyFailed: '复制失败',
+      runReadOnly: '运行（只读）',
+      cancel: '取消请求',
+      clear: '清空',
+      statusIdle: '空闲',
+      statusQueued: '排队中',
+      statusStreaming: '流式传输中',
+      statusDone: '已完成',
+      statusError: '错误',
+      statusCancelled: '已取消',
+      diagnosing: 'AI 分析中...',
+      diagnosedAndReplaced: 'SQL 已修复并替换',
+      actionExplain: '解释',
+      actionNl2Sql: '自然语言转 SQL',
+      actionOptimize: '优化',
+      actionConvert: '转换方言',
+      actionComplete: '补全',
+      actionDiagnose: 'AI 修复',
+      nl2SqlPrompt: {
+        title: '根据问题生成 SQL',
+        hint: '用自然语言描述你想查询的内容，当前连接和 schema 会作为上下文。',
+        placeholder: '例如：列出近 30 天累计付款金额最高的 5 位客户',
+        submit: '生成',
+        cancel: '取消'
+      }
     }
   }
 }

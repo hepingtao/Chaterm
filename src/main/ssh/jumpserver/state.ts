@@ -16,3 +16,15 @@ export const deleteExecStreamPromise = (connectionId: string) => jumpserverExecS
 export const jumpserverPendingData = new Map<string, Buffer[]>()
 
 export const jumpserverSessionPids = new Map<string, number>()
+
+export interface JumpServerK8sSession {
+  conn: any
+  stream: any
+  ownsConnection?: boolean
+  bastionUuid?: string
+  bastionAssetAddress?: string
+  bastionAssetName?: string
+}
+
+// Key: k8s terminalId; Value: k8s shell session + connection ownership flag
+export const jumpserverK8sSessions = new Map<string, JumpServerK8sSession>()

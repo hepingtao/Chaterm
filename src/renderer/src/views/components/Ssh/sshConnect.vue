@@ -100,13 +100,15 @@ import { ensureTransferListener } from '@views/components/Files/fileTransfer'
 
 import SearchComp from './components/searchComp.vue'
 
-import type { ILink, ILinkProvider } from '@xterm/xterm'
+import type { IBufferLine, ILink, ILinkProvider } from '@xterm/xterm'
 import { IDisposable, Terminal } from '@xterm/xterm'
 import ZmodemProgress from './utils/zmodemProgress.vue'
 import Context from './components/contextComp.vue'
 import SuggComp from './components/suggestion.vue'
 import eventBus from '@/utils/eventBus'
 import { getActualTheme } from '@/utils/themeUtils'
+import { getResolvedTerminalTheme } from '@/themes/terminalTheme'
+import type { ThemeId, ThemeChangePayload } from '../../../../../shared/themes/types'
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, PropType, reactive, ref, watch } from 'vue'
 import { shortcutService } from '@/services/shortcutService'
 import { useI18n } from 'vue-i18n'
@@ -142,6 +144,7 @@ import { isFocusInAiTab } from '@/utils/domUtils'
 import { checkUserDevice } from '@api/user/user'
 import { keywordHighlightService } from '@/services/keywordHighlightService'
 import { useZmodem } from './utils/chatermZmodem'
+import { shouldAutoScrollAfterTerminalStateUpdate, shouldAutoScrollAfterTerminalWrite } from './utils/terminalScroll'
 
 // Pre-compiled regex constants for checkFullScreenClear / checkHeavyUiStyle (avoid re-creation per call)
 const CLEAR_SCREEN_PATTERNS = [
@@ -168,6 +171,7 @@ type ShellCloseInfo = {
 const selectFlag = ref(false)
 const configStore = userConfigStore()
 const isTransparent = computed(() => !!configStore.getUserConfig.background.image)
+const hasCustomBg = (): boolean => isTransparent.value === true
 let viewportScrollbarHideTimer: number | null = null
 
 // Coalesced scrollToBottom: uses requestAnimationFrame for smooth alignment with browser repaint
@@ -490,8 +494,80 @@ const getUserInfo = async () => {
   }
 }
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
+const preserveSelectionOnCtrlLinkRelease = ref(false)
+
+const isSelectAllShortcut = (e: KeyboardEvent): boolean => {
+  if (e.key.toLowerCase() !== 'a') return false
+  if (isMac) return e.metaKey
+  return e.ctrlKey && !e.metaKey
+}
+
+const handleSelectAllShortcut = (e: KeyboardEvent): boolean => {
+  if (!isSelectAllShortcut(e)) return false
+  if (!canLinkify() || !isTerminalKeyboardTarget(e)) return false
+  e.preventDefault()
+  e.stopPropagation()
+  preserveSelectionOnCtrlLinkRelease.value = true
+  selectTerminalContent()
+  return true
+}
+
+const isTerminalKeyboardTarget = (e: KeyboardEvent): boolean => {
+  const target = e.target as Node | null
+  const activeElement = document.activeElement
+  const container = terminalContainer.value || terminalElement.value?.closest('.terminal-container')
+
+  if (!container) return false
+  return (!!target && container.contains(target)) || (!!activeElement && container.contains(activeElement))
+}
+
+const getLastContentColumn = (line: IBufferLine, cols: number): number => {
+  const maxColumn = Math.min(line.length, cols)
+  for (let column = maxColumn - 1; column >= 0; column--) {
+    const cell = line.getCell(column)
+    const chars = cell?.getChars() ?? ''
+    if (chars.trim().length > 0) {
+      return Math.min(column + Math.max(cell?.getWidth() || 1, 1), cols)
+    }
+  }
+  return 0
+}
+
+const selectTerminalContent = () => {
+  const termInstance = terminal.value
+  if (!termInstance) return
+
+  const buffer = termInstance.buffer.active
+  let firstContentLine = -1
+  let lastContentLine = -1
+  let lastContentColumn = 0
+
+  for (let lineIndex = 0; lineIndex < buffer.length; lineIndex++) {
+    const line = buffer.getLine(lineIndex)
+    if (!line) continue
+
+    const contentColumn = getLastContentColumn(line, termInstance.cols)
+    if (contentColumn === 0) continue
+
+    if (firstContentLine === -1) {
+      firstContentLine = lineIndex
+    }
+    lastContentLine = lineIndex
+    lastContentColumn = contentColumn
+  }
+
+  if (firstContentLine === -1 || lastContentLine === -1 || lastContentColumn === 0) {
+    termInstance.clearSelection()
+    showAiButton.value = false
+    return
+  }
+
+  const selectionLength = (lastContentLine - firstContentLine) * termInstance.cols + lastContentColumn
+  termInstance.select(0, firstContentLine, selectionLength)
+}
 
 const handleMetaKeyDown = (e: KeyboardEvent) => {
+  if (handleSelectAllShortcut(e)) return
   if (e.key !== 'Meta') return
   if (!canLinkify()) return
   setCtrlLinkPressed(true)
@@ -499,8 +575,12 @@ const handleMetaKeyDown = (e: KeyboardEvent) => {
 
 const handleMetaKeyUp = (e: KeyboardEvent) => {
   if (e.key !== 'Meta') return
-  if (!ctrlLinkPressed.value) return
-  setCtrlLinkPressed(false)
+  if (!ctrlLinkPressed.value) {
+    preserveSelectionOnCtrlLinkRelease.value = false
+    return
+  }
+  setCtrlLinkPressed(false, { preserveSelection: preserveSelectionOnCtrlLinkRelease.value })
+  preserveSelectionOnCtrlLinkRelease.value = false
 }
 
 onMounted(async () => {
@@ -518,7 +598,6 @@ onMounted(async () => {
 
   const { mark: perfMark } = await import('@/utils/perf')
   perfMark('chaterm/terminal/willCreate')
-  const actualTheme = getActualTheme(config.theme)
   const termInstance = markRaw(
     new Terminal({
       scrollback: config.scrollBack,
@@ -527,26 +606,7 @@ onMounted(async () => {
       fontSize: config.fontSize || 12,
       fontFamily: config.fontFamily || 'Menlo, Monaco, "Courier New", Consolas, Courier, monospace',
       allowTransparency: true,
-      theme:
-        actualTheme === 'light'
-          ? {
-              background: config.background?.image ? 'rgba(245, 245, 245, 0.82)' : '#f5f5f5',
-              foreground: '#000000',
-              cursor: '#000000',
-              cursorAccent: '#f5f5f5',
-              selectionBackground: 'rgba(255, 247, 0, 0.82)',
-              selectionInactiveBackground: 'rgba(255, 247, 0, 0.5)',
-              selectionForeground: '#141414'
-            }
-          : {
-              background: config.background?.image ? 'transparent' : '#141414',
-              foreground: '#e0e0e0',
-              cursor: '#e0e0e0',
-              cursorAccent: '#141414',
-              selectionBackground: 'rgba(255, 255, 0, 0.88)',
-              selectionInactiveBackground: 'rgba(255, 255, 0, 0.55)',
-              selectionForeground: '#141414'
-            }
+      theme: getResolvedTerminalTheme(config.theme as ThemeId, { hasCustomBg: hasCustomBg() })
     })
   )
   terminal.value = termInstance
@@ -589,27 +649,27 @@ onMounted(async () => {
 
   // Ctrl key monitoring
   if (isMac) {
-    window.addEventListener('keydown', handleMetaKeyDown)
-    window.addEventListener('keyup', handleMetaKeyUp)
+    window.addEventListener('keydown', handleMetaKeyDown, true)
+    window.addEventListener('keyup', handleMetaKeyUp, true)
   } else {
-    window.addEventListener('keydown', handleCtrlKeyDown)
-    window.addEventListener('keyup', handleCtrlKeyUp)
+    window.addEventListener('keydown', handleCtrlKeyDown, true)
+    window.addEventListener('keyup', handleCtrlKeyUp, true)
   }
 
   window.addEventListener('blur', () => setCtrlLinkPressed(false))
   cleanupListeners.value.push(() => {
     if (isMac) {
-      window.removeEventListener('keydown', handleMetaKeyDown)
-      window.removeEventListener('keyup', handleMetaKeyUp)
+      window.removeEventListener('keydown', handleMetaKeyDown, true)
+      window.removeEventListener('keyup', handleMetaKeyUp, true)
     } else {
-      window.removeEventListener('keydown', handleCtrlKeyDown)
-      window.removeEventListener('keyup', handleCtrlKeyUp)
+      window.removeEventListener('keydown', handleCtrlKeyDown, true)
+      window.removeEventListener('keyup', handleCtrlKeyUp, true)
     }
   })
 
   ensureTransferListener()
   // Enable GPU-accelerated rendering for better performance with large output
-  if (!config.background?.image && actualTheme !== 'light') {
+  if (!config.background?.image && getActualTheme(config.theme) !== 'light') {
     try {
       const { WebglAddon } = await import('@xterm/addon-webgl')
       const webglAddon = new WebglAddon()
@@ -658,7 +718,7 @@ onMounted(async () => {
   const exitHighThroughputMode = () => {
     highThroughputMode = false
     // Do one final state update after bulk output settles
-    debouncedUpdateTerminalState('', false)
+    debouncedUpdateTerminalState('', false, shouldAutoScrollAfterTerminalWrite(terminal.value))
   }
 
   const scheduleHighThroughputExit = () => {
@@ -668,12 +728,12 @@ onMounted(async () => {
     htCooldownTimer = setTimeout(exitHighThroughputMode, HIGH_THROUGHPUT_COOLDOWN)
   }
 
-  const debouncedUpdateTerminalState = (data, currentIsUserCall) => {
+  const debouncedUpdateTerminalState = (data, currentIsUserCall, shouldAutoScrollAfterWrite = true) => {
     if (updateTimeout) {
       clearTimeout(updateTimeout)
     }
     if (currentIsUserCall || terminalMode.value === 'none') {
-      updateTerminalState(typeof data === 'string' && data.endsWith(startStr.value), enterPress.value, tagPress.value)
+      updateTerminalState(typeof data === 'string' && data.endsWith(startStr.value), enterPress.value, tagPress.value, shouldAutoScrollAfterWrite)
     }
     let highLightFlag: boolean = true
     if (enterPress.value || specialCode.value) {
@@ -721,8 +781,11 @@ onMounted(async () => {
 
     // High-throughput mode: bypass keyword highlight, render patching, and state updates
     if (highThroughputMode && !currentIsUserCall) {
+      const shouldAutoScroll = shouldAutoScrollAfterTerminalWrite(terminal.value)
       originalWrite(data, () => {
-        scheduleScrollToBottom()
+        if (shouldAutoScroll) {
+          scheduleScrollToBottom()
+        }
       })
       scheduleHighThroughputExit()
       return
@@ -736,12 +799,12 @@ onMounted(async () => {
       processedData = keywordHighlightService.applyHighlight(data)
     }
 
+    const shouldAutoScroll = !currentIsUserCall && shouldAutoScrollAfterTerminalWrite(terminal.value)
     originalWrite(processedData, () => {
       if (!currentIsUserCall) {
-        debouncedUpdateTerminalState(data, currentIsUserCall)
+        debouncedUpdateTerminalState(data, currentIsUserCall, shouldAutoScroll)
       }
-      // Ensure scroll to bottom after write completion
-      if (!currentIsUserCall) {
+      if (shouldAutoScroll) {
         scheduleScrollToBottom()
       }
     })
@@ -871,29 +934,10 @@ onMounted(async () => {
     termInstance.focus()
   }
 
-  const handleUpdateTheme = (theme) => {
+  const handleUpdateTheme = (payload: string | ThemeChangePayload) => {
+    const themeId = (typeof payload === 'string' ? payload : payload.themeId) as ThemeId
     if (terminal.value) {
-      const actualTheme = getActualTheme(theme)
-      terminal.value.options.theme =
-        actualTheme === 'light'
-          ? {
-              background: config.background?.image ? 'rgba(245, 245, 245, 0.82)' : '#f5f5f5',
-              foreground: '#000000',
-              cursor: '#000000',
-              cursorAccent: '#f5f5f5',
-              selectionBackground: 'rgba(255, 247, 0, 0.82)',
-              selectionInactiveBackground: 'rgba(255, 247, 0, 0.5)',
-              selectionForeground: '#141414'
-            }
-          : {
-              background: configStore.getUserConfig.background.image ? 'transparent' : '#141414',
-              foreground: '#e0e0e0',
-              cursor: '#e0e0e0',
-              cursorAccent: '#141414',
-              selectionBackground: 'rgba(255, 255, 0, 0.88)',
-              selectionInactiveBackground: 'rgba(255, 255, 0, 0.55)',
-              selectionForeground: '#141414'
-            }
+      terminal.value.options.theme = getResolvedTerminalTheme(themeId, { hasCustomBg: hasCustomBg() })
     }
   }
   const handleGetCursorPosition = (payload: { connectionId?: string; callback: (position: any) => void }) => {
@@ -1015,8 +1059,7 @@ onMounted(async () => {
     () => configStore.getUserConfig.background.image,
     () => {
       if (terminal.value) {
-        const actualTheme = getActualTheme(configStore.getUserConfig.theme)
-        handleUpdateTheme(actualTheme)
+        handleUpdateTheme(configStore.getUserConfig.theme as ThemeId)
       }
     }
   )
@@ -1586,7 +1629,15 @@ const connectSSH = async (_opts?: { isAutoReconnect?: boolean }) => {
 
     try {
       const skipAssetLookup = shouldSkipAssetLookup(props.connectData)
-      const assetInfo = skipAssetLookup ? null : await api.connectAssetInfo({ uuid: props.connectData.uuid })
+      const orgId = props.serverInfo?.organizationId
+      const fallbackOrgUuid = orgId && orgId !== 'personal' ? orgId : undefined
+      const assetInfo = skipAssetLookup
+        ? null
+        : await api.connectAssetInfo({
+            uuid: props.connectData.uuid,
+            organizationUuid: fallbackOrgUuid,
+            ip: props.connectData.ip || props.connectData.host
+          })
       const password = ref('')
       const privateKey = ref('')
       const passphrase = ref('')
@@ -2247,7 +2298,7 @@ const getWrappedContentLastLineY = () => {
   return lastY
 }
 
-const updateTerminalState = (quickInit: boolean, enterPress, tagPress: boolean) => {
+const updateTerminalState = (quickInit: boolean, enterPress, tagPress: boolean, shouldAutoScrollAfterWrite = true) => {
   if (!terminal.value) return
 
   try {
@@ -2294,8 +2345,12 @@ const updateTerminalState = (quickInit: boolean, enterPress, tagPress: boolean) 
     updateTerminalStateObject(cursorX, cursorY, isCrossRow)
     sendTerminalStateToServer()
 
-    // Ensure terminal scrolls to bottom, keeping cursor in visible area
-    if (!userInputFlag.value) {
+    if (
+      shouldAutoScrollAfterTerminalStateUpdate({
+        isUserCall: userInputFlag.value,
+        shouldAutoScrollAfterWrite
+      })
+    ) {
       scheduleScrollToBottom()
     }
 
@@ -3840,22 +3895,12 @@ const handleCommandOutput = (data: string, isInitialCommand: boolean) => {
         case 'linux':
         case 'unknown': {
           // Linux/Git Bash terminal processing (Git Bash uses same logic as Linux)
-          const filteredLines = lines.filter((line) => line.trim())
+          const filteredLines = lines.map((line) => stripAnsiExtended(line).trimEnd()).filter((line) => line.trim())
 
           const isCommandEchoLine = (line: string): boolean => {
             // First, clean ANSI sequences to ensure command detection works correctly
             // Git Bash command echo may contain color codes (e.g., colored $ symbol)
-            let cleanedLine = line
-              .replace(/\x1b\[[0-9;]*m/g, '') // Color codes
-              .replace(/\x1b\[[0-9;]*[ABCDEFGJKST]/g, '') // Cursor movement
-              .replace(/\x1b\[[0-9]*[XK]/g, '') // Erase sequences
-              .replace(/\x1b\[[0-9;]*[Hf]/g, '') // Position sequences
-              .replace(/\x1b\[[?][0-9;]*[hl]/g, '') // Mode sequences
-              .replace(/\x1b\]0;[^\x07]*\x07/g, '') // Window title
-              .replace(/\x1b\]9;[^\x07]*\x07/g, '') // PowerShell sequences
-              .replace(/\x1b\[[?]25[hl]/g, '') // Cursor visibility
-              .replace(/\x1b\[[0-9;]*[JK]/g, '') // Erase in display/line
-              .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Control chars
+            const cleanedLine = stripAnsiExtended(line)
 
             const trimmed = cleanedLine.trim()
             if (!trimmed) return false
@@ -3910,18 +3955,7 @@ const handleCommandOutput = (data: string, isInitialCommand: boolean) => {
           // Helper function to clean ANSI sequences for prompt detection
           // This ensures prompts with ANSI color codes can be correctly identified
           const cleanLineForPromptCheck = (line: string): string => {
-            return line
-              .replace(/\x1b\[[0-9;]*m/g, '') // Color codes
-              .replace(/\x1b\[[0-9;]*[ABCDEFGJKST]/g, '') // Cursor movement
-              .replace(/\x1b\[[0-9]*[XK]/g, '') // Erase sequences
-              .replace(/\x1b\[[0-9;]*[Hf]/g, '') // Position sequences
-              .replace(/\x1b\[[?][0-9;]*[hl]/g, '') // Mode sequences
-              .replace(/\x1b\]0;[^\x07]*\x07/g, '') // Window title
-              .replace(/\x1b\]9;[^\x07]*\x07/g, '') // PowerShell sequences
-              .replace(/\x1b\[[?]25[hl]/g, '') // Cursor visibility
-              .replace(/\x1b\[[0-9;]*[JK]/g, '') // Erase in display/line
-              .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Control chars
-              .trim()
+            return stripAnsiExtended(line).trim()
           }
 
           // Remove all consecutive prompt lines from the end
@@ -5469,7 +5503,7 @@ const canLinkify = (): boolean => {
 //   ctrlOverlay = overlay
 // }
 
-const setCtrlLinkPressed = (v: boolean) => {
+const setCtrlLinkPressed = (v: boolean, options: { preserveSelection?: boolean } = {}) => {
   if (ctrlLinkPressed.value === v) return
   ctrlLinkPressed.value = v
 
@@ -5483,21 +5517,28 @@ const setCtrlLinkPressed = (v: boolean) => {
     // applyCtrlOverlay()
   } else {
     // clearCtrlOverlay()
-    terminal.value?.clearSelection()
-    showAiButton.value = false
+    if (!options.preserveSelection) {
+      terminal.value?.clearSelection()
+      showAiButton.value = false
+    }
   }
 }
 
 // Ctrl key listener
 const handleCtrlKeyDown = (e: KeyboardEvent) => {
+  if (handleSelectAllShortcut(e)) return
   if (e.key !== 'Control') return
   if (!canLinkify()) return
   setCtrlLinkPressed(true)
 }
 const handleCtrlKeyUp = (e: KeyboardEvent) => {
   if (e.key !== 'Control') return
-  if (!ctrlLinkPressed.value) return
-  setCtrlLinkPressed(false)
+  if (!ctrlLinkPressed.value) {
+    preserveSelectionOnCtrlLinkRelease.value = false
+    return
+  }
+  setCtrlLinkPressed(false, { preserveSelection: preserveSelectionOnCtrlLinkRelease.value })
+  preserveSelectionOnCtrlLinkRelease.value = false
 }
 
 type LsBlock = {

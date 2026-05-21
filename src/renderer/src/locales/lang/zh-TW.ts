@@ -26,6 +26,7 @@ export default {
     userConfig: '設置',
     alias: 'Alias配置',
     assetConfig: '主機管理',
+    onboardingGuide: '入門引導',
     search: '搜尋',
     connect: '連接',
     edit: '編輯',
@@ -129,7 +130,10 @@ export default {
     daysAgo: '天前',
     run: '執行',
     jumpserverSupportPlugin: 'Jumpserver Support',
-    noSearchResults: '無搜尋結果'
+    noSearchResults: '無搜尋結果',
+    previous: '上一頁',
+    next: '下一頁',
+    database: '資料庫'
   },
   term: {
     welcome: '歡迎使用 Chaterm',
@@ -263,11 +267,30 @@ export default {
     watermarkDescribe: '在終端上顯示水印',
     watermarkOpen: '開啟',
     watermarkClose: '關閉',
+    onboardingGuide: '入門引導',
+    openOnboardingGuide: '開啟入門引導',
     language: '語言',
     theme: '主題',
     themeDark: '暗色',
     themeLight: '亮色',
     themeAuto: '自動',
+    themeGroupSystem: '系統',
+    themeGroupDefault: '預設',
+    themeGroupOfficial: '官方主題',
+    themeTermiusDark: 'Graphite Dark',
+    themeTermiusLight: 'Mist Light',
+    themeFlexokiDark: 'Ember Earth',
+    themeFlexokiLight: 'Canvas Paper',
+    themeKanagawaWave: 'Tide Indigo',
+    themeKanagawaDragon: 'Forge Copper',
+    themeKanagawaLotus: 'Dawn Petal',
+    themeHackerBlue: 'Pulse Blue',
+    themeHackerGreen: 'Pulse Green',
+    themeDraculaNight: 'Eclipse Violet',
+    themeCatppuccinMocha: 'Truffle Mocha',
+    themeCatppuccinLatte: 'Cream Latte',
+    themeGruvboxDark: 'Grove Moss',
+    themeNordFrost: 'Fjord Ice',
     defaultLayout: '默認佈局',
     defaultLayoutTerminal: 'Terminal',
     defaultLayoutAgents: 'Agents',
@@ -636,6 +659,176 @@ export default {
       toggleLayout: '切換布局（Terminal/Agents）'
     }
   },
+  onboarding: {
+    guide: {
+      title: '從一個模組開始熟悉 Chaterm',
+      description: '選擇模組後會自動開啟對應頁面，並高亮顯示關鍵區域。引導過程中，非高亮區域將暫時不可操作，當前高亮區域仍可點擊。',
+      progress: '已完成 {completed}/{total}'
+    },
+    modules: {
+      interfaceGuide: {
+        title: '介面引導',
+        description: '了解左側模組、功能面板、工作區 Tab、頂部版面控制和 AI 入口。'
+      },
+      systemSettings: {
+        title: '系統設定',
+        description: '熟悉一般設定、主題語言、預設版面，以及終端字型、代理和 SSH Agent 設定。'
+      },
+      addAndConnectHost: {
+        title: '新增並連線主機',
+        description: '建立一台主機並透過點擊或雙擊資產卡片發起真實連線。'
+      },
+      aiChat: {
+        title: '使用 AI 對話',
+        description: '開啟右側 AI 欄，選擇 Agent、模型和本機主機，並發起一次真實 AI 請求。'
+      }
+    },
+    spotlight: {
+      previous: '上一步',
+      next: '下一步',
+      finish: '完成',
+      progress: '{current}/{total}',
+      targetMissing: '目前目標暫時不可見。請先完成前置操作，或點擊下一步繼續。'
+    },
+    tours: {
+      interfaceGuide: {
+        moduleSwitcher: {
+          title: '左側模組切換欄',
+          description: '這裡切換工作空間、資產、檔案、知識庫等核心模組。'
+        },
+        functionPanel: {
+          title: '左側功能面板',
+          description: '選中模組後，相關列表、搜尋和管理入口會顯示在這裡。'
+        },
+        workspace: {
+          title: '主工作區 Tab',
+          description: '終端、設定、資產管理和編輯器都會作為 Tab 在主工作區開啟。'
+        },
+        topControls: {
+          title: '頂部視窗與版面控制',
+          description: '頂部區域用於切換 Terminal/Agents 版面，並控制左右側欄顯示。'
+        },
+        aiToggle: {
+          title: '右側 AI 對話入口',
+          description: '點擊這裡，或使用 Command/Ctrl + L，開啟終端右側的 AI 對話欄。'
+        },
+        aiSidebar: {
+          title: '右側 AI 側邊欄',
+          description: '這裡是終端右側的 AI 工作區，包含對話列表、訊息區域、上下文入口和底部輸入控制。'
+        }
+      },
+      systemSettings: {
+        settingEntry: {
+          title: '設定入口',
+          description: '點擊左下角齒輪、點擊下一步，或使用 Command/Ctrl + , 開啟系統設定 Tab。'
+        },
+        sideNav: {
+          title: '設定分類導覽',
+          description: '左側分類用於切換一般、終端、擴充、模型等設定頁面。'
+        },
+        general: {
+          title: '一般設定內容',
+          description: '一般頁集中管理外觀、語言、預設版面、背景和常用偏好。'
+        },
+        background: {
+          title: '背景設定',
+          description: '可以選擇預設背景圖，也可以上傳自訂圖片，並調整透明度和亮度。'
+        },
+        backgroundPreset: {
+          title: '選擇一個背景',
+          description: '點擊被高亮的背景縮圖繼續。'
+        },
+        terminalTab: {
+          title: '終端設定分類',
+          description: '點擊終端分類，進入終端顯示、輸入和連線相關選項。'
+        },
+        terminalOptions: {
+          title: '終端字型、代理與 SSH Agent',
+          description: '這裡可以調整字型字號、代理設定和 SSH Agent 行為。'
+        },
+        aiPreferencesTab: {
+          title: 'AI 偏好設定',
+          description: '點擊這裡進入 AI 偏好設定，設定推理、知識庫檢索和自動執行行為。'
+        },
+        aiPreferencesContent: {
+          title: 'AI 偏好內容',
+          description: '這裡可以控制擴展思考、查詢類命令自動執行、知識庫檢索、經驗沉澱和代理等 AI 行為。'
+        },
+        aiAutoApproval: {
+          title: '開啟自動執行',
+          description: '點擊這個開關開啟自動執行。開啟後，AI 可在無需逐次確認的情況下執行允許的工具。'
+        }
+      },
+      addAndConnectHost: {
+        assetsEntry: {
+          title: '資產入口',
+          description: '先進入資產模組，查看主機與金鑰管理入口。'
+        },
+        hostManagement: {
+          title: '主機管理入口',
+          description: '主機管理用於新增、編輯、匯入和連線 SSH 主機。'
+        },
+        newHost: {
+          title: '新增主機按鈕',
+          description: '點擊新增主機後，右側會展開主機表單。'
+        },
+        formFields: {
+          title: '主機表單關鍵欄位',
+          description: '填寫地址、連接埠、使用者名稱、認證方式、分組和代理等連線資訊。'
+        },
+        formSubmit: {
+          title: '儲存主機',
+          description: '儲存只會建立主機設定，不會偽造連線。'
+        },
+        connectAsset: {
+          title: '從資產卡片發起連線',
+          description: '儲存成功後，點擊或雙擊資產卡片發起真實連線嘗試，完成本模組。'
+        }
+      },
+      aiChat: {
+        sidebar: {
+          title: '開啟右側 AI 欄',
+          description: '點擊右上角入口，或使用 Command/Ctrl + L 開啟右側 AI 欄；左側模組切換欄的 AI 圖示也能開啟它。'
+        },
+        sidebarOverview: {
+          title: '右側 AI 側邊欄',
+          description: '這裡承載目前終端工作流裡的 AI 對話，包含歷史、訊息區域、上下文入口和底部輸入控制。'
+        },
+        input: {
+          title: 'AI 輸入框',
+          description: '輸入框用於描述你的目標、問題或需要 AI 檢查的終端狀態。'
+        },
+        modeAgent: {
+          title: '選擇 Agent 模式',
+          description: '這裡是模式選擇框。下拉已展開，點擊 Agent，讓 AI 按主機任務執行更完整的排查。'
+        },
+        modelOpen: {
+          title: '點開模型選擇',
+          description: '點擊這裡展開模型列表。'
+        },
+        modelOption: {
+          title: '選擇一個模型',
+          description: '點擊可用模型，作為這次 AI 請求的呼叫模型。'
+        },
+        contextOpen: {
+          title: '點開上下文選擇',
+          description: '點擊新增上下文入口，準備選擇本次 Agent 請求的目標主機。'
+        },
+        contextHosts: {
+          title: '進入主機列表',
+          description: '點擊主機分類，查看可以作為執行目標的主機。'
+        },
+        localhost: {
+          title: '選擇 127.0.0.1',
+          description: '點擊本機主機 127.0.0.1，作為這次 Agent 請求的目標。'
+        },
+        send: {
+          title: '送出按鈕',
+          description: '輸入框已填入「查看主機狀態」。點擊送出按鈕發起真實 AI 請求並完成本模組。'
+        }
+      }
+    }
+  },
   personal: {
     host: '主機管理',
     newHost: '添加主機',
@@ -682,6 +875,7 @@ export default {
     favoriteUpdateError: '更新收藏狀態出錯',
     defaultGroup: '主機',
     noAssets: '暫無資產',
+    emptyAssetsDescription: '可以手動建立主機，或匯入既有工作階段檔案後開始連線。',
     hostType: 'ssh',
     personalAsset: '個人',
     enterpriseAsset: '企業',
@@ -696,6 +890,7 @@ export default {
     switchHuawei: '華為',
     switchTip: '交換機僅支持 Command 模式',
     bastionHost: '堡壘機',
+    bastionType: '堡壘機類型',
     qizhi: '齊治堡壘機',
     refreshAssets: '資產',
     refreshingAssets: '正在刷新資產...',
@@ -737,6 +932,13 @@ export default {
     exportSuccess: '成功導出 {count} 個資產',
     exportError: '導出失敗',
     exportNoData: '沒有可導出的資產數據',
+    selectExportHostsTitle: '選擇要導出的主機',
+    selectExportHostsDescription: '勾選單台主機或整個分組,勾選分組會包含其下所有主機。',
+    selectExportHostsEmpty: '沒有可導出的主機',
+    searchHosts: '搜尋主機',
+    selectAll: '全選',
+    clearSelection: '清空',
+    selectedCount: '已選 {count} 台主機',
     importHelp: '導入格式說明',
     importFormatTitle: '資產導入格式說明',
     importFormatGuide: '導入格式說明：',
@@ -867,6 +1069,7 @@ export default {
     searchHistoryPH: '請輸入',
     loading: '載入中...',
     loadMore: '載入更多',
+    historyLoadHint: '還有更早的歷史訊息，向上捲動可繼續載入',
     copyToClipboard: '已複製到剪貼板',
     retry: '重試',
     taskCompleted: '任務已完成',
@@ -956,6 +1159,8 @@ export default {
     sendContentEmpty: '發送內容為空，請輸入內容',
     getAssetInfoFailed: '獲取當前資產連接信息失敗',
     pleaseConnectAsset: '請先建立資產連接',
+    dbContextRequired: '請先選擇資料庫連線',
+    dbContextMissingField: '請先選擇{field}',
     operationFailed: '操作失敗',
     noOperableMessage: '沒有可操作的消息',
     commandCopied: '命令已複製',
@@ -1167,6 +1372,8 @@ export default {
     download: '下載',
     upload: '上傳',
     taskList: '傳輸列表',
+    collapseTransferList: '收起傳輸列表',
+    expandTransferList: '展開傳輸列表',
     doubleClickToOpen: '雙擊打開',
     sftpConnectFailed: 'SFTP連接失敗',
     noDataAvailable: '暫無數據，請先連接到服務器',
@@ -1179,6 +1386,8 @@ export default {
     transferSuccess: '傳輸完成',
     transferFailed: '傳輸失敗',
     openFolder: '打開文件夾',
+    showHiddenFiles: '顯示隱藏檔案',
+    hideHiddenFiles: '隱藏隱藏檔案',
     uploadSkipped: '已跳過上傳',
     transferSkipped: '已跳過傳輸',
     transferCancel: '已取消傳輸',
@@ -1255,7 +1464,7 @@ export default {
     disconnectedFromHost: '與遠程主機({host})斷開連接于 {date}',
     pressEnterToReconnectEn: '按 Enter 鍵重新連接...',
     connectingTo: '連接到 {ip}',
-    welcomeMessage: '{username}, 歡迎您使用Chaterm智能終端',
+    welcomeMessage: '{username}, 歡迎您使用 Chaterm 智能終端',
     reconnecting: '正在重新連接...',
     terminalConnectionError: '連接錯誤。請檢查終端服務器是否運行。',
     autoReconnect: {
@@ -1284,7 +1493,12 @@ export default {
       mfaFailed: '雙重認證失敗',
       multipleUsersDetected: '檢測到多個用戶賬號，請選擇...',
       connectingWithSelectedAccount: '正在使用所選賬號連接...',
-      userSelectionCanceled: '已取消用戶選擇'
+      userSelectionCanceled: '已取消用戶選擇',
+      syncFromJumpServer: '同步 JumpServer K8s 資產',
+      sourceTag: 'JumpServer',
+      noBastion: '暫無堡壘機，請先在 SSH 中設定',
+      syncSuccess: '同步完成，新增 {inserted} 個，更新 {updated} 個',
+      syncFailed: '同步失敗'
     },
     qizhi: {
       connectingToBastionHost: '正在連接齊治堡壘機...',
@@ -1294,6 +1508,7 @@ export default {
       authenticating: '正在認證...',
       connectedToTarget: '已連接到目標伺服器',
       mfaRequired: '齊治堡壘機二次認證',
+      selectingAssetCategory: '正在選擇資產類別',
       mfaPrompt: '請輸入二次認證密碼 (2nd Password)',
       mfaFailed: '二次認證失敗',
       mfaTimeout: '認證逾時，請重試',
@@ -1380,7 +1595,7 @@ export default {
     milliseconds: '毫秒數'
   },
   mcp: {
-    title: '工具與 MCP',
+    title: 'MCP',
     description: '管理 MCP 服務器連接，擴展 AI 能力',
     serverList: 'MCP 服務器',
     addServer: '添加伺服器',
@@ -1571,6 +1786,7 @@ export default {
       addCluster: '新增叢集',
       clusterAdded: '叢集新增成功',
       noClusters: '尚無配置的叢集',
+      localClusters: '本機叢集',
       noTerminal: '尚無開啟的終端工作階段',
       createTerminal: '建立終端',
       selectClusterFirst: '請先選擇一個叢集',
@@ -1622,6 +1838,222 @@ export default {
       active: '活躍',
       selectClusterToEdit: '選擇一個叢集以檢視和編輯詳情',
       k8sClusterConfig: '叢集管理'
+    },
+    jumpserver: {
+      bastionResources: '堡壘機資源',
+      syncFromJumpServer: '同步 JumpServer K8s 資產',
+      sourceTag: 'JumpServer',
+      noBastion: '暫無堡壘機，請先在 SSH 中設定',
+      syncSuccess: '同步完成，新增 {inserted} 個，更新 {updated} 個',
+      syncFailed: '同步失敗'
+    }
+  },
+  database: {
+    title: '資料庫',
+    group: '分組',
+    rootGroup: '根分組',
+    newGroup: '新增分組',
+    copyName: '複製名稱',
+    moveTo: '移動到',
+    deleteGroup: '刪除分組',
+    searchPlaceholder: '搜尋連線或資料表...',
+    newConnection: '新增連線',
+    newConnectionOf: '新增 {dbType} 連線',
+    overview: '概覽',
+    overviewLead: '從左側選擇一張資料表，雙擊可開啟 SQL 工作區。',
+    overviewTipExplore: '在左側探索分組、連線和資料庫物件。',
+    overviewTipConnection: '點擊右上角加號按鈕建立新的連線。',
+    overviewTipQuery: '雙擊資料表可開啟 SQL 工作區，執行並格式化查詢。',
+    testConnection: '測試連線',
+    testConnectionPassed: '連線成功',
+    testConnectionInFlight: '正在測試連線...',
+    fixRequiredFields: '請先填寫必填欄位。',
+    authentication: '身份驗證',
+    authUserAndPassword: '使用者名稱與密碼',
+    driver: '驅動',
+    driverPlaceholder: '驅動上傳能力將在後續階段提供。',
+    driverClass: '類別名稱',
+    uploadDriver: '上傳驅動',
+    sshConfiguration: 'SSH 設定',
+    sshConfigurationPlaceholder: 'SSH 通道複用將在後續階段接入。',
+    advancedConfiguration: '進階設定',
+    advancedConfigurationPlaceholder: '進階參數面板佔位。',
+    noResults: '無結果',
+    loading: '載入中...',
+    firstPage: '首頁',
+    prevPage: '上一頁',
+    nextPage: '下一頁',
+    lastPage: '末頁',
+    refresh: '重新整理',
+    total: '總計',
+    totalTooltip: '點擊更新總行數',
+    filterApply: '套用',
+    filterClear: '清除篩選',
+    filterLikePlaceholder: '模糊比對，Enter 套用',
+    filterLocalSearch: '本機搜尋 {column}',
+    filterAll: '全部',
+    sortTooltip: '點擊切換排序：升冪 / 降冪 / 取消',
+    filterTooltip: '欄位篩選',
+    sqlFilterPlaceholder: '輸入一個 SQL 表達式來篩選結果（使用 Ctrl+Space）',
+    wherePlaceholder: "手寫 WHERE 表達式（會覆蓋欄位篩選），例如：id > 100 AND name LIKE '%abc%'",
+    orderByPlaceholder: '手寫 ORDER BY 表達式（會覆蓋欄位排序），例如：created_at DESC, id ASC',
+    statusResult: '結果',
+    statusTime: '耗時',
+    statusRows: '返回',
+    statusExecutionOk: '執行成功',
+    rowCount: '共 {count} 列',
+    run: '執行',
+    stop: '停止',
+    settings: '設定',
+    deleteGroupConfirmTitle: '確認刪除分組',
+    deleteGroupConfirmContent: '確定要刪除分組 "{name}" 嗎？此操作無法復原。',
+    refreshConnected: '刷新已連接會話',
+    comingSoon: '即將支援',
+    editConnection: '編輯資料來源',
+    editPasswordPlaceholder: '留空則保留原密碼',
+    addRow: '新增列',
+    deleteRow: '刪除列',
+    undo: '復原',
+    saveChanges: '儲存變更',
+    editDisabledSqlResult: '目前檢視不支援編輯',
+    deleteDisabledNoRow: '請先選取一列',
+    undoDisabledEmpty: '沒有可復原的操作',
+    saveDisabledClean: '沒有待提交的變更',
+    noPkWarning: '未偵測到主鍵，已停用編輯',
+    saveFailed: '儲存失敗',
+    setNull: '設為 NULL',
+    addTab: '新建查詢分頁',
+    runAll: '執行全部',
+    runSelection: '執行選取範圍',
+    runToCursor: '執行至游標',
+    runCurrentStatement: '執行目前語句',
+    explain: '解釋執行計畫',
+    save: '儲存',
+    saveAs: '另存為',
+    pickConnection: '連線',
+    pickDatabase: '資料庫',
+    pickSchema: 'Schema',
+    sqlEmpty: 'SQL 為空',
+    sqlNoContext: '請先選擇連線與資料庫',
+    sqlRunning: '執行中…',
+    overviewColSql: 'SQL',
+    overviewColMessage: '訊息',
+    overviewColTime: '耗時',
+    noExecutionsYet: '尚無執行紀錄。',
+    closeResultTab: '關閉結果分頁',
+    fields: {
+      name: '名稱',
+      env: '環境',
+      dbType: '資料庫類型',
+      host: '主機',
+      port: '連接埠',
+      user: '使用者',
+      password: '密碼',
+      database: '資料庫',
+      url: 'URL',
+      sslMode: 'SSL 模式'
+    },
+    connectionMenu: {
+      openConnection: '開啟連線',
+      closeConnection: '關閉連線',
+      queryConsole: '查詢主控台',
+      createDatabase: '新增資料庫',
+      editorSource: '編輯資料來源',
+      copyName: '複製名稱',
+      moveTo: '移動至',
+      moveToRoot: '根節點',
+      refresh: '重新整理',
+      remove: '刪除資料來源',
+      disabledNeedConnection: '請先連線'
+    },
+    createDatabaseModal: {
+      title: '建立資料庫',
+      nameLabel: '名稱',
+      previewLabel: '預覽',
+      nameRequired: '請輸入名稱',
+      nameInvalid: '名稱包含無效字元',
+      submit: '確定',
+      cancel: '取消',
+      createdSuccess: '資料庫已建立',
+      executeFailed: '建立資料庫失敗'
+    },
+    ddlViewerModal: {
+      title: '資料表 DDL - {table}',
+      copy: '複製',
+      copyFailed: '複製失敗'
+    },
+    tableMenu: {
+      openTable: '開啟資料表',
+      queryConsole: '查詢主控台',
+      copyName: '複製名稱',
+      viewDdl: '檢視 DDL',
+      copyTable: '複製資料表',
+      copyTableName: '複製名稱',
+      copyTableSelect: '複製 SELECT 陳述式',
+      copyTableDdl: '複製 DDL',
+      truncate: '清空資料表',
+      drop: '刪除資料表',
+      truncateConfirmTitle: '清空資料表？',
+      truncateConfirmContent: '確定清空資料表 {table}？所有資料將被永久移除。',
+      dropConfirmTitle: '刪除資料表？',
+      dropConfirmContent: '確定刪除資料表 {table}？此操作無法復原。',
+      ddlPermissionDenied: '權限不足，無法產生 DDL。目前資料庫使用者需要 CREATE FUNCTION 權限。',
+      ddlFetchFailed: '取得 DDL 失敗：{msg}',
+      nameCopied: '資料表名稱已複製',
+      selectCopied: 'SELECT 陳述式已複製',
+      ddlCopied: 'DDL 已複製',
+      truncated: '資料表已清空',
+      dropped: '資料表已刪除'
+    },
+    removeConfirm: {
+      title: '刪除資料來源？',
+      content: '連線 "{name}" 將被刪除，此操作無法復原。'
+    },
+    copiedToClipboard: '已複製到剪貼簿',
+    movedSuccess: '連線已移動',
+    format: '格式化',
+    formatError: '格式化失敗',
+    dbAi: {
+      title: '資料庫 AI',
+      drawerTitle: '資料庫 AI 結果',
+      emptyState: '尚無 DB-AI 請求。請在 SQL 編輯器中觸發解釋、自然語言轉 SQL、優化或轉換。',
+      emptyInput: '沒有可傳送到 AI 的內容。',
+      contextRequired: '請先選擇連線和資料庫。',
+      unknownError: 'DB-AI 請求失敗。',
+      reasoning: '推理過程',
+      generatedSql: '產生的 SQL',
+      targetDialect: '目標方言',
+      textOnlyDialectHint: '僅文字轉換；唯讀執行已停用。',
+      insertIntoEditor: '插入到編輯器',
+      replaceSelection: '取代選取內容',
+      insertedIntoEditor: '已插入到編輯器',
+      replacedSelection: '已取代選取內容',
+      copy: '複製 SQL',
+      copyFailed: '複製失敗',
+      runReadOnly: '執行（唯讀）',
+      cancel: '取消請求',
+      clear: '清除',
+      statusIdle: '閒置',
+      statusQueued: '排隊中',
+      statusStreaming: '串流中',
+      statusDone: '已完成',
+      statusError: '錯誤',
+      statusCancelled: '已取消',
+      diagnosing: 'AI 分析中...',
+      diagnosedAndReplaced: 'SQL 已修復並替換',
+      actionExplain: '解釋',
+      actionNl2Sql: '自然語言轉 SQL',
+      actionOptimize: '優化',
+      actionConvert: '轉換方言',
+      actionComplete: '補全',
+      actionDiagnose: 'AI 修復',
+      nl2SqlPrompt: {
+        title: '依問題產生 SQL',
+        hint: '用自然語言描述你想查詢的內容，目前連線和 schema 會作為上下文。',
+        placeholder: '例如：列出近 30 天累計付款金額最高的 5 位客戶',
+        submit: '產生',
+        cancel: '取消'
+      }
     }
   }
 }

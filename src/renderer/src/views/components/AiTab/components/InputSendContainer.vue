@@ -9,7 +9,10 @@
       style="display: none"
     ></div>
     <!-- Context Select Popup Component -->
-    <ContextSelectPopup :mode="mode" />
+    <ContextSelectPopup
+      :mode="mode"
+      :workspace="props.workspace"
+    />
     <!-- Command Select Popup Component -->
     <CommandSelectPopup />
     <div
@@ -20,6 +23,7 @@
         <!-- Trigger button -->
         <span
           class="context-trigger-tag"
+          data-onboarding-id="ai-context-trigger"
           @click.stop="(e) => handleAddContextClick(e.currentTarget as HTMLElement)"
         >
           {{ hasAnyContext ? '@' : `@ ${$t('ai.addContext')}` }}
@@ -31,6 +35,7 @@
           :key="item.tabSessionId || item.uuid"
           color="blue"
           class="context-tag"
+          :data-onboarding-id="item.uuid === 'localhost' || item.host === '127.0.0.1' ? 'ai-localhost-context' : undefined"
         >
           <template #icon>
             <LaptopOutlined />
@@ -58,6 +63,7 @@
           :class="{ 'is-empty': isEditableEmpty }"
           :data-placeholder="inputPlaceholder"
           data-testid="ai-message-input"
+          data-onboarding-id="ai-input"
           contenteditable="true"
           spellcheck="false"
           role="textbox"
@@ -72,6 +78,7 @@
       </div>
       <div class="input-controls">
         <a-tooltip
+          v-if="!isDatabaseWorkspace"
           :title="$t('ai.switchAiModeHint')"
           placement="top"
           :get-popup-container="(triggerNode) => triggerNode.parentElement"
@@ -90,14 +97,27 @@
             size="small"
             class="ai-mode-select"
             :style="{ width: `${modeSelectWidthPx}px` }"
-            :options="AiTypeOptions"
             data-testid="ai-mode-select"
+            data-onboarding-id="ai-mode-select"
             :dropdown-match-select-width="false"
             :dropdown-style="modeDropdownStyle"
             popup-class-name="input-controls-select-dropdown input-controls-mode-dropdown"
             @dropdown-visible-change="handleAiModeSelectOpenChange"
             @keydown.esc.stop
-          ></a-select>
+          >
+            <a-select-option
+              v-for="option in AiTypeOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              <span
+                class="select-option-label"
+                :data-onboarding-id="option.value === 'agent' ? 'ai-mode-agent-option' : undefined"
+              >
+                {{ option.label }}
+              </span>
+            </a-select-option>
+          </a-select>
         </a-tooltip>
         <a-select
           v-model:value="chatAiModelValue"
@@ -109,16 +129,20 @@
           :dropdown-match-select-width="false"
           :dropdown-style="modelDropdownStyle"
           popup-class-name="input-controls-select-dropdown input-controls-model-dropdown"
+          data-onboarding-id="ai-model-select"
           @dropdown-visible-change="modelSelectOpen = $event"
           @change="handleChatAiModelChange"
           @keydown.esc.stop
         >
           <a-select-option
-            v-for="model in AgentAiModelsOptions"
+            v-for="(model, index) in AgentAiModelsOptions"
             :key="model.value"
             :value="model.value"
           >
-            <span class="model-label">
+            <span
+              class="model-label select-option-label"
+              :data-onboarding-id="index === 0 ? 'ai-model-option' : undefined"
+            >
               <img
                 v-if="model.label.endsWith('-Thinking')"
                 src="@/assets/icons/thinking.svg"
@@ -232,6 +256,7 @@
             size="small"
             class="custom-round-button compact-button"
             data-testid="send-message-btn"
+            data-onboarding-id="ai-send-button"
             @click="handleSendClick('send')"
           >
             <img
@@ -277,7 +302,9 @@ import { useModelConfiguration } from '../composables/useModelConfiguration'
 import { useUserInteractions } from '../composables/useUserInteractions'
 import { parseContextDragPayload, useEditableContent } from '../composables/useEditableContent'
 import { AiTypeOptions } from '../composables/useEventBusListeners'
+import { AI_TAB_DEFAULT_WORKSPACE, type AiTabWorkspace } from '../workspace'
 import { getImageMediaType } from '../utils'
+import eventBus from '@/utils/eventBus'
 import type { ChatermApiReqInfo, ChatermMessage as StateChatermMessage } from '@shared/ExtensionMessage'
 import type { ContentPart, ContextDocRef, ContextPastChatRef, ContextCommandRef, ContextSkillRef } from '@shared/WebviewMessage'
 import type { HistoryItem, Host } from '../types'
@@ -299,6 +326,13 @@ interface Props {
   onConfirmEdit?: (contentParts: ContentPart[], hosts: Host[]) => void
   openHistoryTab?: (history: HistoryItem, options?: { forceNewTab?: boolean }) => Promise<void>
   messageHosts?: Host[]
+  /**
+   * AiTab workspace — when `'database'` the agent/cmd mode selector is
+   * hidden because DB sessions lock chat mode to `agent`. Defaults to
+   * `'terminal'` so existing two call sites stay byte-identical.
+   * See docs/db-ai-aitab-mount-decision.md Q1 / Stage 2.
+   */
+  workspace?: AiTabWorkspace
 }
 const logger = createRendererLogger('ai.inputSend')
 
@@ -310,8 +344,12 @@ const props = withDefaults(defineProps<Props>(), {
   mode: 'create',
   initialContentParts: () => [],
   onConfirmEdit: () => {},
-  messageHosts: () => []
+  openHistoryTab: undefined,
+  messageHosts: () => [],
+  workspace: AI_TAB_DEFAULT_WORKSPACE
 })
+
+const isDatabaseWorkspace = computed(() => props.workspace === 'database')
 
 const { t } = useI18n()
 
@@ -478,11 +516,22 @@ const context = useContext({
     restoreSelection()
   },
   mode: props.mode,
-  hosts: hosts
+  hosts: hosts,
+  workspace: props.workspace
 })
 provide(contextInjectionKey, context)
 
-const { showContextPopup, removeHost, handleAddContextClick, onHostClick, setChipInsertHandler, setImageInsertHandler } = context
+const {
+  showContextPopup,
+  currentMenuLevel,
+  removeHost,
+  handleAddContextClick,
+  onHostClick,
+  goToLevel2,
+  closeContextPopup,
+  setChipInsertHandler,
+  setImageInsertHandler
+} = context
 
 // Create command select instance and provide to child components.
 const commandSelectContext = useCommandSelect({
@@ -907,6 +956,43 @@ const handleAiModeSelectOpenChange = (open: boolean) => {
 
 const modelSelectOpen = ref(false)
 
+const closeAiContextPopupForOnboarding = () => {
+  aiModeSelectOpen.value = false
+  modelSelectOpen.value = false
+  if (showContextPopup.value) {
+    closeContextPopup()
+  }
+}
+
+const openAiModeSelectForOnboarding = () => {
+  closeAiContextPopupForOnboarding()
+  modelSelectOpen.value = false
+  aiModeSelectOpen.value = true
+}
+
+const openAiModelSelectForOnboarding = () => {
+  closeAiContextPopupForOnboarding()
+  aiModeSelectOpen.value = false
+  modelSelectOpen.value = true
+}
+
+const getContextTriggerElement = () => document.querySelector('[data-onboarding-id="ai-context-trigger"]') as HTMLElement | null
+
+const openAiContextPopupForOnboarding = async () => {
+  aiModeSelectOpen.value = false
+  modelSelectOpen.value = false
+  if (!showContextPopup.value) {
+    await handleAddContextClick(getContextTriggerElement())
+  }
+}
+
+const openAiContextHostsForOnboarding = async () => {
+  await openAiContextPopupForOnboarding()
+  if (currentMenuLevel.value !== 'hosts') {
+    await goToLevel2('hosts')
+  }
+}
+
 watch(
   () => chatContainerScrollSignal.value,
   () => {
@@ -944,12 +1030,22 @@ onMounted(() => {
   if (inputParts.value.length > 0) {
     renderFromParts(inputParts.value)
   }
+  eventBus.on('onboarding:openAiModeSelect', openAiModeSelectForOnboarding)
+  eventBus.on('onboarding:openAiModelSelect', openAiModelSelectForOnboarding)
+  eventBus.on('onboarding:openAiContextPopup', openAiContextPopupForOnboarding)
+  eventBus.on('onboarding:openAiContextHosts', openAiContextHostsForOnboarding)
+  eventBus.on('onboarding:closeAiContextPopup', closeAiContextPopupForOnboarding)
 })
 
 onBeforeUnmount(() => {
   setChipInsertHandler(() => {})
   setImageInsertHandler(() => {})
   setCommandChipInsertHandler(() => {})
+  eventBus.off('onboarding:openAiModeSelect', openAiModeSelectForOnboarding)
+  eventBus.off('onboarding:openAiModelSelect', openAiModelSelectForOnboarding)
+  eventBus.off('onboarding:openAiContextPopup', openAiContextPopupForOnboarding)
+  eventBus.off('onboarding:openAiContextHosts', openAiContextHostsForOnboarding)
+  eventBus.off('onboarding:closeAiContextPopup', closeAiContextPopupForOnboarding)
 })
 </script>
 
@@ -1045,6 +1141,11 @@ onBeforeUnmount(() => {
       }
     }
   }
+}
+
+.select-option-label {
+  display: block;
+  width: 100%;
 }
 
 .context-trigger-tag {

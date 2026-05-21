@@ -26,6 +26,7 @@ export default {
     userConfig: 'Setting',
     alias: 'Alias Config',
     assetConfig: 'Host Management',
+    onboardingGuide: 'Onboarding Guide',
     search: 'Search',
     connect: 'Connect',
     edit: 'Edit',
@@ -129,7 +130,10 @@ export default {
     daysAgo: ' days ago',
     run: 'Run',
     jumpserverSupportPlugin: 'Jumpserver Support',
-    noSearchResults: 'No search results'
+    noSearchResults: 'No search results',
+    database: 'Database',
+    previous: 'Previous',
+    next: 'Next'
   },
   term: {
     welcome: 'Welcome to use Chaterm',
@@ -263,11 +267,30 @@ export default {
     watermarkDescribe: 'Show the watermark on the terminal',
     watermarkOpen: 'Open',
     watermarkClose: 'Close',
+    onboardingGuide: 'Onboarding Guide',
+    openOnboardingGuide: 'Open Onboarding Guide',
     language: 'Language',
     theme: 'Theme',
     themeDark: 'Dark',
     themeLight: 'Light',
     themeAuto: 'Auto',
+    themeGroupSystem: 'System',
+    themeGroupDefault: 'Default',
+    themeGroupOfficial: 'Official Themes',
+    themeTermiusDark: 'Graphite Dark',
+    themeTermiusLight: 'Mist Light',
+    themeFlexokiDark: 'Ember Earth',
+    themeFlexokiLight: 'Canvas Paper',
+    themeKanagawaWave: 'Tide Indigo',
+    themeKanagawaDragon: 'Forge Copper',
+    themeKanagawaLotus: 'Dawn Petal',
+    themeHackerBlue: 'Pulse Blue',
+    themeHackerGreen: 'Pulse Green',
+    themeDraculaNight: 'Eclipse Violet',
+    themeCatppuccinMocha: 'Truffle Mocha',
+    themeCatppuccinLatte: 'Cream Latte',
+    themeGruvboxDark: 'Grove Moss',
+    themeNordFrost: 'Fjord Ice',
     defaultLayout: 'Default Layout',
     defaultLayoutTerminal: 'Terminal',
     defaultLayoutAgents: 'Agents',
@@ -657,6 +680,179 @@ export default {
       toggleLayout: 'Toggle Layout (Terminal/Agents)'
     }
   },
+  onboarding: {
+    guide: {
+      title: 'Start with one Chaterm module',
+      description:
+        'Each module opens the relevant page and uses a spotlight layer to mark key areas. The background is disabled, while the highlighted target remains clickable.',
+      progress: '{completed}/{total} completed'
+    },
+    modules: {
+      interfaceGuide: {
+        title: 'Interface guide',
+        description: 'Learn the module rail, function panel, workspace tabs, layout controls, and AI entry.'
+      },
+      systemSettings: {
+        title: 'System settings',
+        description: 'Review general settings, theme and language, default layout, terminal font, proxy, and SSH Agent settings.'
+      },
+      addAndConnectHost: {
+        title: 'Add and connect host',
+        description: 'Create a host and start a real connection attempt from the asset card.'
+      },
+      aiChat: {
+        title: 'Use AI chat',
+        description: 'Open the right AI sidebar, choose Agent, model, and localhost, then start a real AI request.'
+      }
+    },
+    spotlight: {
+      previous: 'Previous',
+      next: 'Next',
+      finish: 'Finish',
+      progress: '{current}/{total}',
+      targetMissing: 'This target is not visible yet. Complete the previous action first, or continue to the next step.'
+    },
+    tours: {
+      interfaceGuide: {
+        moduleSwitcher: {
+          title: 'Left module rail',
+          description: 'Switch between workspace, assets, files, knowledge center, and other core modules here.'
+        },
+        functionPanel: {
+          title: 'Left function panel',
+          description: 'After choosing a module, its lists, search, and management actions appear here.'
+        },
+        workspace: {
+          title: 'Main workspace tabs',
+          description: 'Terminals, settings, asset management, and editors open as tabs in the main workspace.'
+        },
+        topControls: {
+          title: 'Top layout controls',
+          description: 'Use the top area to switch Terminal/Agents layouts and control sidebars.'
+        },
+        aiToggle: {
+          title: 'Right AI chat entry',
+          description: 'Click here, or press Command/Ctrl + L, to open the AI sidebar for terminal workflows.'
+        },
+        aiSidebar: {
+          title: 'Right AI sidebar',
+          description: 'This is the AI workspace beside the terminal, with conversations, messages, context entry, and bottom input controls.'
+        }
+      },
+      systemSettings: {
+        settingEntry: {
+          title: 'Settings entry',
+          description: 'Click the lower-left gear, click Next, or press Command/Ctrl + , to open the system settings tab.'
+        },
+        sideNav: {
+          title: 'Settings category navigation',
+          description: 'Use the left categories to switch between General, Terminal, Extensions, Models, and more.'
+        },
+        general: {
+          title: 'General settings content',
+          description: 'General settings collect appearance, language, default layout, background, and common preferences.'
+        },
+        background: {
+          title: 'Background settings',
+          description: 'Choose a built-in background or upload a custom image, then tune opacity and brightness.'
+        },
+        backgroundPreset: {
+          title: 'Choose a background',
+          description: 'Click the highlighted background thumbnail to continue.'
+        },
+        terminalTab: {
+          title: 'Terminal settings category',
+          description: 'Click Terminal to open display, input, and connection-related settings.'
+        },
+        terminalOptions: {
+          title: 'Terminal font, proxy, and SSH Agent',
+          description: 'Tune font size, proxy settings, and SSH Agent behavior here.'
+        },
+        aiPreferencesTab: {
+          title: 'AI preferences',
+          description: 'Open AI preferences to configure reasoning, knowledge base retrieval, and auto-execution behavior.'
+        },
+        aiPreferencesContent: {
+          title: 'AI preference content',
+          description:
+            'Control extended thinking, read-only command auto-execution, knowledge base retrieval, experience capture, proxy, and related AI behavior here.'
+        },
+        aiAutoApproval: {
+          title: 'Enable auto execution',
+          description: 'Turn this switch on. Once enabled, AI can run allowed tools without asking for confirmation each time.'
+        }
+      },
+      addAndConnectHost: {
+        assetsEntry: {
+          title: 'Assets entry',
+          description: 'Open Assets to access host and key management.'
+        },
+        hostManagement: {
+          title: 'Host management entry',
+          description: 'Host Management is where you add, edit, import, and connect SSH hosts.'
+        },
+        newHost: {
+          title: 'New host button',
+          description: 'Click New Host to open the host form on the right.'
+        },
+        formFields: {
+          title: 'Key host form fields',
+          description: 'Fill in address, port, username, authentication, group, and proxy details.'
+        },
+        formSubmit: {
+          title: 'Save host',
+          description: 'Saving creates the host profile. It does not fake a connection.'
+        },
+        connectAsset: {
+          title: 'Connect from the asset card',
+          description: 'After saving, click or double-click the asset card to start a real connection attempt and complete this module.'
+        }
+      },
+      aiChat: {
+        sidebar: {
+          title: 'Open the right AI sidebar',
+          description:
+            'Click the top-right entry, or press Command/Ctrl + L, to open the AI sidebar. The AI icon in the left module rail opens it too.'
+        },
+        sidebarOverview: {
+          title: 'Right AI sidebar',
+          description: 'This sidebar supports terminal workflows with history, messages, context entry, and bottom input controls.'
+        },
+        input: {
+          title: 'AI input',
+          description: 'Use the input to describe your goal, question, or the terminal state you want AI to inspect.'
+        },
+        modeAgent: {
+          title: 'Choose Agent mode',
+          description: 'This is the mode selector. The menu is open; click Agent so AI can work through a fuller host task.'
+        },
+        modelOpen: {
+          title: 'Open model selector',
+          description: 'Click here to open the model list.'
+        },
+        modelOption: {
+          title: 'Choose a model',
+          description: 'Click an available model for this AI request.'
+        },
+        contextOpen: {
+          title: 'Open context selector',
+          description: 'Click the Add context entry to choose the target host for this Agent request.'
+        },
+        contextHosts: {
+          title: 'Open host list',
+          description: 'Click Hosts to view machines that can be used as execution targets.'
+        },
+        localhost: {
+          title: 'Select 127.0.0.1',
+          description: 'Click localhost 127.0.0.1 as the target for this Agent request.'
+        },
+        send: {
+          title: 'Send button',
+          description: 'The input is filled with "查看主机状态". Click Send to start a real AI request and finish this module.'
+        }
+      }
+    }
+  },
   personal: {
     host: 'Host Management',
     newHost: 'New Host',
@@ -703,6 +899,7 @@ export default {
     favoriteUpdateError: 'Error updating favorite status',
     defaultGroup: 'Hosts',
     noAssets: 'No assets',
+    emptyAssetsDescription: 'Create a host manually or import existing session files to start connecting.',
     hostType: 'ssh',
     personalAsset: 'Personal Asset',
     enterpriseAsset: 'Enterprise Asset',
@@ -759,6 +956,13 @@ export default {
     exportSuccess: 'Successfully exported {count} assets',
     exportError: 'Export failed',
     exportNoData: 'No assets to export',
+    selectExportHostsTitle: 'Select Hosts to Export',
+    selectExportHostsDescription: 'Check individual hosts or entire groups. Checking a group includes all its hosts.',
+    selectExportHostsEmpty: 'No hosts available to export',
+    searchHosts: 'Search hosts',
+    selectAll: 'Select All',
+    clearSelection: 'Clear',
+    selectedCount: '{count} host(s) selected',
     importHelp: 'Import format help',
     importFormatTitle: 'Asset Import Format Guide',
     importFormatGuide: 'Import Format Guide:',
@@ -866,6 +1070,7 @@ export default {
     noMatchingCommands: 'No matching commands',
     copy: 'Copy',
     run: 'Run',
+    paste: 'Paste',
     reject: 'Reject',
     approve: 'Approve',
     addAutoApprove: 'add Auto-Approve',
@@ -981,6 +1186,8 @@ export default {
     sendContentEmpty: 'Send content is empty, please enter content',
     getAssetInfoFailed: 'Failed to get current asset connection information',
     pleaseConnectAsset: 'Please establish asset connection first',
+    dbContextRequired: 'Please select a database connection first',
+    dbContextMissingField: 'Please select {field} first',
     operationFailed: 'Operation Failed',
     noOperableMessage: 'No operable message',
     commandCopied: 'Command Copied',
@@ -1169,6 +1376,8 @@ export default {
     uploadCancel: 'Upload Cancelled',
     downloadSkipped: 'download Skipped',
     taskList: 'Transmission List',
+    collapseTransferList: 'Collapse transfer list',
+    expandTransferList: 'Expand transfer list',
     upload: 'Upload',
     copyFileSuccess: 'File Copied Successfully',
     copyFileFailed: 'File Copy Failed',
@@ -1204,6 +1413,8 @@ export default {
     transferSuccess: 'Transfer completed',
     transferFailed: 'Transfer failed',
     openFolder: 'Open Folder',
+    showHiddenFiles: 'Show Hidden Files',
+    hideHiddenFiles: 'Hide Hidden Files',
     uploadSkipped: 'Upload skipped',
     transferSkipped: 'Transfer skipped',
     transferCancel: 'Transfer canceled',
@@ -1309,7 +1520,12 @@ export default {
       mfaFailed: 'Two-factor authentication failed',
       multipleUsersDetected: 'Multiple user accounts detected, please select...',
       connectingWithSelectedAccount: 'Connecting with selected account...',
-      userSelectionCanceled: 'User selection cancelled'
+      userSelectionCanceled: 'User selection cancelled',
+      syncFromJumpServer: 'Sync JumpServer K8s Assets',
+      sourceTag: 'JumpServer',
+      noBastion: 'No bastion configured, please set up in SSH first',
+      syncSuccess: 'Sync complete, {inserted} added, {updated} updated',
+      syncFailed: 'Sync failed'
     },
     qizhi: {
       connectingToBastionHost: 'Connecting to Qizhi bastion host...',
@@ -1408,7 +1624,7 @@ export default {
     milliseconds: 'milliseconds'
   },
   mcp: {
-    title: 'Tools & MCP',
+    title: 'MCP',
     description: 'Manage MCP server connections to extend AI capabilities',
     serverList: 'MCP Servers',
     addServer: 'Add Server',
@@ -1599,6 +1815,7 @@ export default {
       addCluster: 'Add Cluster',
       clusterAdded: 'Cluster added successfully',
       noClusters: 'No clusters configured',
+      localClusters: 'Local Clusters',
       noTerminal: 'No terminal session open',
       createTerminal: 'Create Terminal',
       selectClusterFirst: 'Please select a cluster first',
@@ -1650,6 +1867,233 @@ export default {
       active: 'Active',
       selectClusterToEdit: 'Select a cluster to view and edit details',
       k8sClusterConfig: 'Cluster Management'
+    },
+    jumpserver: {
+      bastionResources: 'Bastion Resources',
+      syncFromJumpServer: 'Sync JumpServer K8s Assets',
+      sourceTag: 'JumpServer',
+      noBastion: 'No bastion configured, please set up in SSH first',
+      syncSuccess: 'Sync complete, {inserted} added, {updated} updated',
+      syncFailed: 'Sync failed'
+    }
+  },
+  database: {
+    title: 'Database',
+    group: 'Group',
+    rootGroup: 'Root',
+    newGroup: 'New Group',
+    copyName: 'Copy Name',
+    moveTo: 'Move To',
+    deleteGroup: 'Delete Group',
+    deleteGroupConfirmTitle: 'Delete Group',
+    deleteGroupConfirmContent: 'Are you sure you want to delete the group "{name}"? This action cannot be undone.',
+    refreshConnected: 'Refresh connected sessions',
+    searchPlaceholder: 'Search connections or tables...',
+    newConnection: 'New Connection',
+    newConnectionOf: 'New {dbType} Connection',
+    comingSoon: 'Coming soon',
+    editConnection: 'Edit connection',
+    editPasswordPlaceholder: 'Leave blank to keep current password',
+    overview: 'Overview',
+    overviewLead: 'Pick a table on the left; double-click to open a SQL tab.',
+    overviewTipExplore: 'Browse groups, connections, and schema objects from the explorer.',
+    overviewTipConnection: 'Click the plus button in the top-right to create a new connection.',
+    overviewTipQuery: 'Double-click a table to open the SQL workbench to run and format queries.',
+    testConnection: 'Test',
+    testConnectionPassed: 'Connected',
+    testConnectionInFlight: 'Testing connection...',
+    fixRequiredFields: 'Please fill in the required fields first.',
+    authentication: 'Authentication',
+    authUserAndPassword: 'User & Password',
+    driver: 'Driver',
+    driverPlaceholder: 'Driver upload will be supported in a later phase.',
+    driverClass: 'Class',
+    uploadDriver: 'Upload driver',
+    sshConfiguration: 'SSH Configuration',
+    sshConfigurationPlaceholder: 'SSH tunnel reuse will be wired up in a later phase.',
+    advancedConfiguration: 'Advanced Configuration',
+    advancedConfigurationPlaceholder: 'Advanced parameter panel placeholder.',
+    noResults: 'No results',
+    loading: 'Loading...',
+    firstPage: 'First page',
+    prevPage: 'Previous page',
+    nextPage: 'Next page',
+    lastPage: 'Last page',
+    refresh: 'Refresh',
+    addRow: 'Add row',
+    deleteRow: 'Delete row',
+    undo: 'Undo',
+    saveChanges: 'Save changes',
+    editDisabledSqlResult: 'Editing is disabled for this view',
+    deleteDisabledNoRow: 'Select a row first',
+    undoDisabledEmpty: 'Nothing to undo',
+    saveDisabledClean: 'No pending changes',
+    noPkWarning: 'No primary key detected; editing is disabled',
+    saveFailed: 'Failed to save changes',
+    setNull: 'Set NULL',
+    total: 'Total',
+    totalTooltip: 'Click to update total row count',
+    filterApply: 'Apply',
+    filterClear: 'Clear filter',
+    filterLikePlaceholder: 'Fuzzy match, press Enter',
+    filterLocalSearch: 'Local filter for {column}',
+    filterAll: 'All',
+    sortTooltip: 'Click to cycle sort: asc / desc / none',
+    filterTooltip: 'Column filter',
+    sqlFilterPlaceholder: 'Enter a SQL expression to filter results (use Ctrl+Space)',
+    wherePlaceholder: "Custom WHERE expression (overrides column filters), e.g. id > 100 AND name LIKE '%abc%'",
+    orderByPlaceholder: 'Custom ORDER BY expression (overrides column sort), e.g. created_at DESC, id ASC',
+    statusResult: 'Result',
+    statusTime: 'Time Consumed',
+    statusRows: 'Rows',
+    statusExecutionOk: 'Execution successful.',
+    rowCount: '{count} rows',
+    run: 'Run',
+    stop: 'Stop',
+    format: 'Format',
+    formatError: 'Format failed',
+    settings: 'Settings',
+    addTab: 'New query tab',
+    runAll: 'Run all',
+    runSelection: 'Run selection',
+    runToCursor: 'Run to cursor',
+    runCurrentStatement: 'Run current statement',
+    explain: 'Explain plan',
+    save: 'Save',
+    saveAs: 'Save as',
+    pickConnection: 'Connection',
+    pickDatabase: 'Database',
+    pickSchema: 'Schema',
+    sqlEmpty: 'SQL is empty',
+    sqlNoContext: 'Pick a connection and database first',
+    sqlRunning: 'Running…',
+    overviewColSql: 'SQL',
+    overviewColMessage: 'Message',
+    overviewColTime: 'Time',
+    noExecutionsYet: 'No executions yet.',
+    closeResultTab: 'Close result tab',
+    fields: {
+      name: 'Name',
+      env: 'Env',
+      dbType: 'DB Type',
+      host: 'Host',
+      port: 'Port',
+      user: 'User',
+      password: 'Password',
+      database: 'Database',
+      url: 'URL',
+      sslMode: 'SSL Mode'
+    },
+    connectionMenu: {
+      openConnection: 'Open connection',
+      closeConnection: 'Close connection',
+      queryConsole: 'Query console',
+      createDatabase: 'Create database',
+      editorSource: 'Edit source',
+      copyName: 'Copy name',
+      moveTo: 'Move to',
+      moveToRoot: 'Root node',
+      refresh: 'Refresh',
+      remove: 'Remove data source',
+      disabledNeedConnection: 'Connect first'
+    },
+    createDatabaseModal: {
+      title: 'Create Database',
+      nameLabel: 'Name',
+      previewLabel: 'Preview',
+      nameRequired: 'Name is required',
+      nameInvalid: 'Name contains invalid characters',
+      submit: 'OK',
+      cancel: 'Cancel',
+      createdSuccess: 'Database created',
+      executeFailed: 'Create database failed'
+    },
+    ddlViewerModal: {
+      title: 'Table DDL - {table}',
+      copy: 'Copy',
+      copyFailed: 'Copy failed'
+    },
+    tableMenu: {
+      openTable: 'Open Table',
+      queryConsole: 'Query console',
+      copyName: 'Copy name',
+      viewDdl: 'View DDL',
+      copyTable: 'Copy table',
+      copyTableName: 'Copy name',
+      copyTableSelect: 'Copy SELECT statement',
+      copyTableDdl: 'Copy DDL',
+      truncate: 'Truncate table',
+      drop: 'Delete Table',
+      truncateConfirmTitle: 'Truncate table?',
+      truncateConfirmContent: 'Truncate table {table}? All data will be permanently removed.',
+      dropConfirmTitle: 'Drop table?',
+      dropConfirmContent: 'Drop table {table}? This cannot be undone.',
+      ddlPermissionDenied: 'Insufficient privileges to generate DDL. The current database user needs CREATE FUNCTION permission.',
+      ddlFetchFailed: 'Failed to fetch DDL: {msg}',
+      nameCopied: 'Table name copied',
+      selectCopied: 'SELECT statement copied',
+      ddlCopied: 'DDL copied',
+      truncated: 'Table truncated',
+      dropped: 'Table dropped'
+    },
+    removeConfirm: {
+      title: 'Remove data source?',
+      content: 'The connection "{name}" will be removed. This cannot be undone.'
+    },
+    copiedToClipboard: 'Copied to clipboard',
+    movedSuccess: 'Connection moved',
+    dbAi: {
+      title: 'Database AI',
+      drawerTitle: 'Database AI result',
+      emptyState: 'No DB-AI request yet. Trigger Explain, NL→SQL, Optimize, or Convert from the SQL editor.',
+      emptyInput: 'Nothing to send to the AI.',
+      contextRequired: 'Pick a connection and database first.',
+      unknownError: 'DB-AI request failed.',
+      reasoning: 'Reasoning',
+      generatedSql: 'Generated SQL',
+      targetDialect: 'Target dialect',
+      textOnlyDialectHint: 'Text-only conversion; read-only execution is disabled.',
+      insertIntoEditor: 'Insert into editor',
+      replaceSelection: 'Replace selection',
+      insertedIntoEditor: 'Inserted into editor',
+      replacedSelection: 'Replaced selection',
+      copy: 'Copy SQL',
+      copyFailed: 'Copy failed',
+      runReadOnly: 'Run (read-only)',
+      cancel: 'Cancel request',
+      clear: 'Clear',
+      statusIdle: 'Idle',
+      statusQueued: 'Queued',
+      statusStreaming: 'Streaming',
+      statusDone: 'Completed',
+      statusError: 'Error',
+      statusCancelled: 'Cancelled',
+      diagnosing: 'Analyzing with AI...',
+      diagnosedAndReplaced: 'SQL fixed and replaced',
+      actionExplain: 'Explain',
+      actionNl2Sql: 'NL to SQL',
+      actionOptimize: 'Optimize',
+      actionConvert: 'Convert dialect',
+      actionComplete: 'Completion',
+      actionDiagnose: 'AI Fix',
+      nl2SqlPrompt: {
+        title: 'Generate SQL from a question',
+        hint: 'Describe what you want to query in natural language. Current connection and schema will be used as context.',
+        placeholder: 'e.g. Show the top 5 customers by total paid amount in the last 30 days',
+        submit: 'Generate',
+        cancel: 'Cancel'
+      },
+      aiPaneToggle: {
+        open: 'Open AI panel',
+        close: 'Close AI panel',
+        connectionRequired: 'Select a connection first'
+      },
+      historyBadge: {
+        databaseTask: 'Database',
+        connection: 'Connection: {name}',
+        database: 'DB: {name}',
+        schema: 'Schema: {name}'
+      }
     }
   }
 }

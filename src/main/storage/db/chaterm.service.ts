@@ -84,9 +84,30 @@ import {
   addK8sTerminalSessionLogic,
   removeK8sTerminalSessionLogic,
   removeAllK8sTerminalSessionsLogic,
+  upsertJumpserverK8sClustersLogic,
   type K8sClusterRecord,
   type K8sTerminalSessionRecord
 } from './chaterm/k8s-clusters'
+import {
+  listDbAssetsLogic,
+  getDbAssetLogic,
+  createDbAssetLogic,
+  updateDbAssetLogic,
+  softDeleteDbAssetLogic,
+  updateDbAssetStatusLogic,
+  listDbAssetGroupsLogic,
+  getDbAssetGroupLogic,
+  createDbAssetGroupLogic,
+  updateDbAssetGroupLogic,
+  softDeleteDbAssetGroupLogic,
+  type DbAssetRecord,
+  type DbAssetGroupRecord,
+  type DbAssetCreateInput,
+  type DbAssetUpdateInput,
+  type DbAssetGroupCreateInput,
+  type DbAssetGroupUpdateInput,
+  type DbAssetStatus
+} from './chaterm/db-assets'
 import type { SkillState } from '../../agent/shared/skills'
 import type { ChatSyncTaskState, TaskSnapshotTables } from '../chat_sync/models/ChatSyncTypes'
 const logger = createLogger('db')
@@ -220,8 +241,8 @@ export class ChatermDatabaseService {
   getKeyChainList(): any {
     return getKeyChainListLogic(this.db)
   }
-  connectAssetInfo(uuid: string): any {
-    return connectAssetInfoLogic(this.db, uuid)
+  connectAssetInfo(uuid: string, fallback?: { organizationUuid?: string; ip?: string }): any {
+    return connectAssetInfoLogic(this.db, uuid, fallback)
   }
   // @Get user host list (limited)
   getUserHosts(search: string, limit: number = 50): any {
@@ -277,8 +298,8 @@ export class ChatermDatabaseService {
     return saveTaskFavoriteLogic(this.db, taskId, favorite)
   }
 
-  async getTaskList(): Promise<TaskListItem[]> {
-    return getTaskListLogic(this.db)
+  async getTaskList(workspace?: 'server' | 'database'): Promise<TaskListItem[]> {
+    return getTaskListLogic(this.db, workspace)
   }
 
   async ensureTaskMetadataExists(taskId: string, initialTitle?: string): Promise<void> {
@@ -632,6 +653,11 @@ export class ChatermDatabaseService {
     authType?: string
     autoConnect?: boolean
     defaultNamespace?: string
+    sourceType?: string
+    bastionUuid?: string
+    bastionAssetAddress?: string
+    bastionAssetName?: string
+    bastionAssetIdLast?: number
   }): { success: boolean; id?: string; error?: string } {
     try {
       return addK8sClusterLogic(this.db, params)
@@ -657,6 +683,11 @@ export class ChatermDatabaseService {
       connectionStatus?: string
       autoConnect?: boolean
       defaultNamespace?: string
+      sourceType?: string
+      bastionUuid?: string
+      bastionAssetAddress?: string
+      bastionAssetName?: string
+      bastionAssetIdLast?: number
     }
   ): { success: boolean; error?: string } {
     try {
@@ -749,6 +780,83 @@ export class ChatermDatabaseService {
       logger.error('ChatermDatabaseService.removeAllK8sTerminalSessions error', { error: error })
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     }
+  }
+
+  upsertJumpserverK8sClusters(
+    bastionUuid: string,
+    assets: Array<{ id: number; name: string; address: string }>
+  ): { inserted: number; updated: number } {
+    return upsertJumpserverK8sClustersLogic(this.db, bastionUuid, assets)
+  }
+
+  // ==================== Database Asset Management Methods ====================
+
+  listDbAssets(): DbAssetRecord[] {
+    try {
+      return listDbAssetsLogic(this.db, this.userId)
+    } catch (error) {
+      logger.error('ChatermDatabaseService.listDbAssets error', { event: 'db-asset.list.error', error })
+      return []
+    }
+  }
+
+  getDbAsset(id: string): DbAssetRecord | null {
+    try {
+      return getDbAssetLogic(this.db, this.userId, id)
+    } catch (error) {
+      logger.error('ChatermDatabaseService.getDbAsset error', { event: 'db-asset.get.error', id, error })
+      return null
+    }
+  }
+
+  createDbAsset(input: DbAssetCreateInput): DbAssetRecord {
+    return createDbAssetLogic(this.db, this.userId, input)
+  }
+
+  updateDbAsset(id: string, patch: DbAssetUpdateInput): DbAssetRecord {
+    return updateDbAssetLogic(this.db, this.userId, id, patch)
+  }
+
+  deleteDbAsset(id: string): boolean {
+    try {
+      return softDeleteDbAssetLogic(this.db, this.userId, id)
+    } catch (error) {
+      logger.error('ChatermDatabaseService.deleteDbAsset error', { event: 'db-asset.delete.error', id, error })
+      return false
+    }
+  }
+
+  updateDbAssetStatus(
+    id: string,
+    patch: {
+      status?: DbAssetStatus
+      last_connected_at?: string | null
+      last_tested_at?: string | null
+      last_error_code?: string | null
+      last_error_message?: string | null
+    }
+  ): void {
+    updateDbAssetStatusLogic(this.db, this.userId, id, patch)
+  }
+
+  listDbAssetGroups(): DbAssetGroupRecord[] {
+    return listDbAssetGroupsLogic(this.db, this.userId)
+  }
+
+  getDbAssetGroup(id: string): DbAssetGroupRecord | null {
+    return getDbAssetGroupLogic(this.db, this.userId, id)
+  }
+
+  createDbAssetGroup(input: DbAssetGroupCreateInput): DbAssetGroupRecord {
+    return createDbAssetGroupLogic(this.db, this.userId, input)
+  }
+
+  updateDbAssetGroup(id: string, patch: DbAssetGroupUpdateInput): DbAssetGroupRecord {
+    return updateDbAssetGroupLogic(this.db, this.userId, id, patch)
+  }
+
+  deleteDbAssetGroup(id: string): boolean {
+    return softDeleteDbAssetGroupLogic(this.db, this.userId, id)
   }
 
   // ==================== IndexedDB Migration Status Query Methods ====================

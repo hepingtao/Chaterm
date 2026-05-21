@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ref } from 'vue'
+import { getMenuForDockBackedUserTab, isDockBackedUserTab } from '../terminalLayoutNavigation'
 
 // Mocks (required by AI Sidebar tests)
 vi.mock('@/services/userConfigStoreService', () => ({
@@ -1090,5 +1091,64 @@ describe('TerminalLayout - AI Sidebar Sticky Logic (Core)', () => {
       expect(panel1.api.setTitle).not.toHaveBeenCalled()
       expect(panel2.api.setTitle).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe('TerminalLayout - Database Workspace Mode', () => {
+  const sourcePath = join(process.cwd(), 'src/renderer/src/views/layouts/TerminalLayout.vue')
+  const source = readFileSync(sourcePath, 'utf8')
+
+  it('imports the Database component', () => {
+    expect(source).toContain("import Database from '@views/components/Database/index.vue'")
+  })
+
+  it('branches the content area on currentMenu === "database"', () => {
+    expect(source).toContain("currentMenu === 'database'")
+    expect(source).toContain('database-workspace-mode')
+    expect(source).toMatch(/<Database\s*\/>/)
+  })
+
+  it('renders the normal splitpanes layout when menu is not database', () => {
+    expect(source).toMatch(/v-else[\s\S]{0,200}class="left-sidebar-container"/)
+  })
+
+  it('keeps the AI sidebar gated by the existing terminal-mode condition', () => {
+    expect(source).toContain("props.currentMode === 'terminal' && showAiSidebar")
+  })
+
+  it('exposes the whole AI sidebar as an onboarding target', () => {
+    expect(source).toContain('data-onboarding-id="right-ai-sidebar"')
+  })
+
+  it('uses a wider AI sidebar while the AI chat onboarding tour is active', () => {
+    expect(source).toContain('ONBOARDING_AI_SIDEBAR_WIDTH_PX = 420')
+    expect(source).toContain("onboardingStore.activeTour === 'aiChat'")
+    expect(source).toContain('restoredSize = Math.max(restoredSize, preferredSize)')
+  })
+
+  it('defines scoped styles so database mode fills term_content', () => {
+    expect(source).toContain('.database-workspace-mode')
+    expect(source).toMatch(/\.database-workspace-mode\s*\{[\s\S]{0,200}height:\s*100%/)
+  })
+
+  it('switches back to a Dockview-backed menu before opening settings from database mode', () => {
+    expect(isDockBackedUserTab('userConfig')).toBe(true)
+    expect(isDockBackedUserTab('onboardingGuide')).toBe(true)
+    expect(getMenuForDockBackedUserTab('database', 'userConfig')).toBe('workspace')
+    expect(getMenuForDockBackedUserTab('database', 'onboardingGuide')).toBe('workspace')
+    expect(source).toContain('await ensureDockWorkspaceVisibleForUserTab(value)')
+  })
+
+  it('auto-opens the onboarding guide tab once after Dockview is ready', () => {
+    expect(source).toContain('openInitialOnboardingGuideTab()')
+    expect(source).toContain('onboardingStore.guideTabAutoOpened')
+    expect(source).toContain("await openUserTab('onboardingGuide')")
+    expect(source).toContain('onboardingStore.markGuideTabAutoOpened()')
+  })
+
+  it('routes repeated database menu clicks to the database asset sidebar', () => {
+    expect(source).toContain("params.menu === 'database'")
+    expect(source).toContain('databaseWorkspaceStore.toggleDatabaseSidebar()')
+    expect(source).toContain('databaseWorkspaceStore.setDatabaseSidebarOpen(true)')
   })
 })

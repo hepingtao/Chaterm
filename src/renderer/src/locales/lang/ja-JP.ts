@@ -26,6 +26,7 @@ export default {
     userConfig: '設定',
     alias: 'エイリアス設定',
     assetConfig: 'ホスト管理',
+    onboardingGuide: 'オンボーディングガイド',
     search: '検索',
     connect: '接続',
     edit: '編集',
@@ -129,7 +130,10 @@ export default {
     daysAgo: ' 日前',
     run: '実行',
     jumpserverSupportPlugin: 'Jumpserver Support',
-    noSearchResults: '検索結果がありません'
+    noSearchResults: '検索結果がありません',
+    previous: '前へ',
+    next: '次へ',
+    database: 'データベース'
   },
   term: {
     welcome: 'Chaterm へようこそ',
@@ -263,11 +267,30 @@ export default {
     watermarkDescribe: 'ターミナルにウォーターマークを表示',
     watermarkOpen: '開く',
     watermarkClose: '閉じる',
+    onboardingGuide: 'オンボーディングガイド',
+    openOnboardingGuide: 'オンボーディングガイドを開く',
     language: '言語',
     theme: 'テーマ',
     themeDark: 'ダーク',
     themeLight: 'ライト',
     themeAuto: '自動',
+    themeGroupSystem: 'システム',
+    themeGroupDefault: 'デフォルト',
+    themeGroupOfficial: '公式テーマ',
+    themeTermiusDark: 'Graphite Dark',
+    themeTermiusLight: 'Mist Light',
+    themeFlexokiDark: 'Ember Earth',
+    themeFlexokiLight: 'Canvas Paper',
+    themeKanagawaWave: 'Tide Indigo',
+    themeKanagawaDragon: 'Forge Copper',
+    themeKanagawaLotus: 'Dawn Petal',
+    themeHackerBlue: 'Pulse Blue',
+    themeHackerGreen: 'Pulse Green',
+    themeDraculaNight: 'Eclipse Violet',
+    themeCatppuccinMocha: 'Truffle Mocha',
+    themeCatppuccinLatte: 'Cream Latte',
+    themeGruvboxDark: 'Grove Moss',
+    themeNordFrost: 'Fjord Ice',
     defaultLayout: 'デフォルトレイアウト',
     defaultLayoutTerminal: 'ターミナル',
     defaultLayoutAgents: 'エージェント',
@@ -645,6 +668,178 @@ export default {
       toggleLayout: 'レイアウトを切り替え(ターミナル/エージェント)'
     }
   },
+  onboarding: {
+    guide: {
+      title: 'モジュールから Chaterm を理解する',
+      description:
+        'モジュールを選択すると対応するページが自動で開き、重要な領域が強調表示されます。ガイド中は強調されていない領域は一時的に操作できず、現在の強調領域はクリックできます。',
+      progress: '{completed}/{total} 完了'
+    },
+    modules: {
+      interfaceGuide: {
+        title: 'インターフェースガイド',
+        description: '左側モジュール、機能パネル、ワークスペースタブ、上部レイアウト制御、AI 入口を確認します。'
+      },
+      systemSettings: {
+        title: 'システム設定',
+        description: '一般設定、テーマと言語、既定レイアウト、ターミナルフォント、プロキシ、SSH Agent 設定を確認します。'
+      },
+      addAndConnectHost: {
+        title: 'ホストを追加して接続',
+        description: 'ホストを作成し、アセットカードのクリックまたはダブルクリックで実際の接続を開始します。'
+      },
+      aiChat: {
+        title: 'AI チャットを使う',
+        description: '右側の AI バーを開き、Agent、モデル、ローカルホストを選択して実際の AI リクエストを開始します。'
+      }
+    },
+    spotlight: {
+      previous: '前へ',
+      next: '次へ',
+      finish: '完了',
+      progress: '{current}/{total}',
+      targetMissing: '現在の対象は一時的に表示されていません。前の操作を完了するか、次へをクリックしてください。'
+    },
+    tours: {
+      interfaceGuide: {
+        moduleSwitcher: {
+          title: '左側モジュール切替バー',
+          description: 'ここでワークスペース、アセット、ファイル、ナレッジベースなどの主要モジュールを切り替えます。'
+        },
+        functionPanel: {
+          title: '左側機能パネル',
+          description: 'モジュールを選択すると、関連する一覧、検索、管理入口がここに表示されます。'
+        },
+        workspace: {
+          title: 'メインワークスペースタブ',
+          description: 'ターミナル、設定、アセット管理、エディタはメインワークスペースのタブとして開きます。'
+        },
+        topControls: {
+          title: '上部ウィンドウとレイアウト制御',
+          description: '上部領域で Terminal/Agents レイアウトを切り替え、左右のサイドバーを制御します。'
+        },
+        aiToggle: {
+          title: '右側 AI チャット入口',
+          description: 'ここをクリックするか Command/Ctrl + L を使うと、ターミナル右側の AI チャットバーを開けます。'
+        },
+        aiSidebar: {
+          title: '右側 AI サイドバー',
+          description: 'ターミナル右側の AI ワークスペースで、履歴、メッセージ、コンテキスト入口、入力操作を含みます。'
+        }
+      },
+      systemSettings: {
+        settingEntry: {
+          title: '設定入口',
+          description: '左下の歯車をクリックし、次へを押すか Command/Ctrl + , を使ってシステム設定タブを開きます。'
+        },
+        sideNav: {
+          title: '設定カテゴリナビゲーション',
+          description: '左側カテゴリで一般、ターミナル、拡張、モデルなどの設定ページを切り替えます。'
+        },
+        general: {
+          title: '一般設定',
+          description: '一般ページでは外観、言語、既定レイアウト、背景、よく使う設定を管理します。'
+        },
+        background: {
+          title: '背景設定',
+          description: 'プリセット背景を選ぶかカスタム画像をアップロードし、透明度と明るさを調整できます。'
+        },
+        backgroundPreset: {
+          title: '背景を選択',
+          description: '強調表示された背景サムネイルをクリックして続行します。'
+        },
+        terminalTab: {
+          title: 'ターミナル設定カテゴリ',
+          description: 'ターミナルカテゴリをクリックして、表示、入力、接続関連のオプションを開きます。'
+        },
+        terminalOptions: {
+          title: 'ターミナルフォント、プロキシ、SSH Agent',
+          description: 'ここでフォント、サイズ、プロキシ設定、SSH Agent 動作を調整できます。'
+        },
+        aiPreferencesTab: {
+          title: 'AI 設定',
+          description: 'ここから AI 設定に入り、推論、ナレッジ検索、自動実行を構成します。'
+        },
+        aiPreferencesContent: {
+          title: 'AI 設定内容',
+          description: '拡張思考、クエリ系コマンドの自動実行、ナレッジ検索、経験蓄積、プロキシなどの AI 動作を制御します。'
+        },
+        aiAutoApproval: {
+          title: '自動実行を有効化',
+          description: 'このスイッチをクリックして自動実行を有効化します。有効化後、AI は許可されたツールを毎回確認せずに実行できます。'
+        }
+      },
+      addAndConnectHost: {
+        assetsEntry: {
+          title: 'アセット入口',
+          description: 'まずアセットモジュールに入り、ホストと鍵の管理入口を確認します。'
+        },
+        hostManagement: {
+          title: 'ホスト管理入口',
+          description: 'ホスト管理では SSH ホストの追加、編集、インポート、接続を行います。'
+        },
+        newHost: {
+          title: '新規ホストボタン',
+          description: '新規ホストをクリックすると、右側にホストフォームが展開されます。'
+        },
+        formFields: {
+          title: 'ホストフォームの主要項目',
+          description: 'アドレス、ポート、ユーザー名、認証方式、グループ、プロキシなどの接続情報を入力します。'
+        },
+        formSubmit: {
+          title: 'ホストを保存',
+          description: '保存はホスト設定を作成するだけで、接続を偽装しません。'
+        },
+        connectAsset: {
+          title: 'アセットカードから接続',
+          description: '保存後、アセットカードをクリックまたはダブルクリックして実際の接続を開始し、このモジュールを完了します。'
+        }
+      },
+      aiChat: {
+        sidebar: {
+          title: '右側 AI バーを開く',
+          description: '右上入口をクリックするか Command/Ctrl + L を使用します。左側モジュールバーの AI アイコンからも開けます。'
+        },
+        sidebarOverview: {
+          title: '右側 AI サイドバー',
+          description: '現在のターミナルワークフローの AI チャットを担い、履歴、メッセージ、コンテキスト入口、入力を含みます。'
+        },
+        input: {
+          title: 'AI 入力欄',
+          description: '目的、質問、または AI に確認してほしいターミナル状態を入力します。'
+        },
+        modeAgent: {
+          title: 'Agent モードを選択',
+          description: 'これはモード選択です。ドロップダウンが開いています。Agent をクリックすると、AI がホストタスクをより完全に処理します。'
+        },
+        modelOpen: {
+          title: 'モデル選択を開く',
+          description: 'ここをクリックしてモデル一覧を開きます。'
+        },
+        modelOption: {
+          title: 'モデルを選択',
+          description: '利用可能なモデルをクリックして、この AI リクエストで使います。'
+        },
+        contextOpen: {
+          title: 'コンテキスト選択を開く',
+          description: 'コンテキスト追加入口をクリックして、この Agent リクエストの対象ホストを選びます。'
+        },
+        contextHosts: {
+          title: 'ホスト一覧へ',
+          description: 'ホストカテゴリをクリックして、実行対象にできるホストを確認します。'
+        },
+        localhost: {
+          title: '127.0.0.1 を選択',
+          description: 'ローカルホスト 127.0.0.1 をこの Agent リクエストの対象として選択します。'
+        },
+        send: {
+          title: '送信ボタン',
+          description:
+            '入力欄には「ホスト状態を確認」が入っています。送信ボタンをクリックして実際の AI リクエストを開始し、このモジュールを完了します。'
+        }
+      }
+    }
+  },
   personal: {
     host: 'ホスト管理',
     newHost: '新しいホスト',
@@ -691,6 +886,7 @@ export default {
     favoriteUpdateError: 'お気に入り状態の更新エラー',
     defaultGroup: 'ホスト',
     noAssets: '資産がありません',
+    emptyAssetsDescription: 'ホストを手動で作成するか、既存のセッションファイルをインポートして接続を開始できます。',
     hostType: 'ssh',
     personalAsset: '個人資産',
     enterpriseAsset: '企業資産',
@@ -705,6 +901,7 @@ export default {
     switchHuawei: 'ファーウェイ',
     switchTip: 'スイッチはコマンドモードのみサポートしています',
     bastionHost: '踏み台サーバー',
+    bastionType: '踏み台タイプ',
     qizhi: '齊治踏み台',
     refreshAssets: '資産を更新',
     refreshingAssets: '資産を更新しています...',
@@ -746,6 +943,13 @@ export default {
     exportSuccess: '資産 {count} が正常にエクスポートされました',
     exportError: 'エクスポートに失敗しました',
     exportNoData: 'エクスポートする資産がありません',
+    selectExportHostsTitle: 'エクスポートするホストを選択',
+    selectExportHostsDescription: '個別のホストまたはグループ全体を選択できます。グループを選択するとその配下のすべてのホストが含まれます。',
+    selectExportHostsEmpty: 'エクスポート可能なホストがありません',
+    searchHosts: 'ホストを検索',
+    selectAll: 'すべて選択',
+    clearSelection: 'クリア',
+    selectedCount: '{count} 台のホストを選択中',
     importHelp: 'インポート形式の説明',
     importFormatTitle: '資産インポート形式ガイド',
     importFormatGuide: 'インポート形式ガイド:',
@@ -853,6 +1057,7 @@ export default {
     noMatchingCommands: '一致するコマンドがありません',
     copy: 'コピー',
     run: '実行',
+    paste: '貼り付け',
     reject: '拒否',
     approve: '承認',
     addAutoApprove: '自動承認を追加',
@@ -878,6 +1083,7 @@ export default {
     searchHistoryPH: '入力してください',
     loading: '読み込み中...',
     loadMore: 'さらに読み込む',
+    historyLoadHint: 'さらに古いメッセージがあります。上にスクロールして読み込めます。',
     copyToClipboard: 'クリップボードにコピー',
     retry: '再試行',
     taskCompleted: 'タスク完了',
@@ -967,6 +1173,8 @@ export default {
     sendContentEmpty: 'コンテンツが空です、コンテンツを入力してください',
     getAssetInfoFailed: '現在の資産接続情報の取得に失敗しました',
     pleaseConnectAsset: '資産接続を先に確立してください',
+    dbContextRequired: 'まずデータベース接続を選択してください',
+    dbContextMissingField: 'まず{field}を選択してください',
     operationFailed: '操作に失敗しました',
     noOperableMessage: '操作可能なメッセージがありません',
     commandCopied: 'コマンドをコピー',
@@ -1161,6 +1369,8 @@ export default {
     uploadCancel: 'アップロードがキャンセルされました',
     downloadSkipped: 'ダウンロードをスキップしました',
     taskList: '転送リスト',
+    collapseTransferList: '転送リストを折りたたむ',
+    expandTransferList: '転送リストを展開',
     upload: 'アップロード',
     modifyFilePermissionsSuccess: 'ファイル権限の修正成功',
     modifyFilePermissionsFailed: 'ファイル権限の修正に失敗しました',
@@ -1190,6 +1400,8 @@ export default {
     transferSuccess: '転送完了',
     transferFailed: '転送失敗',
     openFolder: 'フォルダを開く',
+    showHiddenFiles: '隠しファイルを表示',
+    hideHiddenFiles: '隠しファイルを非表示',
     uploadSkipped: 'アップロードをスキップしました',
     transferSkipped: '転送をスキップしました',
     transferCancel: '転送がキャンセルされました',
@@ -1295,7 +1507,12 @@ export default {
       mfaFailed: '二要素認証に失敗しました',
       multipleUsersDetected: '複数のユーザーアカウントが検出されました。選択してください...',
       connectingWithSelectedAccount: '選択したアカウントで接続中...',
-      userSelectionCanceled: 'ユーザー選択がキャンセルされました'
+      userSelectionCanceled: 'ユーザー選択がキャンセルされました',
+      syncFromJumpServer: 'JumpServer K8sアセットを同期',
+      sourceTag: 'JumpServer',
+      noBastion: '踏み台が設定されていません。SSHで先に設定してください',
+      syncSuccess: '同期完了、{inserted} 件追加、{updated} 件更新',
+      syncFailed: '同期失敗'
     },
     qizhi: {
       connectingToBastionHost: '齊治踏み台サーバーに接続中...',
@@ -1305,6 +1522,7 @@ export default {
       authenticating: '認証中...',
       connectedToTarget: 'ターゲットサーバーに接続しました',
       mfaRequired: '齊治踏み台2次認証',
+      selectingAssetCategory: 'アセットカテゴリを選択中',
       mfaPrompt: '2次パスワードを入力してください',
       mfaFailed: '2次認証に失敗しました',
       mfaTimeout: '認証がタイムアウトしました。再試行してください',
@@ -1394,7 +1612,7 @@ export default {
     milliseconds: 'ミリ秒数'
   },
   mcp: {
-    title: 'ツール & MCP',
+    title: 'MCP',
     description: 'MCP サーバー接続を管理し、AI 能力を拡張します',
     serverList: 'MCP サーバー',
     addServer: 'サーバーを追加',
@@ -1585,6 +1803,7 @@ export default {
       addCluster: 'クラスターを追加',
       clusterAdded: 'クラスターが追加されました',
       noClusters: '設定されたクラスターがありません',
+      localClusters: 'ローカルクラスター',
       noTerminal: 'ターミナルセッションがありません',
       createTerminal: 'ターミナルを作成',
       selectClusterFirst: '先にクラスターを選択してください',
@@ -1636,6 +1855,222 @@ export default {
       active: 'アクティブ',
       selectClusterToEdit: 'クラスターを選択して詳細を表示・編集',
       k8sClusterConfig: 'クラスター管理'
+    },
+    jumpserver: {
+      bastionResources: '踏み台リソース',
+      syncFromJumpServer: 'JumpServer K8sアセットを同期',
+      sourceTag: 'JumpServer',
+      noBastion: '踏み台が設定されていません。SSHで先に設定してください',
+      syncSuccess: '同期完了、{inserted} 件追加、{updated} 件更新',
+      syncFailed: '同期失敗'
+    }
+  },
+  database: {
+    title: 'データベース',
+    group: 'グループ',
+    rootGroup: 'ルートグループ',
+    newGroup: '新しいグループ',
+    copyName: '名前をコピー',
+    moveTo: '移動先',
+    deleteGroup: 'グループを削除',
+    searchPlaceholder: '接続またはテーブルを検索...',
+    newConnection: '新しい接続',
+    newConnectionOf: '新しい {dbType} 接続',
+    overview: '概要',
+    overviewLead: '左側でテーブルを選択し、ダブルクリックすると SQL ワークスペースが開きます。',
+    overviewTipExplore: '左側でグループ、接続、データベースオブジェクトを確認できます。',
+    overviewTipConnection: '右上のプラスボタンをクリックして新しい接続を作成します。',
+    overviewTipQuery: 'テーブルをダブルクリックして SQL ワークスペースを開き、クエリの実行や整形を行います。',
+    testConnection: '接続をテスト',
+    testConnectionPassed: '接続に成功しました',
+    testConnectionInFlight: '接続をテスト中...',
+    fixRequiredFields: '先に必須項目を入力してください。',
+    authentication: '認証',
+    authUserAndPassword: 'ユーザー名とパスワード',
+    driver: 'ドライバー',
+    driverPlaceholder: 'ドライバーのアップロードは後続フェーズで提供されます。',
+    driverClass: 'クラス名',
+    uploadDriver: 'ドライバーをアップロード',
+    sshConfiguration: 'SSH 設定',
+    sshConfigurationPlaceholder: 'SSH トンネルの再利用は後続フェーズで接続されます。',
+    advancedConfiguration: '詳細設定',
+    advancedConfigurationPlaceholder: '詳細パラメーターパネルのプレースホルダー。',
+    noResults: '結果なし',
+    loading: '読み込み中...',
+    firstPage: '先頭ページ',
+    prevPage: '前のページ',
+    nextPage: '次のページ',
+    lastPage: '最後のページ',
+    refresh: '更新',
+    total: '合計',
+    totalTooltip: 'クリックして総行数を更新',
+    filterApply: '適用',
+    filterClear: 'フィルターをクリア',
+    filterLikePlaceholder: 'あいまい一致、Enter で適用',
+    filterLocalSearch: '{column} をローカル検索',
+    filterAll: 'すべて',
+    sortTooltip: 'クリックして並び替えを切り替え：昇順 / 降順 / なし',
+    filterTooltip: '列フィルター',
+    sqlFilterPlaceholder: '結果を絞り込む SQL 式を入力（Ctrl+Space を使用）',
+    wherePlaceholder: "手動 WHERE 式（列フィルターを上書き）、例：id > 100 AND name LIKE '%abc%'",
+    orderByPlaceholder: '手動 ORDER BY 式（列ソートを上書き）、例：created_at DESC, id ASC',
+    statusResult: '結果',
+    statusTime: '所要時間',
+    statusRows: '行数',
+    statusExecutionOk: '実行に成功しました',
+    rowCount: '合計 {count} 行',
+    run: '実行',
+    stop: '停止',
+    settings: '設定',
+    deleteGroupConfirmTitle: 'グループを削除',
+    deleteGroupConfirmContent: 'グループ "{name}" を削除してもよろしいですか？この操作は取り消せません。',
+    refreshConnected: '接続中のセッションを更新',
+    comingSoon: '近日対応',
+    editConnection: '接続を編集',
+    editPasswordPlaceholder: '空欄の場合は現在のパスワードを保持します',
+    addRow: '行を追加',
+    deleteRow: '行を削除',
+    undo: '元に戻す',
+    saveChanges: '変更を保存',
+    editDisabledSqlResult: 'このビューでは編集できません',
+    deleteDisabledNoRow: '先に行を選択してください',
+    undoDisabledEmpty: '元に戻す操作がありません',
+    saveDisabledClean: '保存する変更はありません',
+    noPkWarning: '主キーが検出されなかったため、編集は無効です',
+    saveFailed: '変更の保存に失敗しました',
+    setNull: 'NULL に設定',
+    addTab: '新しいクエリタブ',
+    runAll: 'すべて実行',
+    runSelection: '選択範囲を実行',
+    runToCursor: 'カーソル位置まで実行',
+    runCurrentStatement: '現在のステートメントを実行',
+    explain: '実行計画を表示',
+    save: '保存',
+    saveAs: '名前を付けて保存',
+    pickConnection: '接続',
+    pickDatabase: 'データベース',
+    pickSchema: 'スキーマ',
+    sqlEmpty: 'SQL が空です',
+    sqlNoContext: '先に接続とデータベースを選択してください',
+    sqlRunning: '実行中…',
+    overviewColSql: 'SQL',
+    overviewColMessage: 'メッセージ',
+    overviewColTime: '時間',
+    noExecutionsYet: 'まだ実行履歴はありません。',
+    closeResultTab: '結果タブを閉じる',
+    fields: {
+      name: '名前',
+      env: '環境',
+      dbType: 'データベースタイプ',
+      host: 'ホスト',
+      port: 'ポート',
+      user: 'ユーザー',
+      password: 'パスワード',
+      database: 'データベース',
+      url: 'URL',
+      sslMode: 'SSL モード'
+    },
+    connectionMenu: {
+      openConnection: '接続を開く',
+      closeConnection: '接続を閉じる',
+      queryConsole: 'クエリコンソール',
+      createDatabase: 'データベース作成',
+      editorSource: 'ソースを編集',
+      copyName: '名前をコピー',
+      moveTo: '移動先',
+      moveToRoot: 'ルートノード',
+      refresh: '更新',
+      remove: 'データソースを削除',
+      disabledNeedConnection: '先に接続してください'
+    },
+    createDatabaseModal: {
+      title: 'データベースを作成',
+      nameLabel: '名前',
+      previewLabel: 'プレビュー',
+      nameRequired: '名前を入力してください',
+      nameInvalid: '名前に無効な文字が含まれています',
+      submit: 'OK',
+      cancel: 'キャンセル',
+      createdSuccess: 'データベースを作成しました',
+      executeFailed: 'データベースの作成に失敗しました'
+    },
+    ddlViewerModal: {
+      title: 'テーブル DDL - {table}',
+      copy: 'コピー',
+      copyFailed: 'コピーに失敗しました'
+    },
+    tableMenu: {
+      openTable: 'テーブルを開く',
+      queryConsole: 'クエリコンソール',
+      copyName: '名前をコピー',
+      viewDdl: 'DDL を表示',
+      copyTable: 'テーブルをコピー',
+      copyTableName: '名前をコピー',
+      copyTableSelect: 'SELECT 文をコピー',
+      copyTableDdl: 'DDL をコピー',
+      truncate: 'テーブルを空にする',
+      drop: 'テーブルを削除',
+      truncateConfirmTitle: 'テーブルを空にしますか？',
+      truncateConfirmContent: 'テーブル {table} を空にしますか？すべてのデータが完全に削除されます。',
+      dropConfirmTitle: 'テーブルを削除しますか？',
+      dropConfirmContent: 'テーブル {table} を削除しますか？この操作は取り消せません。',
+      ddlPermissionDenied: '権限が不足しているため DDL を生成できません。現在のデータベースユーザーには CREATE FUNCTION 権限が必要です。',
+      ddlFetchFailed: 'DDL の取得に失敗しました: {msg}',
+      nameCopied: 'テーブル名をコピーしました',
+      selectCopied: 'SELECT 文をコピーしました',
+      ddlCopied: 'DDL をコピーしました',
+      truncated: 'テーブルを空にしました',
+      dropped: 'テーブルを削除しました'
+    },
+    removeConfirm: {
+      title: 'データソースを削除しますか？',
+      content: '接続 "{name}" は削除されます。この操作は取り消せません。'
+    },
+    copiedToClipboard: 'クリップボードにコピーしました',
+    movedSuccess: '接続を移動しました',
+    format: 'フォーマット',
+    formatError: 'フォーマットに失敗しました',
+    dbAi: {
+      title: 'データベース AI',
+      drawerTitle: 'データベース AI の結果',
+      emptyState: 'DB-AI リクエストがまだありません。SQL エディタから説明、自然言語 → SQL、最適化、または変換を実行してください。',
+      emptyInput: 'AI に送信する内容がありません。',
+      contextRequired: '最初に接続とデータベースを選択してください。',
+      unknownError: 'DB-AI リクエストに失敗しました。',
+      reasoning: '推論',
+      generatedSql: '生成された SQL',
+      targetDialect: 'ターゲット方言',
+      textOnlyDialectHint: 'テキストのみの変換。読み取り専用の実行は無効です。',
+      insertIntoEditor: 'エディタに挿入',
+      replaceSelection: '選択範囲を置換',
+      insertedIntoEditor: 'エディタに挿入しました',
+      replacedSelection: '選択範囲を置換しました',
+      copy: 'SQL をコピー',
+      copyFailed: 'コピーに失敗しました',
+      runReadOnly: '実行（読み取り専用）',
+      cancel: 'リクエストをキャンセル',
+      clear: 'クリア',
+      statusIdle: 'アイドル',
+      statusQueued: 'キュー待ち',
+      statusStreaming: 'ストリーミング中',
+      statusDone: '完了',
+      statusError: 'エラー',
+      statusCancelled: 'キャンセル済み',
+      diagnosing: 'AI が分析中...',
+      diagnosedAndReplaced: 'SQL を修正して置き換えました',
+      actionExplain: '説明',
+      actionNl2Sql: '自然言語 → SQL',
+      actionOptimize: '最適化',
+      actionConvert: '方言を変換',
+      actionComplete: '補完',
+      actionDiagnose: 'AI 修正',
+      nl2SqlPrompt: {
+        title: '質問から SQL を生成',
+        hint: '自然言語でクエリしたい内容を記述してください。現在の接続とスキーマがコンテキストとして使用されます。',
+        placeholder: '例：過去 30 日間で支払い総額が最も多い上位 5 名の顧客を表示',
+        submit: '生成',
+        cancel: 'キャンセル'
+      }
     }
   }
 }

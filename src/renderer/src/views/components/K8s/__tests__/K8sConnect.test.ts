@@ -22,6 +22,9 @@ const mockK8sTerminalCreate = vi.fn()
 const mockK8sTerminalClose = vi.fn()
 const mockK8sOnTerminalData = vi.fn((_id: string, _cb: (data: string) => void) => () => {})
 const mockK8sOnTerminalExit = vi.fn((_id: string, _cb: () => void) => () => {})
+const mockK8sStore = vi.hoisted(() => ({
+  connectCluster: vi.fn()
+}))
 
 const mockTerminalInstance = {
   open: vi.fn(),
@@ -112,6 +115,11 @@ vi.mock('@/store/userConfigStore', () => {
   }
 })
 
+// Mock k8sStore
+vi.mock('@/store/k8sStore', () => ({
+  useK8sStore: () => mockK8sStore
+}))
+
 // Mock userConfigStoreService
 vi.mock('@/services/userConfigStoreService', () => {
   return {
@@ -129,7 +137,8 @@ vi.mock('@/services/userConfigStoreService', () => {
 
 // Mock themeUtils
 vi.mock('@/utils/themeUtils', () => ({
-  getActualTheme: vi.fn((theme: unknown) => (theme as string) || 'dark')
+  getActualTheme: vi.fn((theme: unknown) => (theme as string) || 'dark'),
+  getSystemTheme: vi.fn(() => 'dark')
 }))
 
 // Mock terminalPrompt utilities used by handleCommandOutput
@@ -229,6 +238,7 @@ describe('K8s Connect Component', () => {
     ;(global.window as any).addEventListener = vi.fn()
     ;(global.window as any).removeEventListener = vi.fn()
     mockK8sTerminalCreate.mockResolvedValue({ success: true })
+    mockK8sStore.connectCluster.mockResolvedValue({ success: true })
     mockK8sOnTerminalData.mockReturnValue(() => {})
     mockK8sOnTerminalExit.mockReturnValue(() => {})
     // Restore writeToTerminal mock after clearAllMocks
@@ -268,6 +278,7 @@ describe('K8s Connect Component', () => {
     it('should call k8sTerminalCreate when mounted with valid cluster', async () => {
       wrapper = createWrapper()
       await flushPromises()
+      expect(mockK8sStore.connectCluster).toHaveBeenCalledWith('cluster-1')
       expect(mockK8sTerminalCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           clusterId: 'cluster-1',
@@ -291,6 +302,7 @@ describe('K8s Connect Component', () => {
         }
       })
       await flushPromises()
+      expect(mockK8sStore.connectCluster).toHaveBeenCalledWith('cluster-1')
       expect(mockK8sTerminalCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           clusterId: 'cluster-1',
@@ -303,6 +315,7 @@ describe('K8s Connect Component', () => {
       wrapper = createWrapper({ serverInfo: createServerInfo() })
       await flushPromises()
       expect(mockTerminalInstance.writeln).toHaveBeenCalledWith('Error: No cluster data provided')
+      expect(mockK8sStore.connectCluster).not.toHaveBeenCalled()
       expect(mockK8sTerminalCreate).not.toHaveBeenCalled()
     })
 
@@ -317,6 +330,15 @@ describe('K8s Connect Component', () => {
       })
       await flushPromises()
       expect(mockTerminalInstance.writeln).toHaveBeenCalledWith('Error: No cluster data provided')
+      expect(mockK8sStore.connectCluster).not.toHaveBeenCalled()
+      expect(mockK8sTerminalCreate).not.toHaveBeenCalled()
+    })
+
+    it('should show error and skip terminal creation when cluster connect fails', async () => {
+      mockK8sStore.connectCluster.mockResolvedValue({ success: false, error: 'Connect failed' })
+      wrapper = createWrapper()
+      await flushPromises()
+      expect(mockTerminalInstance.writeln).toHaveBeenCalledWith('Error: Connect failed')
       expect(mockK8sTerminalCreate).not.toHaveBeenCalled()
     })
 

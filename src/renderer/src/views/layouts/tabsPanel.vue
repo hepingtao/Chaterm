@@ -65,6 +65,7 @@
           <AliasConfig v-if="localTab.content === 'aliasConfig'" />
           <jumpserverSupport v-if="localTab.content === 'jumpserverSupport'" />
           <AssetConfig v-if="localTab.content === 'assetConfig'" />
+          <OnboardingGuide v-if="localTab.content === 'onboardingGuide'" />
           <KeyManagement v-if="localTab.content === 'keyManagement'" />
           <McpConfigEditor v-if="localTab.content === 'mcpConfigEditor'" />
           <CommonConfigEditor
@@ -112,6 +113,7 @@ import SecurityConfigEditor from '@views/components/Editors/SecurityConfigEditor
 import KeywordHighlightEditor from '@views/components/Editors/KeywordHighlightEditor.vue'
 import PluginDetail from '@views/components/Extensions/pluginDetail.vue'
 import AssetManagement from '@views/components/LeftTab/config/assetManagement.vue'
+import OnboardingGuide from '@/components/global/onboarding/OnboardingGuide.vue'
 import type { IDockviewPanelProps } from 'dockview-vue'
 
 interface TabItem {

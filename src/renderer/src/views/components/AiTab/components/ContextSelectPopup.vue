@@ -56,6 +56,7 @@
           :key="item.key"
           class="menu-item"
           :class="{ 'keyboard-selected': keyboardSelectedIndex === displayedOpenedHosts.length + index }"
+          :data-onboarding-id="item.key === 'hosts' ? 'ai-context-hosts-menu' : undefined"
           @click.stop="goToLevel2(item.key)"
           @mouseover="handleMenuMouseOver(displayedOpenedHosts.length + index)"
         >
@@ -126,6 +127,7 @@
                 'select-child': item.level === 1
               }"
               :style="{ paddingLeft: item.level === 1 ? '24px' : '6px' }"
+              :data-onboarding-id="item.uuid === 'localhost' || item.label === '127.0.0.1' ? 'ai-localhost-option' : undefined"
               @mouseover="handleMouseOver(item.value, index)"
               @mouseleave="hovered = null"
               @click="onHostClick(item)"
@@ -341,10 +343,12 @@ import { isBastionHostType } from '../types'
 
 interface Props {
   mode?: 'create' | 'edit'
+  workspace?: 'terminal' | 'database'
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  mode: 'create'
+  mode: 'create',
+  workspace: 'terminal'
 })
 
 const { t } = useI18n()
@@ -437,7 +441,7 @@ interface MainMenuItem {
   svgSrc?: string
 }
 
-const showHostsMenuItem = computed(() => chatTypeValue.value !== 'chat')
+const showHostsMenuItem = computed(() => props.workspace !== 'database' && chatTypeValue.value === 'agent')
 
 const mainMenuItems = computed<MainMenuItem[]>(() => {
   const items: MainMenuItem[] = []

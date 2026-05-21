@@ -70,6 +70,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline
 
+      - name: Rebuild native modules for current Node
+        run: npm rebuild better-sqlite3
+
       - name: Install Playwright Browsers (full)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
@@ -98,7 +101,7 @@ jobs:
           path: coverage
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.1
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1
         if: runner.os == 'macOS'
         with:
           files: ./coverage/coverage-final.json
