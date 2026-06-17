@@ -1019,18 +1019,6 @@ const {
   findPrevious: findPreviousAiChatMatch
 } = useAiChatSearch(chatResponse)
 
-// AI chat search
-const {
-  isSearchOpen: isAiChatSearchOpen,
-  searchTerm: aiChatSearchTerm,
-  matchCount: aiChatMatchCount,
-  currentMatchIndex: aiChatCurrentMatchIndex,
-  openSearch: openAiChatSearch,
-  closeSearch: closeAiChatSearch,
-  findNext: findNextAiChatMatch,
-  findPrevious: findPreviousAiChatMatch
-} = useAiChatSearch(chatResponse)
-
 // Message options management
 const { handleOptionSelect, getSelectedOption, handleCustomInputChange, getCustomInput, canSubmitOption, handleOptionSubmit } = useMessageOptions()
 
