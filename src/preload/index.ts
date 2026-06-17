@@ -1,7 +1,17 @@
+import { mark as perfMark, reportPreloadMarksToMain } from './perf'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { WebviewMessage } from '../main/agent/shared/WebviewMessage'
 import type { ChatermMessagesPage } from '../main/agent/shared/ExtensionMessage'
+import {
+  DB_AI_IPC_CHANNELS,
+  type DbAiCancelResult,
+  type DbAiDoneEvent,
+  type DbAiStartRequest,
+  type DbAiStartResult,
+  type DbAiStreamEvent,
+  type DbAiToolEvent
+} from '../shared/db-ai-types'
 
 import * as dotenv from 'dotenv'
 import * as path from 'path'
@@ -24,9 +34,23 @@ interface SftpConnectionInfo {
   error?: string
 }
 
+interface BrandingConfig {
+  enabled: boolean
+  displayName: string
+  productNameZh?: string
+  productNameEn?: string
+  logoUrl?: string
+  logoLightUrl?: string
+  logoDarkUrl?: string
+  iconPngPath?: string
+  iconIcoPath?: string
+  iconIcnsPath?: string
+}
+
 // Command list reception timeout (ms)
 const COMMAND_LIST_TIMEOUT = 30000
 
+perfMark('chaterm/preload/willLoadEnv')
 const envPath = path.resolve(__dirname, '../../../build/.env')
 
 // Ensure path exists
@@ -41,6 +65,7 @@ dotenv.config({ path: envPath })
 let isVimMode = false
 
 // Listen for vim mode state updates from renderer process
+perfMark('chaterm/preload/willRegisterDomListeners')
 window.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'VIM_MODE_UPDATE') {
     isVimMode = event.data.isVimMode
@@ -64,6 +89,7 @@ window.addEventListener(
   },
   true
 )
+perfMark('chaterm/preload/didRegisterDomListeners')
 
 // If there is a .env file for a specific environment, it can also be loaded
 const nodeEnv = process.env.NODE_ENV || 'development'
@@ -101,6 +127,7 @@ if (fs.existsSync(envSpecificPath)) {
 } else {
   // Environment file not found, proceed with defaults
 }
+perfMark('chaterm/preload/didLoadEnv')
 
 // Custom APIs for renderer
 import os from 'os'
@@ -189,6 +216,14 @@ const insertCommand = async (data: { command: string; ip: string }) => {
   }
 }
 
+const queryFigSpec = async (data: { commandLine: string; tokens: string[] }) => {
+  try {
+    return await ipcRenderer.invoke('query-fig-spec', data)
+  } catch (error) {
+    return []
+  }
+}
+
 const aiSuggestCommand = async (data: { command: string; osInfo?: string }): Promise<{ command: string; explanation: string } | null> => {
   try {
     const result = await ipcRenderer.invoke('ai-suggest-command', data)
@@ -251,6 +286,15 @@ const getKeyChainSelect = async () => {
   }
 }
 
+const getPasswordChainSelect = async () => {
+  try {
+    const result = await ipcRenderer.invoke('password-chain-local-get')
+    return result
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
 const getAssetGroup = async () => {
   try {
     const result = await ipcRenderer.invoke('asset-group-local-get')
@@ -294,6 +338,281 @@ const createAsset = async (data: { form: Record<string, unknown> }) => {
   } catch (error) {
     return Promise.reject(error)
   }
+}
+
+// ==================== Database Asset API ====================
+
+interface DbAssetPayload {
+  name: string
+  db_type: 'mysql' | 'postgresql' | 'sqlite' | 'oracle'
+  host?: string | null
+  port?: number | null
+  file_path?: string | null
+  connection_mode?: 'readwrite' | 'readonly' | null
+  group_id?: string | null
+  username?: string | null
+  password?: string | null
+  database_name?: string | null
+  schema_name?: string | null
+  environment?: string | null
+  group_name?: string | null
+  ssl_mode?: string | null
+  jdbc_url?: string | null
+  options_json?: string | null
+  tags_json?: string | null
+  sort_order?: number
+}
+
+interface DbAssetGroupPayload {
+  name: string
+  parent_id?: string | null
+  sort_order?: number
+}
+
+const dbAssetGroupList = async () => {
+  try {
+    return await ipcRenderer.invoke('db-asset-group-list')
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetGroupCreate = async (payload: DbAssetGroupPayload) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-group-create', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetGroupUpdate = async (payload: { id: string; patch: Partial<DbAssetGroupPayload> }) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-group-update', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetGroupDelete = async (id: string) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-group-delete', id)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetList = async () => {
+  try {
+    return await ipcRenderer.invoke('db-asset-list')
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetGet = async (id: string) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-get', id)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetCreate = async (payload: DbAssetPayload) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-create', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetUpdate = async (payload: { id: string; patch: Partial<DbAssetPayload> }) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-update', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetDelete = async (id: string) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-delete', id)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetTestConnection = async (payload: DbAssetPayload) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-test-connection', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetConnect = async (id: string) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-connect', id)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetDisconnect = async (id: string) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-disconnect', id)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetListChildren = async (payload: {
+  id: string
+  databaseName?: string
+  schemaName?: string
+  objectKind?: 'tables' | 'views' | 'functions' | 'procedures'
+  tableName?: string
+}) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-list-children', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetListSchemas = async (payload: { id: string; databaseName: string }) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-list-schemas', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetExecuteQuery = async (payload: { id: string; sql: string; databaseName?: string; schemaName?: string }) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-execute-query', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetTableDdl = async (payload: { id: string; database: string; schema?: string; table: string }) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-table-ddl', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetQueryTable = async (payload: {
+  id: string
+  database: string
+  schema?: string
+  table: string
+  filters?: Array<{ column: string; operator: string; value?: string; values?: string[] }>
+  sort?: { column: string; direction: 'asc' | 'desc' } | null
+  whereRaw?: string | null
+  orderByRaw?: string | null
+  page: number
+  pageSize: number
+  withTotal?: boolean
+}) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-query-table', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetCountTable = async (payload: {
+  id: string
+  database: string
+  schema?: string
+  table: string
+  filters?: Array<{ column: string; operator: string; value?: string; values?: string[] }>
+  whereRaw?: string | null
+}) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-count-table', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetColumnDistinct = async (payload: { id: string; database: string; schema?: string; table: string; column: string; limit?: number }) => {
+  try {
+    return await ipcRenderer.invoke('db-asset-column-distinct', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetDetectPrimaryKey = async (payload: { id: string; database: string; schema?: string; table: string }) => {
+  try {
+    return await ipcRenderer.invoke('db-asset:detect-primary-key', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAssetExecuteMutations = async (payload: {
+  id: string
+  database?: string
+  schema?: string
+  statements: Array<{ sql: string; params: unknown[] }>
+}) => {
+  try {
+    return await ipcRenderer.invoke('db-asset:execute-mutations', payload)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DB-AI (single-turn, track A) preload surface. See docs/database_ai.md §5.2.
+// Subscription helpers return an unsubscribe function so renderers can clean
+// up on component unmount without leaking listeners across navigations.
+// ---------------------------------------------------------------------------
+
+const dbAiStart = async (req: DbAiStartRequest): Promise<DbAiStartResult> => {
+  try {
+    return await ipcRenderer.invoke(DB_AI_IPC_CHANNELS.start, req)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAiCancel = async (reqId: string): Promise<DbAiCancelResult> => {
+  try {
+    return await ipcRenderer.invoke(DB_AI_IPC_CHANNELS.cancel, reqId)
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+const dbAiOnStream = (cb: (event: DbAiStreamEvent) => void): (() => void) => {
+  const listener = (_e: unknown, event: DbAiStreamEvent): void => cb(event)
+  ipcRenderer.on(DB_AI_IPC_CHANNELS.stream, listener)
+  return () => ipcRenderer.removeListener(DB_AI_IPC_CHANNELS.stream, listener)
+}
+
+const dbAiOnTool = (cb: (event: DbAiToolEvent) => void): (() => void) => {
+  const listener = (_e: unknown, event: DbAiToolEvent): void => cb(event)
+  ipcRenderer.on(DB_AI_IPC_CHANNELS.tool, listener)
+  return () => ipcRenderer.removeListener(DB_AI_IPC_CHANNELS.tool, listener)
+}
+
+const dbAiOnDone = (cb: (event: DbAiDoneEvent) => void): (() => void) => {
+  const listener = (_e: unknown, event: DbAiDoneEvent): void => cb(event)
+  ipcRenderer.on(DB_AI_IPC_CHANNELS.done, listener)
+  return () => ipcRenderer.removeListener(DB_AI_IPC_CHANNELS.done, listener)
+}
+
+const dbAi = {
+  start: dbAiStart,
+  cancel: dbAiCancel,
+  onStream: dbAiOnStream,
+  onTool: dbAiOnTool,
+  onDone: dbAiOnDone
 }
 
 const createOrUpdateAsset = async (data: { form: Record<string, unknown> }) => {
@@ -359,7 +678,7 @@ const updateKeyChain = async (data: { form: Record<string, unknown> }) => {
   }
 }
 
-const connectAssetInfo = async (data: { uuid: string }) => {
+const connectAssetInfo = async (data: { uuid: string; organizationUuid?: string; ip?: string }) => {
   try {
     const result = await ipcRenderer.invoke('chaterm-connect-asset-info', data)
     return result
@@ -417,9 +736,9 @@ const saveTaskFavorite = async (taskId: string, favorite: boolean) => {
   }
 }
 
-const getTaskList = async () => {
+const getTaskList = async (workspace?: 'server' | 'database') => {
   try {
-    return await ipcRenderer.invoke('get-task-list')
+    return await ipcRenderer.invoke('get-task-list', { workspace })
   } catch (error) {
     return Promise.reject(error)
   }
@@ -610,16 +929,41 @@ const api = {
   setCookie,
   invokeCustomAdsorption,
   getPlatform,
+  getBrandingConfig: (): Promise<BrandingConfig> => ipcRenderer.invoke('app:get-branding-config'),
   queryCommand,
   insertCommand,
+  queryFigSpec,
   aiSuggestCommand,
   getLocalAssetRoute,
   recordConnection,
   updateLocalAssetLabel,
   updateLocalAsseFavorite,
   getKeyChainSelect,
+  getPasswordChainSelect,
   getKeyChainList,
   getAssetGroup,
+  dbAssetList,
+  dbAssetGroupList,
+  dbAssetGroupCreate,
+  dbAssetGroupUpdate,
+  dbAssetGroupDelete,
+  dbAssetGet,
+  dbAssetCreate,
+  dbAssetUpdate,
+  dbAssetDelete,
+  dbAssetTestConnection,
+  dbAssetConnect,
+  dbAssetDisconnect,
+  dbAssetListChildren,
+  dbAssetListSchemas,
+  dbAssetExecuteQuery,
+  dbAssetTableDdl,
+  dbAssetQueryTable,
+  dbAssetCountTable,
+  dbAssetColumnDistinct,
+  dbAssetDetectPrimaryKey,
+  dbAssetExecuteMutations,
+  dbAi,
   chatermInsert,
   chatermUpdate,
   deleteAsset,
@@ -680,6 +1024,7 @@ const api = {
   openBrowserWindow: (url: string): void => {
     ipcRenderer.send('open-browser-window', url)
   },
+  openExternalUrl: (url: string): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('open-external-url', url),
   onUrlChange: (callback: (url: string) => void): void => {
     ipcRenderer.on('url-changed', (_event, url) => callback(url))
   },
@@ -1072,8 +1417,15 @@ const api = {
   removeKey: (opts: { keyId: string }) => ipcRenderer.invoke('ssh:agent:remove-key', opts),
   listKeys: () => ipcRenderer.invoke('ssh:agent:list-key') as Promise<[]>,
 
-  connectLocal: (config: { id: string; shell?: string; cwd?: string; env?: Record<string, string>; cols?: number; rows?: number }) =>
-    ipcRenderer.invoke('local:connect', config),
+  connectLocal: (config: {
+    id: string
+    shell?: string
+    cwd?: string
+    env?: Record<string, string>
+    cols?: number
+    rows?: number
+    startupMode?: 'interactive' | 'fast'
+  }) => ipcRenderer.invoke('local:connect', config),
   sendDataLocal: (terminalId: string, data: string) => ipcRenderer.invoke('local:send:data', terminalId, data),
   resizeLocal: (terminalId: string, cols: number, rows: number) => ipcRenderer.invoke('local:resize', terminalId, cols, rows),
   closeLocal: (terminalId: string) => ipcRenderer.invoke('local:close', terminalId),
@@ -1176,6 +1528,41 @@ const api = {
 
   getPluginDetails(pluginName: string) {
     return ipcRenderer.invoke('plugins.details', pluginName)
+  },
+
+  downloadPluginPackage(url: string) {
+    return ipcRenderer.invoke('plugin:downloadPackage', { url })
+  },
+
+  installPluginFromUrl(payload: { pluginId: string; version?: string; fileName?: string; url: string; sha256?: string }) {
+    return ipcRenderer.invoke('plugin:installFromUrl', payload)
+  },
+
+  cancelPluginInstall(pluginId: string) {
+    return ipcRenderer.invoke('plugin:cancelInstall', { pluginId })
+  },
+
+  onPluginInstallProgress(
+    callback: (payload: {
+      pluginId: string
+      stage: 'downloading' | 'verifying' | 'installing' | 'done' | 'error' | 'cancelled'
+      receivedBytes?: number
+      totalBytes?: number
+      percent?: number
+    }) => void
+  ) {
+    const listener = (
+      _event: any,
+      payload: {
+        pluginId: string
+        stage: 'downloading' | 'verifying' | 'installing' | 'done' | 'error' | 'cancelled'
+        receivedBytes?: number
+        totalBytes?: number
+        percent?: number
+      }
+    ) => callback(payload)
+    ipcRenderer.on('plugin:install-progress', listener)
+    return () => ipcRenderer.removeListener('plugin:install-progress', listener)
   },
 
   installPluginFromBuffer(payload: { pluginId: string; version?: string; fileName?: string; data: ArrayBuffer }) {
@@ -1358,8 +1745,17 @@ const api = {
   // K8S Agent API
   // ============================================================================
 
-  k8sAgentSetCluster: (params: { clusterId: string; contextName: string; kubeconfigPath?: string; kubeconfigContent?: string }) =>
-    ipcRenderer.invoke('k8s:agent:set-cluster', params),
+  k8sAgentSetCluster: (params: {
+    clusterId: string
+    contextName: string
+    kubeconfigPath?: string
+    kubeconfigContent?: string
+    sourceType?: string
+    bastionUuid?: string
+    bastionAssetAddress?: string
+    bastionAssetName?: string
+    bastionAssetIdLast?: number | null
+  }) => ipcRenderer.invoke('k8s:agent:set-cluster', params),
 
   k8sAgentSetProxy: (
     proxyConfig: {
@@ -1394,6 +1790,8 @@ const api = {
   k8sAgentGetCurrentCluster: () => ipcRenderer.invoke('k8s:agent:get-current-cluster'),
 
   k8sAgentCleanup: () => ipcRenderer.invoke('k8s:agent:cleanup'),
+
+  k8sJumpserverSyncAssets: (params: { bastionUuid: string }) => ipcRenderer.invoke('k8s:jumpserver:sync-assets', params),
 
   // ============================================================================
   // Interactive Command Execution API
@@ -1489,42 +1887,21 @@ const api = {
    */
   openLogDir: () => ipcRenderer.invoke('logging:openDir'),
 
-  // ─── Multi-window AI Support ──────────────────────────────────────────────────
-
   /**
-   * Register the current window as the AI-bound window.
-   * All AI messages will be routed to this window.
+   * Listen for auth token expiry notifications from main process.
+   * Returns an unsubscribe function.
    */
-  registerAiWindow: () => ipcRenderer.invoke('window:register-ai'),
+  onTokenExpired: (callback: () => void): (() => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('auth:token-expired', listener)
+    return () => ipcRenderer.removeListener('auth:token-expired', listener)
+  },
 
-  /**
-   * Unregister the AI-bound window.
-   * AI messages will fall back to the main window.
-   */
-  unregisterAiWindow: () => ipcRenderer.invoke('window:unregister-ai'),
-
-  /**
-   * Create a new terminal-only window.
-   */
-  createTerminalWindow: () => ipcRenderer.invoke('window:create-terminal'),
-
-  // ─── Cross-window Command Routing ─────────────────────────────────────────────
-
-  /**
-   * Broadcast a terminal command to all windows for execution.
-   */
+  // --- Local-only APIs (cross-terminal command execution & multi-window) ---
   crossExecuteCommand: (payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string }) =>
     ipcRenderer.invoke('window:cross-execute-command', payload),
-
-  /**
-   * Relay command output back to the requesting window.
-   */
   relayOutput: (payload: { senderWebContentsId: number; content: string; tabId?: string; toolResult?: any }) =>
     ipcRenderer.invoke('window:relay-output', payload),
-
-  /**
-   * Listen for cross-window command execution requests.
-   */
   onCrossExecuteCommand: (
     callback: (payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string; senderWebContentsId: number }) => void
   ) => {
@@ -1532,10 +1909,6 @@ const api = {
     ipcRenderer.on('terminal:cross-execute-command', handler)
     return () => ipcRenderer.removeListener('terminal:cross-execute-command', handler)
   },
-
-  /**
-   * Listen for cross-window output relay.
-   */
   onCrossOutput: (callback: (payload: { content: string; tabId?: string; toolResult?: any }) => void) => {
     const handler = (_event: any, payload: any) => callback(payload)
     ipcRenderer.on('terminal:cross-output', handler)
@@ -1547,6 +1920,7 @@ const api = {
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
+perfMark('chaterm/preload/willExposeBridge')
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', {
@@ -1559,7 +1933,9 @@ if (process.contextIsolated) {
       getCurrentURL: () => window.location.href // Get current URL via window.location
     })
     contextBridge.exposeInMainWorld('api', api)
+    perfMark('chaterm/preload/didExposeBridge')
   } catch {
+    perfMark('chaterm/preload/didFailExposeBridge')
     // Silently ignore contextBridge errors
   }
 } else {
@@ -1567,4 +1943,7 @@ if (process.contextIsolated) {
   window.electron = electronAPI
   // @ts-ignore (define in dts)
   window.api = api
+  perfMark('chaterm/preload/didExposeBridge')
 }
+
+void reportPreloadMarksToMain()

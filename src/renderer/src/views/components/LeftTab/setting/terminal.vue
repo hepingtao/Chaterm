@@ -78,14 +78,64 @@
           :label="$t('user.cursorStyle')"
           class="user_my-ant-form-item"
         >
-          <a-radio-group
-            v-model:value="userConfig.cursorStyle"
-            class="custom-radio-group"
+          <div
+            class="cursor-style-group"
+            role="radiogroup"
+            :aria-label="$t('user.cursorStyle')"
           >
-            <a-radio value="block">{{ $t('user.cursorStyleBlock') }}</a-radio>
-            <a-radio value="bar">{{ $t('user.cursorStyleBar') }}</a-radio>
-            <a-radio value="underline">{{ $t('user.cursorStyleUnderline') }}</a-radio>
-          </a-radio-group>
+            <button
+              v-for="option in cursorStyleOptions"
+              :key="option.value"
+              type="button"
+              role="radio"
+              :aria-checked="userConfig.cursorStyle === option.value"
+              :title="option.label"
+              class="cursor-style-item"
+              :class="{ active: userConfig.cursorStyle === option.value }"
+              @click="userConfig.cursorStyle = option.value"
+            >
+              <span
+                class="cursor-style-icon"
+                :class="`cursor-style-icon--${option.value}`"
+                aria-hidden="true"
+              ></span>
+            </button>
+          </div>
+        </a-form-item>
+        <a-form-item
+          :label="$t('user.cursorBlink')"
+          class="user_my-ant-form-item"
+        >
+          <a-switch
+            :checked="userConfig.cursorBlink"
+            class="user_my-ant-form-item-content"
+            @change="handleCursorBlinkChange"
+          />
+        </a-form-item>
+        <a-form-item
+          :label="$t('user.lineHeight')"
+          class="user_my-ant-form-item"
+        >
+          <a-input-number
+            v-model:value="userConfig.lineHeight"
+            :bordered="false"
+            style="width: 20%"
+            :min="1"
+            :max="3"
+            :step="0.1"
+            :precision="1"
+            class="user_my-ant-form-item-content"
+          />
+        </a-form-item>
+        <a-form-item
+          :label="$t('user.localEcho')"
+          class="user_my-ant-form-item"
+        >
+          <a-switch
+            :checked="userConfig.localEchoEnabled"
+            class="user_my-ant-form-item-content"
+            @change="handleLocalEchoEnabledChange"
+          />
         </a-form-item>
         <a-form-item
           :label="$t('user.pinchZoomStatus')"
@@ -124,7 +174,6 @@
         >
           <a-button
             class="setting-button"
-            size="small"
             @click="openAgentConfig"
             >{{ $t('common.setting') }}</a-button
           >
@@ -135,7 +184,6 @@
         >
           <a-button
             class="setting-button"
-            size="small"
             @click="openProxyConfig"
             >{{ $t('common.setting') }}</a-button
           >
@@ -462,7 +510,10 @@ const userConfig = ref<{
   fontSize: number
   fontFamily: string
   scrollBack: number
-  cursorStyle: string
+  cursorStyle: 'block' | 'bar' | 'underline'
+  cursorBlink: boolean
+  lineHeight: number
+  localEchoEnabled: boolean
   middleMouseEvent: string
   rightMouseEvent: string
   terminalType: string
@@ -481,9 +532,12 @@ const userConfig = ref<{
   fontFamily: 'Menlo, Monaco, "Courier New", Consolas, Courier, monospace',
   scrollBack: 1000,
   cursorStyle: 'block',
+  cursorBlink: true,
+  lineHeight: 1,
+  localEchoEnabled: true,
   middleMouseEvent: 'paste',
   rightMouseEvent: 'contextMenu',
-  terminalType: 'vt100',
+  terminalType: 'xterm-256color',
   pinchZoomStatus: 1,
   showCloseButton: 1,
   sshAgentsStatus: 2,
@@ -514,6 +568,12 @@ const fontFamilyOptions = [
   { value: '"Inconsolata", "Courier New", Courier, monospace', label: 'Inconsolata' },
   { value: '"Roboto Mono", "Courier New", Courier, monospace', label: 'Roboto Mono' },
   { value: '"Maple Mono", "Courier New", Courier, monospace', label: 'Maple Mono' }
+]
+
+const cursorStyleOptions: Array<{ value: 'block' | 'bar' | 'underline'; label: string }> = [
+  { value: 'block', label: t('user.cursorStyleBlock') },
+  { value: 'bar', label: t('user.cursorStyleBar') },
+  { value: 'underline', label: t('user.cursorStyleUnderline') }
 ]
 
 const columns = [
@@ -592,7 +652,10 @@ const loadSavedConfig = async () => {
       userConfig.value = {
         ...userConfig.value,
         ...savedConfig,
-        cursorStyle: (savedConfig.cursorStyle || 'block') as string,
+        cursorStyle: (savedConfig.cursorStyle || 'block') as 'block' | 'bar' | 'underline',
+        cursorBlink: savedConfig.cursorBlink !== false,
+        lineHeight: typeof savedConfig.lineHeight === 'number' ? savedConfig.lineHeight : 1,
+        localEchoEnabled: savedConfig.localEchoEnabled === true,
         sshProxyConfigs: (savedConfig.sshProxyConfigs || []) as ProxyConfig[]
       }
     } else {
@@ -622,6 +685,15 @@ const handleSshAgentsStatusChange = async (checked) => {
 const handlePinchZoomStatusChange = async (checked) => {
   userConfig.value.pinchZoomStatus = checked ? 1 : 2
   eventBus.emit('pinchZoomStatusChanged', checked)
+}
+
+const handleCursorBlinkChange = (checked: boolean) => {
+  userConfig.value.cursorBlink = checked
+}
+
+const handleLocalEchoEnabledChange = (checked: boolean) => {
+  userConfig.value.localEchoEnabled = checked
+  eventBus.emit('localEchoSettingChanged', checked)
 }
 
 const handleShowCloseButtonChange = async (checked) => {
@@ -803,6 +875,9 @@ const saveConfig = async () => {
       fontFamily: userConfig.value.fontFamily,
       scrollBack: userConfig.value.scrollBack,
       cursorStyle: userConfig.value.cursorStyle,
+      cursorBlink: userConfig.value.cursorBlink,
+      lineHeight: userConfig.value.lineHeight,
+      localEchoEnabled: userConfig.value.localEchoEnabled,
       middleMouseEvent: userConfig.value.middleMouseEvent,
       rightMouseEvent: userConfig.value.rightMouseEvent,
       terminalType: userConfig.value.terminalType,
@@ -836,13 +911,6 @@ watch(
   { deep: true }
 )
 
-watch(
-  () => userConfig.value.fontFamily,
-  (newFontFamily) => {
-    eventBus.emit('updateTerminalFont', newFontFamily)
-  }
-)
-
 const reloadConfigOnSync = async () => {
   await loadSavedConfig()
 }
@@ -866,29 +934,23 @@ onBeforeUnmount(() => {
 <style scoped>
 .userInfo {
   width: 100%;
-  height: 100%;
 }
 
 .userInfo-container {
   width: 100%;
-  height: 100%;
   background-color: var(--bg-color) !important;
   border-radius: 6px;
-  overflow: hidden;
   padding: 4px;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
   color: var(--text-color);
 }
 
 :deep(.ant-card) {
-  height: 100%;
   background-color: var(--bg-color) !important;
 }
 
 :deep(.ant-card-body) {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
+  padding: 16px;
   background-color: var(--bg-color);
 }
 
@@ -964,7 +1026,7 @@ onBeforeUnmount(() => {
   list-style: none;
   -webkit-font-feature-settings: 'tnum';
   font-feature-settings: 'tnum';
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   vertical-align: top;
   color: #ffffff;
 }
@@ -1113,6 +1175,65 @@ onBeforeUnmount(() => {
   margin-right: 10px;
 }
 
+.cursor-style-group {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  background-color: var(--bg-color-octonary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  gap: 2px;
+}
+
+.cursor-style-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  background-color: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-color);
+  transition:
+    background-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.cursor-style-item:hover {
+  background-color: var(--hover-bg-color);
+}
+
+.cursor-style-item.active {
+  background-color: var(--bg-color);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.cursor-style-icon {
+  display: inline-block;
+  background-color: currentColor;
+}
+
+.cursor-style-icon--block {
+  width: 8px;
+  height: 14px;
+  border-radius: 1px;
+}
+
+.cursor-style-icon--bar {
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+}
+
+.cursor-style-icon--underline {
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+}
+
 .mouse-event-select {
   width: 140px;
 }
@@ -1180,6 +1301,19 @@ onBeforeUnmount(() => {
 .setting-button:focus {
   background-color: var(--bg-color-novenary) !important;
   color: var(--text-color) !important;
+}
+
+.theme-light .setting-button {
+  background-color: #e2e8f0 !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+.theme-light .setting-button:hover,
+.theme-light .setting-button:focus {
+  background-color: #cbd5e1 !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
 }
 
 /* Ensure setting button form items inherit right alignment */

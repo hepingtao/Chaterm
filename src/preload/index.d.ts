@@ -1,10 +1,168 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
 import type { TaskMetadata } from '../main/agent/core/context/context-tracking/ContextTrackerTypes'
 import type { CommandGenerationContext, WebviewMessage } from '../main/agent/shared/WebviewMessage'
+import type { DbAiApi } from '../shared/db-ai-types'
+
+interface FigSuggestion {
+  text: string
+  displayText: string
+  description?: string
+  source: 'subcommand' | 'option' | 'arg' | 'command'
+}
 
 interface Cookie {
   name: string
   value: string
+}
+
+export interface BrandingConfig {
+  enabled: boolean
+  displayName: string
+  productNameZh?: string
+  productNameEn?: string
+  logoUrl?: string
+  logoLightUrl?: string
+  logoDarkUrl?: string
+  iconPngPath?: string
+  iconIcoPath?: string
+  iconIcnsPath?: string
+}
+
+// ============================================================================
+// Database Asset Types
+// ============================================================================
+
+export interface DbAssetPayload {
+  name: string
+  db_type: 'mysql' | 'postgresql' | 'sqlite' | 'oracle'
+  host?: string | null
+  port?: number | null
+  file_path?: string | null
+  connection_mode?: 'readwrite' | 'readonly' | null
+  group_id?: string | null
+  username?: string | null
+  password?: string | null
+  database_name?: string | null
+  schema_name?: string | null
+  environment?: string | null
+  group_name?: string | null
+  ssl_mode?: string | null
+  jdbc_url?: string | null
+  options_json?: string | null
+  tags_json?: string | null
+  sort_order?: number
+}
+
+export interface DbAssetDto {
+  id: string
+  name: string
+  group_id: string | null
+  group_name: string | null
+  db_type: 'mysql' | 'postgresql' | 'sqlite' | 'oracle'
+  environment: string | null
+  host: string | null
+  port: number | null
+  file_path: string | null
+  connection_mode: 'readwrite' | 'readonly' | null
+  database_name: string | null
+  schema_name: string | null
+  auth_type: string
+  username: string | null
+  hasPassword: boolean
+  ssl_mode: string | null
+  jdbc_url: string | null
+  status: 'idle' | 'testing' | 'connected' | 'failed'
+  last_connected_at: string | null
+  last_tested_at: string | null
+  last_error_code: string | null
+  last_error_message: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface DbAssetMutationResult {
+  ok: boolean
+  asset?: DbAssetDto | null
+  errorMessage?: string
+}
+
+export interface DbAssetGroupPayload {
+  name: string
+  parent_id?: string | null
+  sort_order?: number
+}
+
+export interface DbAssetGroupDto {
+  id: string
+  name: string
+  parent_id: string | null
+  sort_order: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface DbAssetGroupMutationResult {
+  ok: boolean
+  group?: DbAssetGroupDto | null
+  errorMessage?: string
+}
+
+export interface DbConnectionTestResult {
+  ok: boolean
+  errorCode?: string
+  errorMessage?: string
+  serverVersion?: string
+  latencyMs?: number
+}
+
+export interface DbQueryResult {
+  ok: boolean
+  errorMessage?: string
+  columns?: string[]
+  rows?: Array<Record<string, unknown>>
+  rowCount?: number
+  durationMs?: number
+}
+
+export type DbFilterOperator = 'eq' | 'neq' | 'like' | 'in' | 'isnull' | 'notnull'
+
+export interface DbColumnFilter {
+  column: string
+  operator: DbFilterOperator
+  value?: string
+  values?: string[]
+}
+
+export interface DbColumnSort {
+  column: string
+  direction: 'asc' | 'desc'
+}
+
+export interface DbTableQueryPayload {
+  id: string
+  database: string
+  /** PG-only: schema the table lives in. MySQL ignores. */
+  schema?: string
+  table: string
+  filters?: DbColumnFilter[]
+  sort?: DbColumnSort | null
+  whereRaw?: string | null
+  orderByRaw?: string | null
+  page: number
+  pageSize: number
+  withTotal?: boolean
+}
+
+export interface DbTableQueryResult {
+  ok: boolean
+  errorMessage?: string
+  columns?: string[]
+  rows?: Array<Record<string, unknown>>
+  rowCount?: number
+  durationMs?: number
+  total?: number | null
+  knownColumns?: string[]
 }
 
 // ============================================================================
@@ -166,11 +324,96 @@ interface ApiType {
   getLocalIP: () => Promise<string>
   getMacAddress: () => Promise<string>
   getPlatform: () => Promise<string>
+  getBrandingConfig: () => Promise<BrandingConfig>
+  downloadPluginPackage: (url: string) => Promise<ArrayBuffer>
+  installPluginFromUrl: (payload: { pluginId: string; version?: string; fileName?: string; url: string; sha256?: string }) => Promise<any>
+  cancelPluginInstall: (pluginId: string) => Promise<{ ok: boolean }>
+  onPluginInstallProgress: (
+    callback: (payload: {
+      pluginId: string
+      stage: 'downloading' | 'verifying' | 'installing' | 'done' | 'error' | 'cancelled'
+      receivedBytes?: number
+      totalBytes?: number
+      percent?: number
+    }) => void
+  ) => () => void
   invokeCustomAdsorption: (data: { appX: number; appY: number }) => void
   queryCommand: (data: { command: string; ip: string }) => Promise<any>
   insertCommand: (data: { command: string; ip: string }) => Promise<any>
+  queryFigSpec: (data: { commandLine: string; tokens: string[] }) => Promise<FigSuggestion[]>
   aiSuggestCommand: (data: { command: string; osInfo?: string }) => Promise<{ command: string; explanation: string } | null>
   getLocalAssetRoute: (data: { searchType: string; params?: any[] }) => Promise<any>
+
+  // Database assets
+  dbAssetGroupList: () => Promise<DbAssetGroupDto[]>
+  dbAssetGroupCreate: (payload: DbAssetGroupPayload) => Promise<DbAssetGroupMutationResult>
+  dbAssetGroupUpdate: (payload: { id: string; patch: Partial<DbAssetGroupPayload> }) => Promise<DbAssetGroupMutationResult>
+  dbAssetGroupDelete: (id: string) => Promise<{ ok: boolean; errorMessage?: string }>
+  dbAssetList: () => Promise<DbAssetDto[]>
+  dbAssetGet: (id: string) => Promise<DbAssetDto | null>
+  dbAssetCreate: (payload: DbAssetPayload) => Promise<DbAssetMutationResult>
+  dbAssetUpdate: (payload: { id: string; patch: Partial<DbAssetPayload> }) => Promise<DbAssetMutationResult>
+  dbAssetDelete: (id: string) => Promise<{ ok: boolean; errorMessage?: string }>
+  dbAssetTestConnection: (payload: DbAssetPayload) => Promise<DbConnectionTestResult>
+  dbAssetConnect: (id: string) => Promise<DbAssetMutationResult>
+  dbAssetDisconnect: (id: string) => Promise<DbAssetMutationResult>
+  dbAssetListChildren: (payload: {
+    id: string
+    databaseName?: string
+    schemaName?: string
+    objectKind?: 'tables' | 'views' | 'functions' | 'procedures'
+    tableName?: string
+  }) => Promise<{
+    ok: boolean
+    databases?: string[]
+    tables?: string[]
+    objects?: string[]
+    columns?: string[]
+    errorMessage?: string
+  }>
+  dbAssetListSchemas: (payload: {
+    id: string
+    databaseName: string
+  }) => Promise<{ ok: boolean; schemas?: Array<{ name: string; isSystem: boolean }>; errorMessage?: string }>
+  dbAssetExecuteQuery: (payload: { id: string; sql: string; databaseName?: string; schemaName?: string }) => Promise<DbQueryResult>
+  dbAssetTableDdl: (payload: {
+    id: string
+    database: string
+    schema?: string
+    table: string
+  }) => Promise<{ ok: boolean; ddl?: string; errorCode?: 'permission' | 'other'; errorMessage?: string }>
+  dbAssetQueryTable: (payload: DbTableQueryPayload) => Promise<DbTableQueryResult>
+  dbAssetCountTable: (payload: {
+    id: string
+    database: string
+    schema?: string
+    table: string
+    filters?: DbColumnFilter[]
+    whereRaw?: string | null
+  }) => Promise<{ ok: boolean; total?: number; durationMs?: number; errorMessage?: string }>
+  dbAssetColumnDistinct: (payload: {
+    id: string
+    database: string
+    schema?: string
+    table: string
+    column: string
+    limit?: number
+  }) => Promise<{ ok: boolean; values?: unknown[]; errorMessage?: string }>
+  dbAssetDetectPrimaryKey: (payload: {
+    id: string
+    database: string
+    schema?: string
+    table: string
+  }) => Promise<{ ok: boolean; primaryKey: string[] | null; errorMessage?: string }>
+  dbAssetExecuteMutations: (payload: {
+    id: string
+    database?: string
+    schema?: string
+    statements: Array<{ sql: string; params: unknown[] }>
+  }) => Promise<{ ok: boolean; errorMessage?: string; affected?: number[]; durationMs: number }>
+
+  // Database AI (single-turn, track A). See docs/database_ai.md §5.
+  dbAi: DbAiApi
   recordConnection: (data: {
     assetUuid: string
     assetIp: string
@@ -186,6 +429,7 @@ interface ApiType {
   chatermUpdate: (data: { sql: string; params?: any[] }) => Promise<any>
   deleteAsset: (data: { uuid: string }) => Promise<any>
   getKeyChainSelect: () => Promise<any>
+  getPasswordChainSelect: () => Promise<any>
   getAssetGroup: () => Promise<any>
   createAsset: (data: { form: any }) => Promise<any>
   createOrUpdateAsset: (data: { form: any }) => Promise<any>
@@ -195,8 +439,9 @@ interface ApiType {
   deleteKeyChain: (data: { id: number }) => Promise<any>
   getKeyChainInfo: (data: { id: number }) => Promise<any>
   updateKeyChain: (data: { form: any }) => Promise<any>
-  connectAssetInfo: (data: { uuid: string }) => Promise<any>
+  connectAssetInfo: (data: { uuid: string; organizationUuid?: string; ip?: string }) => Promise<any>
   openBrowserWindow: (url: string) => Promise<void>
+  openExternalUrl: (url: string) => Promise<{ success: boolean; error?: string }>
   connect: (connectionInfo: any) => Promise<any>
   forkSession: (params: { sourceConnectionId: string; newConnectionId: string; host: string; port: number; username: string }) => Promise<any>
   startSshTunnel: (params: {
@@ -357,7 +602,7 @@ interface ApiType {
     success: boolean
     error?: { message: string }
   }>
-  getTaskList: () => Promise<{
+  getTaskList: (workspace?: 'server' | 'database') => Promise<{
     success: boolean
     data?: Array<{
       id: string
@@ -366,6 +611,14 @@ interface ApiType {
       createdAt: number
       updatedAt: number
       hosts: Array<{ host: string; uuid: string; connection: string }>
+      workspace: 'server' | 'database'
+      dbContext?: {
+        assetId?: string
+        dbType?: 'mysql' | 'postgresql' | 'sqlite' | 'oracle'
+        databaseName?: string
+        schemaName?: string
+        assetName?: string
+      }
     }>
     error?: { message: string }
   }>
@@ -420,7 +673,23 @@ interface ApiType {
   }>
   getKbCloudStorage: () => Promise<{ usedBytes: number; totalBytes: number }>
   getLocalWorkingDirectory: () => Promise<{ success: boolean; cwd: string }>
+  connectLocal: (config: {
+    id: string
+    shell?: string
+    cwd?: string
+    env?: Record<string, string>
+    cols?: number
+    rows?: number
+    termType?: string
+    startupMode?: 'interactive' | 'fast'
+  }) => Promise<{ success: boolean; message?: string }>
+  sendDataLocal: (terminalId: string, data: string) => Promise<{ success: boolean; message?: string }>
+  resizeLocal: (terminalId: string, cols: number, rows: number) => Promise<{ success: boolean; status?: string; message?: string }>
+  closeLocal: (terminalId: string) => Promise<{ success: boolean; message?: string }>
   getShellsLocal: () => Promise<any>
+  onDataLocal: (id: string, callback: (data: string) => void) => () => void
+  onErrorLocal: (id: string, callback: (error: unknown) => void) => (() => void) | undefined
+  onExitLocal: (id: string, callback: (exitCode: unknown) => void) => () => void
   agentEnableAndConfigure: (opts: { enabled: boolean }) => Promise<any>
   addKey: (opts: { keyData: string; passphrase?: string; comment?: string }) => Promise<any>
   getSecurityConfigPath: () => Promise<string>
@@ -697,6 +966,11 @@ interface ApiType {
     contextName: string
     kubeconfigPath?: string
     kubeconfigContent?: string
+    sourceType?: string
+    bastionUuid?: string
+    bastionAssetAddress?: string
+    bastionAssetName?: string
+    bastionAssetIdLast?: number | null
   }) => Promise<{ success: boolean; error?: string }>
 
   /**
@@ -815,6 +1089,15 @@ interface ApiType {
    */
   k8sAgentCleanup: () => Promise<{ success: boolean; error?: string }>
 
+  /**
+   * Sync all JumpServer K8s assets into k8s_clusters via upsert
+   */
+  k8sJumpserverSyncAssets: (params: { bastionUuid: string }) => Promise<{
+    success: boolean
+    data?: { inserted: number; updated: number; total: number }
+    error?: string
+  }>
+
   // ============================================================================
   // Interactive Command Execution API
   // ============================================================================
@@ -884,6 +1167,7 @@ interface ApiType {
    */
   getPerfTimeline: () => Promise<{
     main: { process: string; marks: Array<{ name: string; offset: number; timestamp: number }> }
+    preload: { process: string; marks: Array<{ name: string; offset: number; timestamp: number }> } | null
     renderer: { process: string; marks: Array<{ name: string; offset: number; timestamp: number }> } | null
   }>
 
@@ -903,45 +1187,34 @@ interface ApiType {
    */
   openLogDir: () => Promise<void>
 
-  // ─── Multi-window AI Support ──────────────────────────────────────────────────
-
   /**
-   * Register the current window as the AI-bound window.
+   * Listen for auth token expiry notifications from main process.
+   * Returns an unsubscribe function.
    */
-  registerAiWindow: () => Promise<void>
+  onTokenExpired: (callback: () => void) => () => void
 
-  /**
-   * Unregister the AI-bound window.
-   */
-  unregisterAiWindow: () => Promise<void>
-
-  /**
-   * Create a new terminal-only window.
-   */
-  createTerminalWindow: () => Promise<{ success: boolean; windowId: number }>
-
-  // ─── Cross-window Command Routing ─────────────────────────────────────────────
-
-  /**
-   * Broadcast a terminal command to all windows for execution.
-   */
-  crossExecuteCommand: (payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string }) => Promise<void>
-
-  /**
-   * Relay command output back to the requesting window.
-   */
-  relayOutput: (payload: { senderWebContentsId: number; content: string; tabId?: string; toolResult?: any }) => Promise<void>
-
-  /**
-   * Listen for cross-window command execution requests.
-   */
+  // --- Local-only APIs (cross-terminal command execution & multi-window) ---
+  crossExecuteCommand: (payload: {
+    command: string
+    tabId?: string
+    targetHost?: string
+    targetTerminalTabId?: string
+  }) => Promise<void>
+  relayOutput: (payload: {
+    senderWebContentsId: number
+    content: string
+    tabId?: string
+    toolResult?: any
+  }) => Promise<void>
   onCrossExecuteCommand: (
-    callback: (payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string; senderWebContentsId: number }) => void
+    callback: (payload: {
+      command: string
+      tabId?: string
+      targetHost?: string
+      targetTerminalTabId?: string
+      senderWebContentsId?: number
+    }) => void
   ) => () => void
-
-  /**
-   * Listen for cross-window output relay.
-   */
   onCrossOutput: (callback: (payload: { content: string; tabId?: string; toolResult?: any }) => void) => () => void
 }
 

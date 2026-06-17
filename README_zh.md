@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/codecov/c/github/chaterm/Chaterm?style=flat&logo=codecov" alt="Coverage">
   <img src="https://img.shields.io/badge/AI-Native-blue?style=flat" alt="AI Native">
   <a href="https://x.com/chaterm_ai"><img src="https://img.shields.io/twitter/follow/chaterm_ai?style=flat&logo=x&logoColor=white&label=Follow" alt="Follow on X"></a>
-  <a href="https://discord.gg/AgsYzwRp62"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://deepwiki.com/chaterm/Chaterm"><img src="https://deepwiki.com/badge.svg" alt="DeepWiki"></a>
 </p>
 
 <p align="center">
@@ -45,6 +45,7 @@
   - [How Chaterm’s Security Architecture Ensures Data Security and Reliability](https://aws.amazon.com/cn/blogs/china/chaterm-aws-kms-envelope-encryption-for-zero-trust-security-en/)
   - [Enhancing DevOps Intelligence with Chaterm Skills and Qwen Models](https://chaterm.ai/blog/posts/agent-skills)
 - [Gold Sponsors](#gold-sponsors)
+- [致谢](#致谢)
 - [Contributors](#contributors)
 
 # 产品介绍
@@ -86,6 +87,8 @@ Chaterm 不仅仅是一个更智能的终端，它是一个基础设施代理。
 
   结合用户习惯、本地记忆及当前服务器上下文，推荐最合适的命令，让终端输入更智能、更高效。
 
+  可选本地回显会在高延迟 SSH 会话中立即渲染安全的交互式输入，并抵消确认后的远端回显。
+
   支持跨设备会话同步，并通过快捷命令与语音交互减少移动端输入成本，使远程运维更加流畅。
 
 - 🧩 **用户知识库**
@@ -105,6 +108,10 @@ Chaterm 不仅仅是一个更智能的终端，它是一个基础设施代理。
   通过插件扩展，实现对公有云服务器与 Kubernetes 的统一认证、动态授权与安全加密连接。
 
   提供更高效的资源访问体验，助力基础设施的集中化管理。
+
+- 🗄️ **数据库工作区**
+
+  支持连接 MySQL、PostgreSQL、SQLite 和 Oracle，完成 schema 浏览、数据查询、DDL 查看、表格行编辑以及数据库上下文 AI 辅助。
 
 ![Preview image](resources/features.webp)
 
@@ -135,6 +142,14 @@ node scripts/patch-package-lock.js
 npm install
 ```
 
+如果 Electron 提示原生模块 ABI 不匹配，请按 Electron 运行时重建原生依赖，而不是按本机 Node.js 重建：
+
+```bash
+npm run rebuild:native
+```
+
+不要使用 `npm rebuild better-sqlite3` 修复 Electron 运行时问题；它可能按错误的 Node ABI 编译。
+
 ### Development
 
 ```bash
@@ -157,6 +172,13 @@ npm run build:linux
 ## Gold Sponsors
 
 ![Preview image](resources/aws.webp) ![Preview image](resources/aliyun.webp)
+
+## 致谢
+
+Chaterm 受益于优秀的开源项目，在此特别感谢：
+
+- **[Cline](https://github.com/cline/cline)** — AI Agent 系统的部分实现参考并改编自 Cline。
+- **[RTK](https://github.com/rtk-ai/rtk)** — 用于命令输出过滤，在 Agent 工作流中减少 token 消耗。
 
 ## Contributors
 

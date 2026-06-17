@@ -3,12 +3,19 @@ import { toRaw, nextTick } from 'vue'
 import i18n from '@/locales'
 import eventBus from '@/utils/eventBus'
 import { getSystemTheme } from '@/utils/themeUtils'
+import { resolveAppliedLanguage } from '@/utils/languageUtils'
 import { userConfigStore as piniaConfigStore } from '@/store/userConfigStore'
 import { type ConfigSyncMeta, buildDefaultConfigSyncMeta } from './configSyncManager'
 import { THEME_PRESETS } from '../../../shared/themes/presets'
 import { resolveThemePreset } from '../../../shared/themes/resolve'
 import type { ThemeId } from '../../../shared/themes/types'
 import { applyThemeToDocument } from '@/themes/applyTheme'
+import {
+  TERMINAL_RUNTIME_CONFIG_CHANGED_EVENT,
+  diffTerminalRuntimeConfig,
+  hasTerminalRuntimeConfig,
+  pickTerminalRuntimeConfig
+} from '@/utils/terminalRuntimeConfig'
 
 const logger = createRendererLogger('service.userConfig')
 
@@ -32,7 +39,20 @@ export interface BackgroundConfig {
   brightness: number
 }
 
-export const SUPPORTED_LANGUAGE_VALUES = ['zh-CN', 'zh-TW', 'en-US', 'de-DE', 'fr-FR', 'it-IT', 'pt-PT', 'ru-RU', 'ja-JP', 'ko-KR', 'ar-AR'] as const
+export const SUPPORTED_LANGUAGE_VALUES = [
+  'system',
+  'zh-CN',
+  'zh-TW',
+  'en-US',
+  'de-DE',
+  'fr-FR',
+  'it-IT',
+  'pt-PT',
+  'ru-RU',
+  'ja-JP',
+  'ko-KR',
+  'ar-AR'
+] as const
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGE_VALUES)[number]
 
@@ -51,6 +71,9 @@ export interface UserConfig {
   scrollBack: number
   language: SupportedLanguage
   cursorStyle: 'bar' | 'block' | 'underline' | undefined
+  cursorBlink?: boolean
+  lineHeight?: number
+  localEchoEnabled?: boolean
   terminalType?: string
   middleMouseEvent?: 'paste' | 'contextMenu' | 'closeTab' | 'none'
   rightMouseEvent?: 'paste' | 'contextMenu' | 'none'
@@ -155,6 +178,9 @@ export function buildDefaultUserConfig(now: number = Date.now()): UserConfig {
     scrollBack: 1000,
     language: 'zh-CN',
     cursorStyle: 'block',
+    cursorBlink: true,
+    lineHeight: 1,
+    localEchoEnabled: false,
     middleMouseEvent: 'paste',
     rightMouseEvent: 'contextMenu',
     watermark: 'open',
@@ -288,15 +314,16 @@ export class UserConfigStoreService {
 
   async saveConfig(config: Partial<UserConfig>): Promise<void> {
     try {
-      const defaultConfig = await this.getConfig()
+      const currentConfig = await this.getConfig()
 
       const sanitizedConfig: UserConfig = {
-        ...defaultConfig,
+        ...currentConfig,
         ...config,
-        sshProxyConfigs: config.sshProxyConfigs ? toRaw(config.sshProxyConfigs) : defaultConfig.sshProxyConfigs,
+        sshProxyConfigs: config.sshProxyConfigs ? toRaw(config.sshProxyConfigs) : currentConfig.sshProxyConfigs,
         id: 'userConfig',
         updatedAt: Date.now()
       }
+      const changedTerminalRuntimeConfig = diffTerminalRuntimeConfig(currentConfig, sanitizedConfig)
 
       await window.api.kvTransaction(async (tx) => {
         const existingMetaRaw = await tx.get('userConfigSyncMeta')
@@ -321,6 +348,10 @@ export class UserConfigStoreService {
         defaultLayout: sanitizedConfig.defaultLayout,
         watermark: sanitizedConfig.watermark
       })
+
+      if (hasTerminalRuntimeConfig(changedTerminalRuntimeConfig)) {
+        eventBus.emit(TERMINAL_RUNTIME_CONFIG_CHANGED_EVENT, changedTerminalRuntimeConfig)
+      }
 
       // Trigger sync upload after successful save
       try {
@@ -357,6 +388,9 @@ export const SYNC_WHITELIST = [
   'fontSize',
   'scrollBack',
   'cursorStyle',
+  'cursorBlink',
+  'lineHeight',
+  'localEchoEnabled',
   'terminalType',
   'middleMouseEvent',
   'rightMouseEvent',
@@ -392,6 +426,9 @@ export const SYNC_FIELD_VALIDATORS: Record<SyncWhitelistKey, (val: unknown) => b
   fontSize: (val) => typeof val === 'number' && Number.isInteger(val) && val >= 8 && val <= 64,
   scrollBack: (val) => typeof val === 'number' && Number.isInteger(val) && val >= 1 && val <= 100000,
   cursorStyle: (val) => typeof val === 'string' && ['block', 'bar', 'underline'].includes(val),
+  cursorBlink: (val) => typeof val === 'boolean',
+  lineHeight: (val) => typeof val === 'number' && Number.isFinite(val) && val >= 1 && val <= 3,
+  localEchoEnabled: (val) => typeof val === 'boolean',
   terminalType: (val) =>
     typeof val === 'string' && ['xterm', 'xterm-256color', 'vt100', 'vt102', 'vt220', 'vt320', 'linux', 'scoansi', 'ansi'].includes(val),
   middleMouseEvent: (val) => typeof val === 'string' && ['paste', 'contextMenu', 'closeTab', 'none'].includes(val),
@@ -544,7 +581,7 @@ export function dispatchSideEffects(changedFields: Partial<SyncableUserConfig>):
   // language -> localStorage + i18n locale
   if ('language' in changedFields && changedFields.language) {
     localStorage.setItem('lang', changedFields.language)
-    i18n.global.locale.value = changedFields.language
+    i18n.global.locale.value = resolveAppliedLanguage(changedFields.language) as typeof i18n.global.locale.value
   }
 
   // theme -> document class + main process
@@ -579,6 +616,10 @@ export function dispatchSideEffects(changedFields: Partial<SyncableUserConfig>):
     eventBus.emit('pinchZoomStatusChanged', changedFields.pinchZoomStatus === 1)
   }
 
+  if ('localEchoEnabled' in changedFields && changedFields.localEchoEnabled !== undefined) {
+    eventBus.emit('localEchoSettingChanged', changedFields.localEchoEnabled === true)
+  }
+
   // aliasStatus -> eventBus notification
   if ('aliasStatus' in changedFields && changedFields.aliasStatus !== undefined) {
     eventBus.emit('aliasStatusChanged', changedFields.aliasStatus)
@@ -589,8 +630,10 @@ export function dispatchSideEffects(changedFields: Partial<SyncableUserConfig>):
     eventBus.emit('shortcutsSyncApplied')
   }
 
-  // Other fields (fontSize, scrollBack, cursorStyle, terminalType, etc.)
-  // are consumed via Pinia computed/watch - no extra side-effects needed.
+  const changedTerminalRuntimeConfig = pickTerminalRuntimeConfig(changedFields)
+  if (hasTerminalRuntimeConfig(changedTerminalRuntimeConfig)) {
+    eventBus.emit(TERMINAL_RUNTIME_CONFIG_CHANGED_EVENT, changedTerminalRuntimeConfig)
+  }
 }
 
 // ---------------------------------------------------------------------------

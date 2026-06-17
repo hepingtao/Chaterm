@@ -114,7 +114,7 @@ const handleContextMenu = (event: MouseEvent) => {
 .asset-card {
   position: relative;
   padding-right: 60px;
-  background-color: var(--bg-color-secondary);
+  background-color: var(--bg-color-card);
   border-radius: 6px;
   overflow: hidden;
   cursor: pointer;
@@ -127,6 +127,13 @@ const handleContextMenu = (event: MouseEvent) => {
   :deep(.ant-card-body) {
     padding: 8px 12px;
   }
+}
+
+:global(body.has-custom-bg .asset-card) {
+  background-color: var(--bg-color-secondary);
+  box-shadow: inset 0 0 0 1px var(--border-color);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
 }
 
 .action-buttons {

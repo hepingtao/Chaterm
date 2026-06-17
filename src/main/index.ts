@@ -1,5 +1,5 @@
 // ============ Performance Marks (must be the very first import) ============
-import { mark, registerPerfIpcHandlers, collectAndLogTimeline, logStartupTimeline } from '@perf'
+import { mark, registerPerfIpcHandlers, collectAndLogTimeline, scheduleStartupTimelineFallback, logStartupTimeline } from '@perf'
 // 'chaterm/main/start' is recorded at module load time inside @perf
 
 // ============ Initialize userData path FIRST (MUST be before all other imports) ============
@@ -22,7 +22,7 @@ import path, { join } from 'path'
 import { electronApp } from '@electron-toolkit/utils'
 import { is } from '@electron-toolkit/utils'
 import * as fs from 'fs/promises'
-import { startDataSync } from './storage/data_sync/index'
+import { startDataSync, AuthExpiredError } from './storage/data_sync/index'
 import type { SyncController as DataSyncController } from './storage/data_sync/core/SyncController'
 import { getChatermDbPathForUser, getCurrentUserId, setMainWindowWebContents } from './storage/db/connection'
 import { migrateCnUserDataOnFirstLaunch } from './storage/editionDataMigration'
@@ -34,6 +34,8 @@ import { registerSSHHandlers } from './ssh/sshHandle'
 import { registerLocalSSHHandlers } from './ssh/localSSHHandle'
 import { registerRemoteTerminalHandlers } from './ssh/agentHandle'
 import { registerK8sHandlers } from './k8s/k8sHandle'
+import { registerDbAssetHandlers } from './database/dbAssetHandle'
+import { registerDbAiHandlers } from './database/dbAiHandle'
 import { autoCompleteDatabaseService, ChatermDatabaseService, setCurrentUserId } from './storage/database'
 import { getGuestUserId } from './storage/db/connection'
 import { Controller } from './agent/core/controller'
@@ -43,8 +45,7 @@ import {
   testStorageFromMain as testRendererStorageFromMain,
   getGlobalState,
   updateGlobalState,
-  getAllExtensionState,
-  getUserConfig
+  getAllExtensionState
 } from './agent/core/storage/state'
 import { getTaskMetadata, saveTaskTitle, saveTaskFavorite, getTaskList } from './agent/core/storage/disk'
 import { createMainWindow, type WindowCreationResult } from './windowManager'
@@ -53,8 +54,10 @@ import { setupPluginIpc } from './plugin/pluginIpc'
 import { telemetryService, checkIsFirstLaunch, getMacAddress } from './agent/services/telemetry/TelemetryService'
 import { envelopeEncryptionService } from './storage/data_sync/envelope_encryption/service'
 import { versionPromptService } from './version/versionPromptService'
+import { authFailureNotifier } from './services/authFailureNotifier'
 
 import * as fsSync from 'fs'
+import { createHash, createVerify, randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
 import { loadAllPlugins } from './plugin/pluginLoader'
 import {
@@ -71,6 +74,7 @@ import { getPluginDetailsByName, getLocalizedStrings, getUserLanguage } from './
 import { capabilityRegistry } from './ssh/capabilityRegistry'
 import { getActualTheme, loadUserTheme } from './themeManager'
 import { getLoginBaseUrl, getEdition, getProtocolPrefix, getProtocolName } from './config/edition'
+import { getBrandingConfig } from './config/branding'
 import { TelemetrySetting } from '@shared/TelemetrySetting'
 import { registerKnowledgeBaseHandlers, initKbSearchManager, closeKbSearchManager } from './services/knowledgebase'
 import { registerStageChatAttachmentHandlers } from './services/agent/stageChatAttachment'
@@ -83,6 +87,14 @@ import { initLogging, logRendererCrash } from '@logging'
 import { parseXshellWakeupFromArgv, redactXshellWakeupForLog, type XshellWakeupPayload } from './integrations/xshellWakeup'
 
 const logger = createLogger('main')
+
+const getPluginUninstallErrorCode = (error: unknown): string => {
+  const message = String(error instanceof Error ? error.message : error || '')
+  if (/EPERM|EACCES|Permission denied/i.test(message)) {
+    return 'PLUGIN_UNINSTALL_DIRECTORY_BUSY'
+  }
+  return 'PLUGIN_UNINSTALL_FAILED'
+}
 
 type PreinstalledPluginConfig = {
   id: string
@@ -105,6 +117,44 @@ const parseDeployStatus = (raw: unknown): number => {
   if (typeof raw !== 'string') return 0
   const parsed = Number.parseInt(raw.trim(), 10)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+// This runtime flag controls whether the client must require and verify signed OAuth Deep Link callbacks.
+const oauthDeepLinkSignatureEnabled = parsePolicyEnabled(process.env.CHATERM_OAUTH_DEEPLINK_SIGNATURE_ENABLED) === true
+const oauthDeepLinkPublicKeyPath = app.isPackaged
+  ? path.join(process.resourcesPath, 'oauth_deeplink_public_key.pem')
+  : path.join(process.cwd(), 'resources', 'oauth_deeplink_public_key.pem')
+
+const decodeBase64Url = (value: string): Buffer => {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padding = normalized.length % 4
+  const paddedValue = padding === 0 ? normalized : normalized + '='.repeat(4 - padding)
+  return Buffer.from(paddedValue, 'base64')
+}
+
+const buildStableOAuthDeepLinkUserInfoJson = (userInfo: Record<string, unknown>): string => {
+  const keys = Object.keys(userInfo).sort()
+  const serializedEntries = keys.map((key) => `${JSON.stringify(key)}:${JSON.stringify(userInfo[key])}`)
+  return `{${serializedEntries.join(',')}}`
+}
+
+const buildOAuthDeepLinkSignaturePayload = (userInfo: Record<string, unknown>, method: string, state: string, timestamp: string): string => {
+  return `userInfo=${buildStableOAuthDeepLinkUserInfoJson(userInfo)}&method=${method}&state=${state}&timestamp=${timestamp}`
+}
+
+const verifyOAuthDeepLinkSignature = (params: {
+  userInfo: Record<string, unknown>
+  method: string
+  state: string
+  timestamp: string
+  sign: string
+}): boolean => {
+  const publicKey = fsSync.readFileSync(oauthDeepLinkPublicKeyPath, 'utf8')
+  const verifier = createVerify('RSA-SHA256')
+  const payload = buildOAuthDeepLinkSignaturePayload(params.userInfo, params.method, params.state, params.timestamp)
+  verifier.update(payload)
+  verifier.end()
+  return verifier.verify(publicKey, decodeBase64Url(params.sign))
 }
 
 const parsePreinstalledPluginConfig = (): PreinstalledPluginConfig[] => {
@@ -196,7 +246,6 @@ const bootstrapPreinstalledPlugins = async () => {
 }
 
 let mainWindow: BrowserWindow
-let aiBoundWindow: BrowserWindow | null = null
 let COOKIE_URL = 'http://localhost'
 let browserWindow: BrowserWindow | null = null
 let lastWidth: number = 1344 // Default window width
@@ -209,6 +258,16 @@ let controller: Controller
 let dataSyncController: DataSyncController | null = null
 let chatSyncScheduler: import('./storage/chat_sync/services/ChatSyncScheduler').ChatSyncScheduler | null = null
 let pendingXshellWakeups: XshellWakeupPayload[] = []
+const EXTERNAL_LOGIN_STATE_TTL_MS = 5 * 60 * 1000
+
+type PendingExternalLoginState = {
+  state: string
+  createdAt: number
+  expiresAt: number
+  windowId: number
+}
+
+let pendingExternalLoginState: PendingExternalLoginState | null = null
 
 let winReadyResolve
 let winReady = new Promise((resolve) => (winReadyResolve = resolve))
@@ -219,6 +278,57 @@ initLogging()
 // Promise that resolves when the renderer page finishes loading.
 // Main-process initialization proceeds in parallel without waiting for this.
 let windowContentLoaded: Promise<void>
+
+const clearPendingExternalLoginState = async (): Promise<void> => {
+  pendingExternalLoginState = null
+
+  if (process.platform !== 'linux') {
+    return
+  }
+
+  try {
+    await session.defaultSession.cookies.remove(COOKIE_URL, 'chaterm_auth_state')
+  } catch (error) {
+    logger.warn('Failed to clear external login auth state cookie', { error: error })
+  }
+}
+
+const loadPendingExternalLoginStateFromCookie = async (): Promise<PendingExternalLoginState | null> => {
+  if (process.platform !== 'linux') {
+    return pendingExternalLoginState
+  }
+
+  try {
+    const authStateCookie = await session.defaultSession.cookies.get({
+      url: COOKIE_URL,
+      name: 'chaterm_auth_state'
+    })
+
+    if (!authStateCookie || authStateCookie.length === 0) {
+      return pendingExternalLoginState
+    }
+
+    const parsedState = JSON.parse(authStateCookie[0].value) as Partial<PendingExternalLoginState>
+    if (
+      typeof parsedState?.state !== 'string' ||
+      typeof parsedState?.createdAt !== 'number' ||
+      typeof parsedState?.expiresAt !== 'number' ||
+      typeof parsedState?.windowId !== 'number'
+    ) {
+      return null
+    }
+
+    return {
+      state: parsedState.state,
+      createdAt: parsedState.createdAt,
+      expiresAt: parsedState.expiresAt,
+      windowId: parsedState.windowId
+    }
+  } catch (error) {
+    logger.error('Failed to load external login auth state cookie', { error: error })
+    return null
+  }
+}
 
 async function createWindow(): Promise<void> {
   const result: WindowCreationResult = await createMainWindow(
@@ -241,10 +351,39 @@ async function createWindow(): Promise<void> {
   })
 }
 
-// Read user config directly from KV store (no renderer window dependency).
-// Used by SSH/terminal modules for proxy, keepalive, and other settings.
+// Send request to renderer process and wait for response
 export async function getUserConfigFromRenderer(): Promise<any> {
-  return getUserConfig()
+  if (!mainWindow) throw new Error('mainWindow not ready')
+
+  const wc = mainWindow.webContents
+
+  // Wait for renderer process to load
+  if (wc.isLoadingMainFrame()) {
+    await new Promise<void>((resolve) => wc.once('did-finish-load', () => resolve()))
+  }
+
+  return new Promise((resolve, reject) => {
+    const responseHandler = (_event: Electron.IpcMainEvent, config: any) => {
+      cleanup()
+      resolve(config)
+    }
+
+    const errorHandler = (_event: Electron.IpcMainEvent, errMsg: string) => {
+      cleanup()
+      reject(new Error(errMsg))
+    }
+
+    const cleanup = () => {
+      ipcMain.removeListener('userConfig:get-response', responseHandler)
+      ipcMain.removeListener('userConfig:get-error', errorHandler)
+    }
+
+    ipcMain.on('userConfig:get-response', responseHandler)
+    ipcMain.on('userConfig:get-error', errorHandler)
+
+    logger.info('Main process sending userConfig:get to renderer process')
+    wc.send('userConfig:get')
+  })
 }
 
 app.whenReady().then(async () => {
@@ -257,11 +396,7 @@ app.whenReady().then(async () => {
       try {
         const crypto = require('crypto')
         const ffmpegPath = path.join(path.dirname(process.execPath), 'ffmpeg.dll')
-        // Hash map keyed by Electron version — update when upgrading Electron
-        const FFMPEG_HASH_MAP: Record<string, string> = {
-          '41.1.1': 'B64F08946914D8CE2BDAAEF5796ADCF8398EE5BA55223AFBB9F14072F4302B45',
-          '41.2.0': 'B64F08946914D8CE2BDAAEF5796ADCF8398EE5BA55223AFBB9F14072F4302B45'
-        }
+        const KNOWN_HASH = 'E7AEC5CA86D80540EA30C5ACDF0A13ACB34D1D9DD0F9E78B36FB21776B711A1E'
 
         try {
           await fs.access(ffmpegPath)
@@ -274,15 +409,17 @@ app.whenReady().then(async () => {
         const buffer = await fs.readFile(ffmpegPath)
         const hash = crypto.createHash('sha256').update(buffer).digest('hex').toUpperCase()
 
-        // Check against all known hashes for supported Electron versions
-        const knownHashes = Object.values(FFMPEG_HASH_MAP)
-        if (!knownHashes.includes(hash)) {
-          logger.warn(
-            `[Security] ffmpeg.dll hash mismatch. Known hashes: ${JSON.stringify(FFMPEG_HASH_MAP)}, Actual: ${hash}. This may occur after Electron upgrades or rebuilds.`
+        if (hash !== KNOWN_HASH) {
+          logger.error(`[Security] CRITICAL: ffmpeg.dll hash mismatch! Expected: ${KNOWN_HASH}, Actual: ${hash}`)
+          const { dialog } = require('electron')
+          dialog.showErrorBox(
+            'Security Error',
+            'System integrity check failed (ffmpeg.dll). The application files may have been tampered with. Application will terminate.'
           )
-        } else {
-          logger.info('[Security] ffmpeg.dll integrity verified.')
+          app.quit()
+          process.exit(1) // Force exit
         }
+        logger.info('[Security] ffmpeg.dll integrity verified.')
       } catch (error) {
         logger.error('[Security] Failed to verify ffmpeg.dll', { error: error })
       }
@@ -298,12 +435,14 @@ app.whenReady().then(async () => {
   const migrationPromise = migrateCnUserDataOnFirstLaunch().catch((err) => logger.error('CN migration failed', { error: err }))
 
   if (process.platform === 'darwin') {
-    app.dock?.setIcon(join(__dirname, '../../resources/icon.png'))
+    const brandingConfig = getBrandingConfig()
+    app.dock?.setIcon(brandingConfig.iconPngPath || join(__dirname, '../../resources/icon.png'))
   }
 
   protocol.handle('local-resource', (request) => {
-    let filePath = request.url.slice('local-resource://'.length)
-    filePath = decodeURIComponent(filePath)
+    // Strip query string before resolving to a file path (e.g. cache-busting ?t=xxx params)
+    const rawPath = request.url.slice('local-resource://'.length).split('?')[0]
+    let filePath = decodeURIComponent(rawPath)
 
     if (process.platform === 'win32' && /^\/[A-Za-z]:\//.test(filePath)) {
       filePath = filePath.slice(1)
@@ -392,14 +531,32 @@ app.whenReady().then(async () => {
   registerRemoteTerminalHandlers()
   registerFileSystemHandlers()
   mark('chaterm/main/didRegisterSSH')
+
+  mark('chaterm/main/willRegisterUpdater')
   registerUpdater(mainWindow, (value) => (forceQuit = value))
+  mark('chaterm/main/didRegisterUpdater')
+
+  mark('chaterm/main/willSetupPluginIpc')
   setupPluginIpc()
+  mark('chaterm/main/didSetupPluginIpc')
 
   // Register K8s handlers
+  mark('chaterm/main/willRegisterK8s')
   registerK8sHandlers()
+  mark('chaterm/main/didRegisterK8s')
+
+  // Register Database asset handlers
+  mark('chaterm/main/willRegisterDatabase')
+  registerDbAssetHandlers()
+
+  // Register Database AI (single-turn, track A) handlers
+  registerDbAiHandlers()
+  mark('chaterm/main/didRegisterDatabase')
 
   // Register interactive command IPC handlers
+  mark('chaterm/main/willRegisterInteraction')
   setupInteractionIpcHandlers()
+  mark('chaterm/main/didRegisterInteraction')
 
   // Run plugin loading and security config in parallel
   mark('chaterm/main/willLoadPlugins')
@@ -432,20 +589,11 @@ app.whenReady().then(async () => {
 
   try {
     // Create a message sender that routes messages to dedicated IPC channels
-    // Determine target window for AI messages: use AI-bound window if set, otherwise main window.
-    const getAiTargetWindow = (): BrowserWindow | null => {
-      if (aiBoundWindow && !aiBoundWindow.isDestroyed()) {
-        return aiBoundWindow
-      }
-      return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-    }
-
     const messageSender = (message) => {
-      const target = getAiTargetWindow()
-      if (target) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
         // Route commandGenerationResponse to its dedicated channel
         if (message.type === 'commandGenerationResponse') {
-          target.webContents.send('command-generation-response', {
+          mainWindow.webContents.send('command-generation-response', {
             command: message.command,
             error: message.error,
             tabId: message.tabId
@@ -455,7 +603,7 @@ app.whenReady().then(async () => {
 
         // Route explainCommandResponse to its dedicated channel
         if (message.type === 'explainCommandResponse') {
-          target.webContents.send('command-explain-response', {
+          mainWindow.webContents.send('command-explain-response', {
             explanation: message.explanation,
             error: message.error,
             tabId: message.tabId,
@@ -466,24 +614,24 @@ app.whenReady().then(async () => {
 
         // Route mcpServersUpdate to its dedicated channel for backward compatibility
         if (message.type === 'mcpServersUpdate') {
-          target.webContents.send('mcp:status-update', message.mcpServers)
+          mainWindow.webContents.send('mcp:status-update', message.mcpServers)
           return Promise.resolve(true)
         }
 
         // Route mcpServerUpdate (singular) to its dedicated channel for granular updates
         if (message.type === 'mcpServerUpdate') {
-          target.webContents.send('mcp:server-update', message.mcpServer)
+          mainWindow.webContents.send('mcp:server-update', message.mcpServer)
           return Promise.resolve(true)
         }
 
         // Route mcpConfigFileChanged to its dedicated channel
         if (message.type === 'mcpConfigFileChanged') {
-          target.webContents.send('mcp:config-file-changed', message.content)
+          mainWindow.webContents.send('mcp:config-file-changed', message.content)
           return Promise.resolve(true)
         }
 
         // Default: send to the general channel for other message types
-        target.webContents.send('main-to-webview', message)
+        mainWindow.webContents.send('main-to-webview', message)
         return Promise.resolve(true)
       }
       return Promise.resolve(false)
@@ -567,7 +715,7 @@ app.whenReady().then(async () => {
     windowContentLoaded
       .then(() => {
         mark('chaterm/main/windowDidFinishLoad')
-        collectAndLogTimeline(mainWindow)
+        scheduleStartupTimelineFallback(mainWindow)
       })
       .catch((err) => {
         logger.warn('windowContentLoaded rejected, logging main-process timeline only', { error: err })
@@ -632,6 +780,10 @@ const getCookieByName = async (name) => {
 }
 ipcMain.handle('get-platform', () => {
   return process.platform
+})
+
+ipcMain.handle('app:get-branding-config', () => {
+  return getBrandingConfig()
 })
 
 /**
@@ -1099,31 +1251,43 @@ function setupIPC(): void {
   registerStageChatAttachmentHandlers()
 
   ipcMain.handle('init-user-database', async (event, { uid }) => {
+    mark('chaterm/main/willInitUserDatabase')
     try {
+      mark('chaterm/main/willResolveStartupUser')
       const isSkippedLogin = await event.sender.executeJavaScript("localStorage.getItem('login-skipped') === 'true'")
       const targetUserId = uid || (isSkippedLogin ? getGuestUserId() : null)
       if (!targetUserId) {
         throw new Error('User ID is required')
       }
+      mark('chaterm/main/didResolveStartupUser')
 
       // Check if user switch occurred (user ID changed)
       const previousUserId = getCurrentUserId()
       const isUserSwitch = previousUserId && previousUserId !== targetUserId
 
       setCurrentUserId(targetUserId)
+      mark('chaterm/main/willInitChatermDatabase')
       chatermDbService = await ChatermDatabaseService.getInstance(targetUserId)
+      mark('chaterm/main/didInitChatermDatabase')
+
+      mark('chaterm/main/willInitAutocompleteDatabase')
       autoCompleteService = await autoCompleteDatabaseService.getInstance(targetUserId)
+      mark('chaterm/main/didInitAutocompleteDatabase')
 
       // Load and apply user theme configuration
+      mark('chaterm/main/willLoadUserTheme')
       const dbTheme = await loadUserTheme(chatermDbService)
+      mark('chaterm/main/didLoadUserTheme')
 
       // Sync authentication info, ensure completion before data sync starts
       try {
+        mark('chaterm/main/willSetAuthInfo')
         // Get user authentication info and set it to encryption service
         const ctmToken = await event.sender.executeJavaScript("localStorage.getItem('ctm-token')")
         if (ctmToken && ctmToken !== 'guest_token') {
           logger.info(`Setting authentication info for user ${targetUserId}...`)
           envelopeEncryptionService.setAuthInfo(ctmToken, targetUserId.toString())
+          authFailureNotifier.reset()
           logger.info(`Authentication info set completed for user ${targetUserId}`)
         } else {
           logger.warn(`No valid authentication token found for user ${targetUserId}`)
@@ -1138,7 +1302,9 @@ function setupIPC(): void {
             logger.info('Chat sync scheduler destroyed during user switch')
           }
         }
+        mark('chaterm/main/didSetAuthInfo')
       } catch (error) {
+        mark('chaterm/main/didFailSetAuthInfo')
         logger.warn('Exception setting authentication info', { value: error })
         if (isUserSwitch) {
           logger.info(`Authentication info setting failed, user switch: ${previousUserId} -> ${targetUserId}`)
@@ -1148,29 +1314,39 @@ function setupIPC(): void {
       // Reload skill states after user login (skills are loaded but states need user DB)
       if (controller && controller.skillsManager) {
         try {
+          mark('chaterm/main/willReloadSkillStates')
           await controller.skillsManager.reloadSkillStates()
+          mark('chaterm/main/didReloadSkillStates')
         } catch (error) {
+          mark('chaterm/main/didFailReloadSkillStates')
           logger.warn('Failed to reload skill states after login', { value: error })
         }
       }
 
       // Install preloaded plugins after the current user is resolved so they go to the correct user scope.
       try {
+        mark('chaterm/main/willBootstrapPreinstalledPlugins')
         await bootstrapPreinstalledPlugins()
+        mark('chaterm/main/didBootstrapPreinstalledPlugins')
       } catch (error) {
+        mark('chaterm/main/didFailBootstrapPreinstalledPlugins')
         logger.warn('Failed to bootstrap preinstalled plugins after login', { value: error })
       }
 
       // Reload plugins after user login to switch to per-user plugin directory
       try {
+        mark('chaterm/main/willReloadUserPlugins')
         await loadAllPlugins()
+        mark('chaterm/main/didReloadUserPlugins')
       } catch (error) {
+        mark('chaterm/main/didFailReloadUserPlugins')
         logger.warn('Failed to reload plugins after login', { value: error })
       }
 
       // Initialize KB search manager if enabled by user setting / policy.
       // CHATERM_KB_SEARCH_ENABLED enforces enterprise policy only when set to false.
       try {
+        mark('chaterm/main/willInitKbSearch')
         let kbSearchEnabled = await getGlobalState('kbSearchEnabled')
         const rawPolicy = process.env.CHATERM_KB_SEARCH_ENABLED
         let kbPolicyEnabled: boolean | null = null
@@ -1201,20 +1377,18 @@ function setupIPC(): void {
             })
           }
         }
+        mark('chaterm/main/didInitKbSearch')
       } catch (error) {
+        mark('chaterm/main/didFailInitKbSearch')
         logger.warn('Failed to check KB search setting', { value: error })
       }
 
+      mark('chaterm/main/didInitUserDatabase')
       return { success: true, theme: dbTheme }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
-      const errorName = error instanceof Error ? error.constructor.name : 'UnknownError'
-      logger.error('Database initialization failed', {
-        error: errorMessage,
-        errorType: errorName,
-        uid: uid
-      })
-      return { success: false, error: `[${errorName}] ${errorMessage}` }
+      mark('chaterm/main/didFailInitUserDatabase')
+      logger.error('Database initialization failed', { error: error })
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' }
     }
   })
 
@@ -1504,86 +1678,6 @@ function setupIPC(): void {
     }
   })
 
-  // ─── Multi-window AI Support ──────────────────────────────────────────────────
-
-  ipcMain.handle('window:register-ai', (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender)
-    if (senderWindow) {
-      aiBoundWindow = senderWindow
-      logger.info('[MultiWindow] AI window registered', { id: senderWindow.id })
-    }
-  })
-
-  ipcMain.handle('window:unregister-ai', () => {
-    aiBoundWindow = null
-    logger.info('[MultiWindow] AI window unregistered')
-  })
-
-  // Cross-window command execution: broadcast to all windows so the correct SSH component handles it
-  ipcMain.handle(
-    'window:cross-execute-command',
-    (event, payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string }) => {
-      const senderWebContentsId = event.sender.id
-      // Broadcast to other windows; the sender already dispatched the local renderer event.
-      BrowserWindow.getAllWindows().forEach((win) => {
-        if (!win.isDestroyed() && win.webContents.id !== senderWebContentsId) {
-          win.webContents.send('terminal:cross-execute-command', { ...payload, senderWebContentsId })
-        }
-      })
-    }
-  )
-
-  // Cross-window output relay: send output back to the requesting window
-  ipcMain.handle('window:relay-output', (_event, payload: { senderWebContentsId: number; content: string; tabId?: string; toolResult?: any }) => {
-    const targetWc = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === payload.senderWebContentsId)?.webContents
-    if (targetWc && !targetWc.isDestroyed()) {
-      targetWc.send('terminal:cross-output', {
-        content: payload.content,
-        tabId: payload.tabId,
-        toolResult: payload.toolResult
-      })
-    }
-  })
-
-  ipcMain.handle('window:create-terminal', async () => {
-    const { is } = await import('@electron-toolkit/utils')
-    const terminalWindow = new BrowserWindow({
-      width: 1060,
-      height: 600,
-      minWidth: 800,
-      minHeight: 400,
-      title: 'Chaterm - Terminal',
-      show: false,
-      autoHideMenuBar: true,
-      webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
-        sandbox: false,
-        contextIsolation: true,
-        nodeIntegration: false
-      }
-    })
-
-    terminalWindow.on('ready-to-show', () => {
-      terminalWindow.show()
-    })
-
-    // Close when all windows closed behavior
-    terminalWindow.on('closed', () => {
-      // Clean up if this terminal window was the AI-bound window
-      if (aiBoundWindow === terminalWindow) {
-        aiBoundWindow = null
-      }
-    })
-
-    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-      await terminalWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + '?mode=terminal')
-    } else {
-      await terminalWindow.loadFile(join(__dirname, '../renderer/index.html'), { query: { mode: 'terminal' } })
-    }
-
-    return { success: true, windowId: terminalWindow.id }
-  })
-
   ipcMain.handle('cancel-task', async (_event, payload?: { tabId?: string }) => {
     logger.info('cancel-task', { value: payload })
     if (controller) {
@@ -1620,19 +1714,38 @@ function setupIPC(): void {
       const resolvedEnabled = dataSyncPolicyEnabled === false ? false : enabled
 
       if (resolvedEnabled) {
+        let authExpiredDuringStartup = false
         if (!dataSyncController) {
           const dbPath = getChatermDbPathForUser(uid)
           logger.info(`Starting data sync service for user ${uid}...`)
-          const instance = await startDataSync(dbPath)
-          dataSyncController = instance
+          try {
+            const instance = await startDataSync(dbPath, () => {
+              authFailureNotifier.notify()
+            })
+            dataSyncController = instance
+          } catch (e) {
+            if (e instanceof AuthExpiredError) {
+              authExpiredDuringStartup = true
+              logger.warn('Data sync startup aborted due to auth expiry; dataSyncController remains null')
+              // onAuthFailure already sent auth:token-expired to renderer
+            } else {
+              throw e
+            }
+          }
         }
 
-        // Enable sync
-        const syncStateManager = dataSyncController.getSyncStateManager()
-        if (syncStateManager) {
-          syncStateManager.enableSync(uid)
+        // Enable sync only if controller was successfully created
+        if (dataSyncController) {
+          const syncStateManager = dataSyncController.getSyncStateManager()
+          if (syncStateManager) {
+            syncStateManager.enableSync(uid)
+          }
+          startKbSync()
         }
-        startKbSync()
+
+        if (authExpiredDuringStartup) {
+          return { success: false, enabled: false, error: 'AUTH_EXPIRED', authExpired: true }
+        }
       } else {
         // Disable sync
         if (dataSyncController) {
@@ -1767,7 +1880,8 @@ function setupIPC(): void {
               return chatermAuthAdapter.getAuthToken()
             },
             deviceId,
-            platform: 'desktop'
+            platform: 'desktop',
+            onAuthFailure: () => authFailureNotifier.notify()
           })
 
           // Initialize the sync engine
@@ -1821,6 +1935,16 @@ function setupIPC(): void {
     createBrowserWindow(url)
   })
 
+  ipcMain.handle('open-external-url', async (_, url: string) => {
+    try {
+      await shell.openExternal(url)
+      return { success: true }
+    } catch (error) {
+      logger.error('Failed to open external url', { error, url })
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
   // Browser navigation control
   ipcMain.on('browser-go-back', () => {
     if (browserWindow && !browserWindow.isDestroyed() && browserWindow.webContents.canGoBack()) {
@@ -1872,9 +1996,14 @@ function setupIPC(): void {
   }
 
   ipcMain.handle('main-window-show', async () => {
+    mark('chaterm/main/willShowWindow')
     await winReady
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
       mainWindow.show()
+    }
+    mark('chaterm/main/didShowWindow')
+    if (is.dev) {
+      collectAndLogTimeline(mainWindow)
     }
   })
 
@@ -2072,6 +2201,18 @@ ipcMain.handle('insert-command', async (_, data) => {
   }
 })
 
+ipcMain.handle('query-fig-spec', async (_, data) => {
+  try {
+    const { commandLine, tokens } = data
+    if (!commandLine || !Array.isArray(tokens)) return []
+    const { getFigSuggestions } = await import('./ssh/figSpecHandler')
+    return await getFigSuggestions({ commandLine, tokens })
+  } catch (error) {
+    logger.error('query-fig-spec failed', { error: error })
+    return []
+  }
+})
+
 ipcMain.handle('ai-suggest-command', async (_, data) => {
   try {
     const { command, osInfo } = data
@@ -2144,6 +2285,16 @@ ipcMain.handle('key-chain-local-get', async () => {
     return result
   } catch (error) {
     logger.error('Chaterm get data failed', { error: error })
+    return null
+  }
+})
+
+ipcMain.handle('password-chain-local-get', async () => {
+  try {
+    const result = chatermDbService.getPasswordChainSelect()
+    return result
+  } catch (error) {
+    logger.error('Chaterm get password chain failed', { error: error })
     return null
   }
 })
@@ -2592,8 +2743,9 @@ ipcMain.handle('key-chain-local-update', async (_, data) => {
 
 ipcMain.handle('chaterm-connect-asset-info', async (_, data) => {
   try {
-    const { uuid } = data
-    const result = chatermDbService.connectAssetInfo(uuid)
+    const { uuid, organizationUuid, ip } = data
+    const fallback = organizationUuid || ip ? { organizationUuid, ip } : undefined
+    const result = chatermDbService.connectAssetInfo(uuid, fallback)
     return result
   } catch (error) {
     logger.error('Chaterm get asset info failed', { error: error })
@@ -2682,9 +2834,9 @@ ipcMain.handle('set-task-favorite', async (_event, { taskId, favorite }) => {
   }
 })
 
-ipcMain.handle('get-task-list', async () => {
+ipcMain.handle('get-task-list', async (_event, data?: { workspace?: 'server' | 'database' }) => {
   try {
-    const list = await getTaskList()
+    const list = await getTaskList(data?.workspace)
     return { success: true, data: list }
   } catch (error) {
     return { success: false, error: { message: error instanceof Error ? error.message : 'Unknown error' } }
@@ -3047,6 +3199,142 @@ ipcMain.handle('plugins.install', async (_event, pluginFilePath: string) => {
   return record
 })
 
+const pluginInstallAbortControllers = new Map<string, AbortController>()
+
+async function installStorePluginFromBuffer(payload: { pluginId: string; version?: string; fileName?: string; data: ArrayBuffer }) {
+  const { pluginId, version, fileName, data } = payload
+  const installedPlugin = getInstalledPlugin(pluginId)
+
+  try {
+    await uninstallPlugin(pluginId, { force: true })
+  } catch (e) {
+    logger.warn('uninstall before update failed, continue install', { value: e })
+  }
+
+  const baseDir = path.join(getPluginCacheRoot(), pluginId, version || 'latest')
+  await fsSync.promises.mkdir(baseDir, { recursive: true })
+
+  const finalFileName = fileName || `${pluginId}-${version || 'latest'}.chaterm`
+  const tmpFilePath = path.join(baseDir, finalFileName)
+
+  const buffer = Buffer.from(data)
+  await fsSync.promises.writeFile(tmpFilePath, buffer)
+
+  const record = installPlugin(tmpFilePath, {
+    source: installedPlugin?.source || 'store',
+    required: installedPlugin?.required === true
+  })
+  await loadAllPlugins()
+  return record
+}
+
+ipcMain.handle('plugin:downloadPackage', async (_event, payload: { url: string }) => {
+  const url = String(payload?.url || '').trim()
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error('invalid plugin download url')
+  }
+
+  const response = await net.fetch(url)
+  if (!response.ok) {
+    throw new Error(`plugin package download failed: HTTP ${response.status}`)
+  }
+  return await response.arrayBuffer()
+})
+
+ipcMain.handle(
+  'plugin:installFromUrl',
+  async (event, payload: { pluginId: string; version?: string; fileName?: string; url: string; sha256?: string }) => {
+    const url = String(payload?.url || '').trim()
+    if (!/^https?:\/\//i.test(url)) {
+      throw new Error('invalid plugin download url')
+    }
+
+    const sendStage = (
+      stage: 'downloading' | 'verifying' | 'installing' | 'done' | 'error' | 'cancelled',
+      progress?: { receivedBytes?: number; totalBytes?: number; percent?: number }
+    ) => {
+      event.sender.send('plugin:install-progress', { pluginId: payload.pluginId, stage, ...progress })
+    }
+
+    const abortController = new AbortController()
+    pluginInstallAbortControllers.set(payload.pluginId, abortController)
+
+    try {
+      sendStage('downloading')
+      const response = await net.fetch(url, { signal: abortController.signal })
+      if (!response.ok) {
+        throw new Error(`plugin package download failed: HTTP ${response.status}`)
+      }
+
+      const totalBytes = Number(response.headers.get('content-length') || 0)
+      const reader = response.body?.getReader()
+      let data: ArrayBuffer
+      if (reader) {
+        const chunks: Uint8Array[] = []
+        let receivedBytes = 0
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (!value) continue
+          chunks.push(value)
+          receivedBytes += value.byteLength
+          const percent = totalBytes > 0 ? Math.min(100, Math.round((receivedBytes / totalBytes) * 100)) : 0
+          sendStage('downloading', { receivedBytes, totalBytes, percent })
+        }
+        const buffer = Buffer.concat(
+          chunks.map((chunk) => Buffer.from(chunk)),
+          receivedBytes
+        )
+        data = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+      } else {
+        data = await response.arrayBuffer()
+        const receivedBytes = data.byteLength
+        sendStage('downloading', { receivedBytes, totalBytes: totalBytes || receivedBytes, percent: 100 })
+      }
+      const expectedSha256 = String(payload?.sha256 || '').trim()
+      if (expectedSha256) {
+        sendStage('verifying')
+        const actualSha256 = createHash('sha256').update(Buffer.from(data)).digest('hex')
+        if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
+          throw new Error('Plugin package checksum mismatch')
+        }
+      }
+
+      sendStage('installing')
+      const record = await installStorePluginFromBuffer({
+        pluginId: payload.pluginId,
+        version: payload.version,
+        fileName: payload.fileName,
+        data
+      })
+      sendStage('done')
+      return record
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        sendStage('cancelled')
+        throw new Error('plugin install cancelled')
+      }
+      sendStage('error')
+      throw error
+    } finally {
+      if (pluginInstallAbortControllers.get(payload.pluginId) === abortController) {
+        pluginInstallAbortControllers.delete(payload.pluginId)
+      }
+    }
+  }
+)
+
+ipcMain.handle('plugin:cancelInstall', async (_event, payload: { pluginId: string }) => {
+  const pluginId = String(payload?.pluginId || '').trim()
+  const controller = pluginInstallAbortControllers.get(pluginId)
+  if (!controller) {
+    return { ok: false }
+  }
+  controller.abort()
+  pluginInstallAbortControllers.delete(pluginId)
+  return { ok: true }
+})
+
 ipcMain.handle(
   'plugin:installFromBuffer',
   async (
@@ -3058,40 +3346,23 @@ ipcMain.handle(
       data: ArrayBuffer
     }
   ) => {
-    const { pluginId, version, fileName, data } = payload
-    const installedPlugin = getInstalledPlugin(pluginId)
-
-    // Uninstall the old version
-    try {
-      await uninstallPlugin(pluginId, { force: true })
-    } catch (e) {
-      logger.warn('uninstall before update failed, continue install', { value: e })
-    }
-
-    // cache dir
-    const baseDir = path.join(getPluginCacheRoot(), pluginId, version || 'latest')
-    await fsSync.promises.mkdir(baseDir, { recursive: true })
-
-    const finalFileName = fileName || `${pluginId}-${version || 'latest'}.chaterm`
-    const tmpFilePath = path.join(baseDir, finalFileName)
-
-    // write
-    const buffer = Buffer.from(data) // ArrayBuffer -> Buffer
-    await fsSync.promises.writeFile(tmpFilePath, buffer)
-
-    const record = installPlugin(tmpFilePath, {
-      source: installedPlugin?.source || 'store',
-      required: installedPlugin?.required === true
-    })
-    await loadAllPlugins()
-    return record
+    return installStorePluginFromBuffer(payload)
   }
 )
 
 ipcMain.handle('plugins.uninstall', async (_event, pluginId: string) => {
-  uninstallPlugin(pluginId)
-  await loadAllPlugins()
-  return { ok: true }
+  try {
+    uninstallPlugin(pluginId)
+    await loadAllPlugins()
+    return { ok: true }
+  } catch (error) {
+    logger.error('Plugin uninstall failed', {
+      event: 'plugin.uninstall.ipc.error',
+      pluginId,
+      error
+    })
+    throw new Error(getPluginUninstallErrorCode(error))
+  }
 })
 
 ipcMain.handle('plugins.reload', async () => {
@@ -3233,34 +3504,15 @@ if (process.platform === 'linux') {
 
 // Process protocol redirection
 const handleProtocolRedirect = async (url: string) => {
+  const pendingState = (await loadPendingExternalLoginStateFromCookie()) ?? pendingExternalLoginState
+
   // Get main window
   let targetWindow = BrowserWindow.getAllWindows()[0]
-
-  // On Linux platform, try to find the original window that initiated login
-  if (process.platform === 'linux') {
-    try {
-      // Try to get original window ID from cookie
-      const authStateCookie = await session.defaultSession.cookies.get({
-        url: COOKIE_URL,
-        name: 'chaterm_auth_state'
-      })
-
-      if (authStateCookie && authStateCookie.length > 0) {
-        const authState = JSON.parse(authStateCookie[0].value)
-        const originalWindowId = authState.windowId
-
-        // Try to find original window
-        const originalWindow = BrowserWindow.fromId(originalWindowId)
-        if (originalWindow && !originalWindow.isDestroyed()) {
-          targetWindow = originalWindow
-          logger.info('Found original window, ID', { value: originalWindowId })
-
-          // Clear authentication state cookie
-          await session.defaultSession.cookies.remove(COOKIE_URL, 'chaterm_auth_state')
-        }
-      }
-    } catch (error) {
-      logger.error('Failed to get original window', { error: error })
+  if (pendingState) {
+    const originalWindow = BrowserWindow.fromId(pendingState.windowId)
+    if (originalWindow && !originalWindow.isDestroyed()) {
+      targetWindow = originalWindow
+      logger.info('Found original window for external login callback', { windowId: pendingState.windowId })
     }
   }
 
@@ -3273,13 +3525,107 @@ const handleProtocolRedirect = async (url: string) => {
   const urlObj = new URL(url)
   const userInfo = urlObj.searchParams.get('userInfo')
   const method = urlObj.searchParams.get('method')
+  const state = urlObj.searchParams.get('state')
+  const timestamp = urlObj.searchParams.get('timestamp')
+  const sign = urlObj.searchParams.get('sign')
 
   if (userInfo) {
+    logger.info('Received external login callback', {
+      hasPendingState: Boolean(pendingState),
+      hasMethod: Boolean(method),
+      hasState: Boolean(state),
+      hasTimestamp: Boolean(timestamp),
+      hasSign: Boolean(sign),
+      signatureEnabled: oauthDeepLinkSignatureEnabled,
+      targetWindowId: targetWindow.id
+    })
+
+    if (!pendingState) {
+      logger.warn('Rejected external login callback without pending auth state')
+      await clearPendingExternalLoginState()
+      return
+    }
+
+    if (!state || state !== pendingState.state) {
+      logger.warn('Rejected external login callback due to invalid state', {
+        hasState: Boolean(state),
+        stateMatches: state === pendingState.state,
+        callbackStateSuffix: state ? state.slice(-8) : '',
+        pendingStateSuffix: pendingState.state.slice(-8),
+        windowId: pendingState.windowId
+      })
+      await clearPendingExternalLoginState()
+      return
+    }
+
+    if (pendingState.expiresAt <= Date.now()) {
+      logger.warn('Rejected external login callback because auth state expired', {
+        createdAt: pendingState.createdAt,
+        expiresAt: pendingState.expiresAt
+      })
+      await clearPendingExternalLoginState()
+      return
+    }
+
     try {
+      const parsedUserInfo = JSON.parse(userInfo) as Record<string, unknown>
+      logger.info('Parsed external login callback payload', {
+        method: method,
+        uid: parsedUserInfo.uid,
+        email: parsedUserInfo.email,
+        signatureEnabled: oauthDeepLinkSignatureEnabled
+      })
+
+      if (oauthDeepLinkSignatureEnabled) {
+        if (!method || !timestamp || !sign) {
+          logger.warn('Rejected external login callback because signature payload is incomplete', {
+            hasMethod: Boolean(method),
+            hasTimestamp: Boolean(timestamp),
+            hasSign: Boolean(sign)
+          })
+          await clearPendingExternalLoginState()
+          return
+        }
+
+        const signatureValid = verifyOAuthDeepLinkSignature({
+          userInfo: parsedUserInfo,
+          method,
+          state,
+          timestamp,
+          sign
+        })
+
+        if (!signatureValid) {
+          logger.warn('Rejected external login callback because signature verification failed', {
+            method: method,
+            uid: parsedUserInfo.uid,
+            email: parsedUserInfo.email
+          })
+          await clearPendingExternalLoginState()
+          return
+        }
+
+        logger.info('External login callback signature verification passed', {
+          method: method,
+          uid: parsedUserInfo.uid
+        })
+      }
+
+      await clearPendingExternalLoginState()
+
       // Send data to renderer process
       targetWindow.webContents.send('external-login-success', {
-        userInfo: JSON.parse(userInfo),
-        method: method
+        userInfo: parsedUserInfo,
+        userInfoRaw: userInfo,
+        method: method,
+        state: state,
+        timestamp: timestamp,
+        sign: sign
+      })
+      logger.info('Dispatched external login callback to renderer', {
+        method: method,
+        uid: parsedUserInfo.uid,
+        targetWindowId: targetWindow.id
       })
 
       // Ensure window is visible and focused
@@ -3293,7 +3639,13 @@ const handleProtocolRedirect = async (url: string) => {
       // So we handle data sync restart through init-user-database after renderer process finishes login
       logger.info('External login succeeded, waiting for renderer process to handle user initialization...')
     } catch (error) {
-      logger.error('Failed to process external login data', { error: error })
+      logger.error('Failed to process external login data', {
+        error: error,
+        hasMethod: Boolean(method),
+        hasState: Boolean(state),
+        hasTimestamp: Boolean(timestamp),
+        hasSign: Boolean(sign)
+      })
     }
   }
 }
@@ -3419,9 +3771,15 @@ ipcMain.handle('xshell-wakeup:consume-pending', async () => {
 ipcMain.handle('open-external-login', async () => {
   try {
     // Generate a random state value for security verification
-    const state = Math.random().toString(36).substring(2)
-    // Store status values for subsequent verification
-    global.authState = state
+    const state = randomUUID()
+    const now = Date.now()
+    const nextPendingState: PendingExternalLoginState = {
+      state,
+      createdAt: now,
+      expiresAt: now + EXTERNAL_LOGIN_STATE_TTL_MS,
+      windowId: mainWindow.id
+    }
+    pendingExternalLoginState = nextPendingState
 
     // Get MAC address
     const macAddress = getMacAddress()
@@ -3448,13 +3806,11 @@ ipcMain.handle('open-external-login', async () => {
     // On Linux platform, save state to local storage for new instances to access
     if (process.platform === 'linux') {
       try {
-        // Save current window ID for callback to find the correct window
-        const windowId = mainWindow.id
         await session.defaultSession.cookies.set({
           url: COOKIE_URL,
           name: 'chaterm_auth_state',
-          value: JSON.stringify({ state, windowId }),
-          expirationDate: Date.now() / 1000 + 600 // 10 minutes expiry
+          value: JSON.stringify(nextPendingState),
+          expirationDate: nextPendingState.expiresAt / 1000
         })
       } catch (error) {
         logger.error('Failed to save auth state', { error: error })
@@ -3469,12 +3825,3 @@ ipcMain.handle('open-external-login', async () => {
     return { success: false, error: error instanceof Error ? error.message : String(error) }
   }
 })
-
-// Global type declarations
-declare global {
-  namespace NodeJS {
-    interface Global {
-      authState: string
-    }
-  }
-}

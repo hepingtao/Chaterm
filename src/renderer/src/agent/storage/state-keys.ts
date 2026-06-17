@@ -99,9 +99,11 @@ export type GlobalStateKey =
   | 'defaultBaseUrl'
   | 'defaultModelId'
   | 'defaultModelInfoMap'
+  | 'defaultLockedModelNames'
   | 'messageFeedbacks'
   | 'userRules'
   | 'kbSearchEnabled'
   | 'experienceExtractionEnabled'
+  | 'commandOutputFilteringEnabled'
 
 export type LocalStateKey = 'localClineRulesToggles'

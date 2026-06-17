@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import Database from 'better-sqlite3'
+import type Database from 'better-sqlite3'
+import { runElectronNativeSqliteCase } from '../../../../test-utils/electron-native-sqlite'
 
 vi.mock('@logging/index', () => ({
   createLogger: vi.fn(() => ({
@@ -12,8 +13,13 @@ vi.mock('@logging/index', () => ({
 
 const { upgradeDbAssetsSupport } = await import('../add-db-assets-support')
 
+type MockStatement = {
+  get: () => unknown
+  all: () => unknown[]
+}
+
 type MockDb = {
-  prepare: (sql: string) => { get: () => unknown }
+  prepare: (sql: string) => MockStatement
   exec: (sql: string) => void
 }
 
@@ -33,16 +39,34 @@ describe('upgradeDbAssetsSupport', () => {
     db = {
       prepare(sql: string) {
         const normalized = sql.trim().toLowerCase()
+        const emptyStatement: MockStatement = { get: () => undefined, all: () => [] }
+        if (normalized.startsWith('pragma table_info')) {
+          return {
+            get: () => undefined,
+            all: () => [
+              { name: 'id', type: 'TEXT', notnull: 0, pk: 1 },
+              { name: 'user_id', type: 'INTEGER', notnull: 1, pk: 0 },
+              { name: 'name', type: 'TEXT', notnull: 1, pk: 0 },
+              { name: 'db_type', type: 'TEXT', notnull: 1, pk: 0 },
+              { name: 'host', type: 'TEXT', notnull: 0, pk: 0 },
+              { name: 'port', type: 'INTEGER', notnull: 0, pk: 0 },
+              { name: 'file_path', type: 'TEXT', notnull: 0, pk: 0 },
+              { name: 'connection_mode', type: 'TEXT', notnull: 0, dflt_value: "'readwrite'", pk: 0 },
+              { name: 'created_at', type: 'TEXT', notnull: 1, pk: 0 },
+              { name: 'updated_at', type: 'TEXT', notnull: 1, pk: 0 }
+            ]
+          }
+        }
         if (normalized.includes("'db_assets'")) {
-          return { get: () => (dbAssetsExists ? { name: 'db_assets' } : undefined) }
+          return { ...emptyStatement, get: () => (dbAssetsExists ? { name: 'db_assets' } : undefined) }
         }
         if (normalized.includes("'db_connection_sessions'")) {
-          return { get: () => (sessionsExists ? { name: 'db_connection_sessions' } : undefined) }
+          return { ...emptyStatement, get: () => (sessionsExists ? { name: 'db_connection_sessions' } : undefined) }
         }
         if (normalized.includes("'db_asset_groups'")) {
-          return { get: () => (groupsExists ? { name: 'db_asset_groups' } : undefined) }
+          return { ...emptyStatement, get: () => (groupsExists ? { name: 'db_asset_groups' } : undefined) }
         }
-        return { get: () => undefined }
+        return emptyStatement
       },
       exec(sql: string) {
         execCalls.push(sql)
@@ -59,6 +83,10 @@ describe('upgradeDbAssetsSupport', () => {
     expect(joined).toContain('CREATE TABLE db_assets')
     expect(joined).toContain('group_id TEXT')
     expect(joined).toContain('db_type TEXT NOT NULL')
+    expect(joined).toContain('host TEXT')
+    expect(joined).toContain('port INTEGER')
+    expect(joined).toContain('file_path TEXT')
+    expect(joined).toContain("connection_mode TEXT DEFAULT 'readwrite'")
     expect(joined).toContain('password_ciphertext TEXT')
     expect(joined).toContain('status TEXT')
     expect(joined).toContain('CREATE TABLE db_asset_groups')
@@ -89,6 +117,10 @@ describe('upgradeDbAssetsSupport', () => {
     expect(joined).toContain('ssh_tunnel_asset_uuid TEXT')
     expect(joined).toContain('options_json TEXT')
     expect(joined).toContain('tags_json TEXT')
+  })
+
+  it('rebuilds legacy db_assets to relax host/port and add sqlite fields', async () => {
+    await runElectronNativeSqliteCase('db-assets:legacy-rebuild')
   })
 
   it('skips table creation when db_assets already exists', async () => {

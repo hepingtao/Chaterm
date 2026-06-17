@@ -46,16 +46,13 @@ import {
   jumpserverLastCommand,
   createJumpServerExecStream,
   executeCommandOnJumpServerExec,
-  jumpserverSessionPids,
-  jumpserverPendingData
+  jumpserverSessionPids
 } from './jumpserverHandle'
 import path from 'path'
 import fs from 'fs'
 import { SSHAgentManager } from './ssh-agent/ChatermSSHAgent'
 import { randomUUID } from 'crypto'
 import { getAlgorithmsByAssetType } from './algorithms'
-import { getSshKeepaliveConfig } from './sshConfig'
-import { getUserConfigFromRenderer } from '../index'
 import { connectBastionByType, shellBastionSession, resizeBastionSession, writeBastionSession, disconnectBastionSession } from './bastionPlugin'
 import { shouldSkipPostConnectProbe } from './postConnectProbePolicy'
 import { sftpConnectionInfoMap } from './sftpTransfer'
@@ -131,49 +128,6 @@ export interface ExecResult {
 // Store shell session streams
 const shellStreams = new Map()
 const markedCommands = new Map()
-const terminalKeepaliveTimers = new Map<string, NodeJS.Timeout>()
-
-/**
- * Start a terminal-level keepalive timer that sends null bytes to prevent
- * bastion hosts (like JumpServer) from closing idle sessions.
- */
-const startTerminalKeepalive = (id: string, _stream?: any) => {
-  stopTerminalKeepalive(id)
-  // Read config asynchronously but start timer on next tick
-  getUserConfigFromRenderer()
-    .then((cfg) => {
-      const keepaliveMinutes = cfg?.sshTerminalKeepalive ?? 0
-      if (keepaliveMinutes <= 0) return
-      const intervalMs = keepaliveMinutes * 60 * 1000
-      const timer = setInterval(() => {
-        const s = shellStreams.get(id) || jumpserverShellStreams.get(id)
-        if (s && !s.destroyed) {
-          s.write('\x00', (err) => {
-            if (err) {
-              logger.debug('Terminal keepalive write failed', { event: 'ssh.terminal-keepalive.error', connectionId: id, error: err.message })
-              stopTerminalKeepalive(id)
-            }
-          })
-        } else {
-          stopTerminalKeepalive(id)
-        }
-      }, intervalMs)
-      terminalKeepaliveTimers.set(id, timer)
-      logger.info('Terminal keepalive started', { event: 'ssh.terminal-keepalive.start', connectionId: id, intervalMinutes: keepaliveMinutes })
-    })
-    .catch((err) => {
-      logger.debug('Failed to read terminal keepalive config', { error: err.message })
-    })
-}
-
-const stopTerminalKeepalive = (id: string) => {
-  const timer = terminalKeepaliveTimers.get(id)
-  if (timer) {
-    clearInterval(timer)
-    terminalKeepaliveTimers.delete(id)
-    logger.debug('Terminal keepalive stopped', { event: 'ssh.terminal-keepalive.stop', connectionId: id })
-  }
-}
 
 const KeyboardInteractiveAttempts = new Map()
 export const connectionStatus = new Map()
@@ -1152,7 +1106,56 @@ export async function createProxyCommandSocket(commandStr: string, host: string,
 
   return socketProxy
 }
+
+const hasNonEmptyCredential = (value: unknown): boolean => typeof value === 'string' && value.length > 0
+
+export async function enrichConnectionCredentials(connectionInfo: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (hasNonEmptyCredential(connectionInfo.password) || hasNonEmptyCredential(connectionInfo.privateKey)) {
+    return connectionInfo
+  }
+
+  const assetUuid = typeof connectionInfo.assetUuid === 'string' ? connectionInfo.assetUuid.trim() : ''
+  if (!assetUuid) {
+    return connectionInfo
+  }
+
+  try {
+    const { connectAssetInfo } = require('../storage/database') as typeof import('../storage/database')
+    const organizationUuid = typeof connectionInfo.organizationUuid === 'string' ? connectionInfo.organizationUuid.trim() : undefined
+    const ip =
+      typeof connectionInfo.targetIp === 'string'
+        ? connectionInfo.targetIp.trim()
+        : typeof connectionInfo.host === 'string'
+          ? connectionInfo.host.trim()
+          : undefined
+    const fallback = organizationUuid || ip ? { organizationUuid, ip } : undefined
+    const asset = await connectAssetInfo(assetUuid, fallback)
+    if (!asset) {
+      return connectionInfo
+    }
+
+    const authType = asset.auth_type || 'password'
+    return {
+      ...connectionInfo,
+      username: asset.username || connectionInfo.username,
+      password: authType !== 'keyBased' ? asset.password || connectionInfo.password : '',
+      privateKey: authType === 'keyBased' ? asset.privateKey || connectionInfo.privateKey : '',
+      passphrase: authType === 'keyBased' ? asset.passphrase || connectionInfo.passphrase : connectionInfo.passphrase
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    logger.warn('Failed to resolve asset credentials for SSH connect', {
+      event: 'ssh.connect.resolve_credentials_failed',
+      connectionId: connectionInfo.id,
+      error: errorMessage
+    })
+    return connectionInfo
+  }
+}
+
 const handleAttemptConnection = async (event, connectionInfo, resolve, reject, retryCount) => {
+  connectionInfo = await enrichConnectionCredentials(connectionInfo)
+
   const {
     id,
     host,
@@ -1213,37 +1216,6 @@ const handleAttemptConnection = async (event, connectionInfo, resolve, reject, r
       resolve({ status: 'connected', message: 'Connection successful (reused)' })
       return
     }
-  }
-
-  // Check if there's an existing JumpServer connection to the same bastion host.
-  // When connecting to the JumpServer CLI (not via an asset), the request comes through
-  // sshHandle with sshType='ssh', but we can reuse the underlying SSH connection from
-  // jumpserverConnections to avoid re-entering OTP.
-  let reusedJumpServerConn: Client | null = null
-  for (const [, existingData] of jumpserverConnections.entries()) {
-    if (existingData.host === host && existingData.port === (port || 22) && existingData.username === username) {
-      reusedJumpServerConn = existingData.conn
-      logger.info('Reusing existing JumpServer connection for SSH connect', {
-        event: 'ssh.jumpserver.reuse',
-        connectionId: id,
-        host,
-        port: port || 22
-      })
-      break
-    }
-  }
-
-  if (reusedJumpServerConn) {
-    const conn = reusedJumpServerConn
-    sshConnections.set(id, conn)
-    connectionStatus.set(id, { isVerified: true })
-    connectionEvents.emit(`connection-status-changed:${id}`, { isVerified: true })
-
-    // Execute secondary connection (sudo check, SFTP, etc.)
-    attemptSecondaryConnection(event, connectionInfo, conn)
-
-    resolve({ status: 'connected', message: 'Connection successful (JumpServer session reused)' })
-    return
   }
 
   const conn = new Client()
@@ -1327,13 +1299,12 @@ const handleAttemptConnection = async (event, connectionInfo, resolve, reject, r
 
   // Configure connection settings
   const algorithms = getAlgorithmsByAssetType(asset_type)
-  const keepaliveCfg = await getSshKeepaliveConfig()
   const connectConfig: any = {
     host,
     port: port || 22,
     username,
-    keepaliveInterval: keepaliveCfg.keepaliveInterval,
-    keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
+    keepaliveInterval: 10000, // Keep connection alive
+    keepaliveCountMax: 3,
     tryKeyboard: true, // Enable keyboard interactive authentication
     readyTimeout: KeyboardInteractiveTimeout, // Connection timeout, 30 seconds
     algorithms
@@ -1396,7 +1367,7 @@ const handleAttemptConnection = async (event, connectionInfo, resolve, reject, r
           port: jumpAsset.port || 22,
           username: jumpAsset.username,
           asset_type: jumpAsset.asset_type,
-          password: jumpAsset.auth_type === 'password' ? jumpAsset.password : undefined,
+          password: jumpAsset.auth_type !== 'keyBased' ? jumpAsset.password : undefined,
           privateKey: jumpAsset.auth_type === 'keyBased' ? jumpAsset.privateKey : undefined,
           passphrase: jumpAsset.auth_type === 'keyBased' ? jumpAsset.passphrase : undefined
         }
@@ -1658,17 +1629,6 @@ export const registerSSHHandlers = () => {
       // Clear old listeners
       stream.removeAllListeners('data')
 
-      // Forward any data that arrived between connection success and shell start
-      // This prevents data loss during the window when interaction.ts was buffering
-      // connected-phase data but ssh:shell hadn't set up forwarding listeners yet
-      const pendingData = jumpserverPendingData.get(id)
-      if (pendingData && pendingData.length > 0) {
-        const combinedChunk = pendingData.map((b) => b.toString('utf8')).join('')
-        const combinedRaw = Buffer.concat(pendingData)
-        event.sender.send(`ssh:shell:data:${id}`, { data: combinedChunk, raw: combinedRaw, marker: '' })
-      }
-      jumpserverPendingData.delete(id)
-
       let bufferChunks: string[] = []
       let bufferLength = 0
       let flushTimer: NodeJS.Timeout | null = null
@@ -1771,14 +1731,10 @@ export const registerSSHHandlers = () => {
 
       stream.on('close', () => {
         flushBuffer()
-        stopTerminalKeepalive(id)
         logger.debug('JumpServer shell stream closed', { event: 'jumpserver.stream.close', connectionId: id })
         event.sender.send(`ssh:shell:close:${id}`)
         jumpserverShellStreams.delete(id)
       })
-
-      // Start terminal keepalive to prevent bastion idle timeout
-      startTerminalKeepalive(id, stream)
 
       return { status: 'success', message: 'JumpServer Shell ready' }
     }
@@ -1794,7 +1750,7 @@ export const registerSSHHandlers = () => {
       return { status: 'error', message: 'Not connected to the server' }
     }
 
-    const termType = terminalType || 'vt100'
+    const termType = terminalType || 'xterm-256color'
     const delayMs = 300
     const fallbackExecs = ['bash', 'sh']
 
@@ -1809,9 +1765,6 @@ export const registerSSHHandlers = () => {
 
     const handleStream = (stream, method: 'shell' | 'exec') => {
       shellStreams.set(id, stream)
-
-      // Start terminal keepalive to prevent bastion idle timeout
-      startTerminalKeepalive(id, stream)
 
       let bufferChunks: string[] = []
       let bufferLength = 0
@@ -1897,7 +1850,6 @@ export const registerSSHHandlers = () => {
 
       stream.on('close', () => {
         flushBuffer()
-        stopTerminalKeepalive(id)
         const closeInfo = consumeShellCloseInfo(id)
         logger.info('Shell stream closed', {
           event: 'ssh.stream.close',
@@ -2256,7 +2208,6 @@ export const registerSSHHandlers = () => {
       connectionId: id
     })
 
-    stopTerminalKeepalive(id)
     await cleanupTunnelsByConnection(id)
 
     // Check if it's a JumpServer connection
@@ -2803,74 +2754,9 @@ const getSystemInfo = async (id: string): Promise<CommandGenerationContext> => {
 }
 
 export const pickReconnectConnectionInfo = (connectionInfo: any) => {
-  if (!connectionInfo?.id) {
-    logger.warn('pickReconnectConnectionInfo: no id in connectionInfo', { event: 'sftp.pick.noId' })
-    return null
-  }
+  if (!connectionInfo?.id) return null
 
-  // For JumpServer SFTP connections, we need to store the compound username
-  // (bastionUser@assetUser@assetIp) for reconnection. The regular username field
-  // is kept as-is for findReusableJumpServerSession matching.
-  let sftpCompoundUsername: string | undefined
-  if (connectionInfo.sshType === 'jumpserver' && connectionInfo.targetIp) {
-    const { assetUuid, host, port, username } = connectionInfo
-    const jumpserverUuid = assetUuid || connectionInfo.id
-
-    logger.info('pickReconnectConnectionInfo: processing JumpServer SFTP', {
-      event: 'sftp.pick.jumpserver',
-      jumpserverUuid,
-      hasAssetUuid: !!assetUuid,
-      hasTargetIp: !!connectionInfo.targetIp,
-      existingSessionCount: jumpserverConnections.size
-    })
-
-    // Find matching JumpServer session to get selectedUsername
-    for (const [, existingData] of jumpserverConnections.entries()) {
-      if (existingData.jumpserverUuid === jumpserverUuid && existingData.navigationPath?.selectedUsername) {
-        // Build compound username format: bastionUser@assetUser@assetIp
-        // Example: hepingtao@itouchtv@192.168.31.20
-        // Note: The host parameter in connectConfig already specifies the bastion host,
-        // so we don't need to include it in the username
-        sftpCompoundUsername = `${username}@${existingData.navigationPath.selectedUsername}@${connectionInfo.targetIp}`
-        logger.info('pickReconnectConnectionInfo: found JumpServer session', {
-          event: 'sftp.pick.jumpserver.found',
-          jumpserverUuid,
-          selectedUsername: existingData.navigationPath.selectedUsername,
-          compoundUsername: sftpCompoundUsername
-        })
-        break
-      }
-    }
-
-    // Fallback: try host + port + username match
-    if (!sftpCompoundUsername && host && port && username) {
-      for (const [, existingData] of jumpserverConnections.entries()) {
-        if (
-          existingData.host === host &&
-          existingData.port === (port || 22) &&
-          existingData.username === username &&
-          existingData.navigationPath?.selectedUsername
-        ) {
-          // Build compound username format: bastionUser@assetUser@assetIp
-          // Example: hepingtao@itouchtv@192.168.31.20
-          // Note: The host parameter in connectConfig already specifies the bastion host,
-          // so we don't need to include it in the username
-          sftpCompoundUsername = `${username}@${existingData.navigationPath.selectedUsername}@${connectionInfo.targetIp}`
-          logger.info('pickReconnectConnectionInfo: found JumpServer session via fallback', {
-            event: 'sftp.pick.jumpserver.fallback',
-            host,
-            port,
-            username,
-            selectedUsername: existingData.navigationPath.selectedUsername,
-            compoundUsername: sftpCompoundUsername
-          })
-          break
-        }
-      }
-    }
-  }
-
-  const result = {
+  return {
     id: connectionInfo.id,
     sshType: connectionInfo.sshType,
     host: connectionInfo.host,
@@ -2886,21 +2772,8 @@ export const pickReconnectConnectionInfo = (connectionInfo: any) => {
     asset_type: connectionInfo.asset_type,
     assetUuid: connectionInfo.assetUuid,
     targetIp: connectionInfo.targetIp,
-    terminalType: connectionInfo.terminalType,
-    sftpCompoundUsername
+    terminalType: connectionInfo.terminalType
   }
-
-  logger.info('pickReconnectConnectionInfo: result', {
-    event: 'sftp.pick.result',
-    id: result.id,
-    sshType: result.sshType,
-    host: result.host,
-    targetIp: result.targetIp,
-    hasSftpCompoundUsername: !!result.sftpCompoundUsername,
-    sftpCompoundUsername: result.sftpCompoundUsername
-  })
-
-  return result
 }
 
 export const initSftpOnConnection = (conn: Client, connectionId: string, connectionInfo: any): Promise<void> => {

@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import eventBus from '@/utils/eventBus'
 import { useSessionState } from './useSessionState'
 import { focusChatInput } from './useTabManagement'
@@ -63,8 +63,9 @@ interface TabInfo {
 export function useEventBusListeners(params: UseEventBusListenersParams) {
   const { t } = i18n.global
   const { sendMessageWithContent, initModel, getCurentTabAssetInfo, updateHosts, isAgentMode = false, workspace = AI_TAB_DEFAULT_WORKSPACE } = params
-  const { chatTabs, currentSession, autoUpdateHost, chatTypeValue, appendTextToInputParts } = useSessionState()
+  const { chatTabs, currentChatId, currentSession, autoUpdateHost, chatTypeValue, appendTextToInputParts } = useSessionState()
   const isDatabaseWorkspace = workspace === 'database'
+  const pendingChatToAiTexts: string[] = []
 
   // Check and handle network switch device mode restriction
   const checkAndHandleSwitchMode = async (): Promise<boolean> => {
@@ -137,14 +138,34 @@ export function useEventBusListeners(params: UseEventBusListenersParams) {
     await sendMessageWithContent(content.trim(), 'commandSend', tabId, undefined, undefined, undefined, toolResult)
   }
 
+  const appendChatToAiText = async (text: string) => {
+    if (!currentChatId.value || !currentSession.value) {
+      pendingChatToAiTexts.push(text)
+      return
+    }
+
+    appendTextToInputParts(text, '\n', '\n')
+    await initAssetInfo()
+    focusChatInput()
+  }
+
+  const flushPendingChatToAiTexts = async () => {
+    if (!currentChatId.value || !currentSession.value || pendingChatToAiTexts.length === 0) {
+      return
+    }
+
+    const texts = pendingChatToAiTexts.splice(0)
+    for (const text of texts) {
+      await appendChatToAiText(text)
+    }
+  }
+
   const handleChatToAi = async (text: string) => {
     if (isAgentMode) {
       logger.debug('Ignoring chatToAi event in agent mode')
       return
     }
-    appendTextToInputParts(text, '\n', '\n')
-    await initAssetInfo()
-    focusChatInput()
+    await appendChatToAiText(text)
   }
 
   const handleActiveTabChanged = async (tabInfo: TabInfo) => {
@@ -203,7 +224,7 @@ export function useEventBusListeners(params: UseEventBusListenersParams) {
     chatTypeValue.value = AiTypeOptions[nextIndex].value
   }
 
-  let crossOutputCleanup: (() => void) | null = null
+  // cross-output cleanup is handled externally via eventBus
 
   onMounted(async () => {
     eventBus.on('SettingModelOptionsChanged', handleSettingModelOptionsChanged)
@@ -225,4 +246,12 @@ export function useEventBusListeners(params: UseEventBusListenersParams) {
       eventBus.off('switchAiMode', handleSwitchAiMode)
     }
   })
+
+  watch(
+    [currentChatId, currentSession],
+    () => {
+      void flushPendingChatToAiTexts()
+    },
+    { flush: 'post' }
+  )
 }

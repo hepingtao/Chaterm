@@ -98,7 +98,7 @@ function parseDeployStatus(raw: unknown): number {
 }
 
 export function isEnterpriseDeployEnabled(): boolean {
-  return parseDeployStatus(import.meta.env.RENDERER_DEPLOY_STATUS) === 1
+  return parseDeployStatus(import.meta.env.RENDERER_DEPLOY_STATUS) !== 0
 }
 
 function normalizeProvider(rawProvider: unknown): string {
@@ -383,82 +383,6 @@ export const PROVIDER_MODEL_KEY_MAP: Record<string, GlobalStateKey> = {
   default: 'defaultModelId'
 }
 
-const normalizedString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
-
-const createStoredModelOption = (provider: string, modelName: string): ModelOption => ({
-  id: `${provider}:${modelName}`,
-  name: modelName,
-  checked: true,
-  type: provider === 'default' ? 'standard' : 'custom',
-  apiProvider: provider
-})
-
-async function bootstrapSkippedLoginModelOptions(existingModelOptions: ModelOption[]): Promise<ModelOption[]> {
-  const existing = existingModelOptions.filter((option) => normalizedString(option?.name))
-  if (existing.length > 0) return existing
-
-  const [
-    defaultModelId,
-    defaultBaseUrl,
-    defaultApiKey,
-    openAiModelId,
-    openAiBaseUrl,
-    openAiApiKey,
-    anthropicModelId,
-    anthropicApiKey,
-    liteLlmModelId,
-    liteLlmBaseUrl,
-    liteLlmApiKey,
-    ollamaModelId,
-    ollamaBaseUrl,
-    apiModelId,
-    deepSeekApiKey,
-    awsAccessKey,
-    awsSecretKey,
-    awsRegion
-  ] = await Promise.all([
-    getGlobalState('defaultModelId'),
-    getGlobalState('defaultBaseUrl'),
-    getSecret('defaultApiKey'),
-    getGlobalState('openAiModelId'),
-    getGlobalState('openAiBaseUrl'),
-    getSecret('openAiApiKey'),
-    getGlobalState('anthropicModelId'),
-    getSecret('anthropicApiKey'),
-    getGlobalState('liteLlmModelId'),
-    getGlobalState('liteLlmBaseUrl'),
-    getSecret('liteLlmApiKey'),
-    getGlobalState('ollamaModelId'),
-    getGlobalState('ollamaBaseUrl'),
-    getGlobalState('apiModelId'),
-    getSecret('deepSeekApiKey'),
-    getSecret('awsAccessKey'),
-    getSecret('awsSecretKey'),
-    getGlobalState('awsRegion')
-  ])
-
-  const options: ModelOption[] = []
-  const seen = new Set<string>()
-  const addOption = (provider: string, modelName: unknown, hasConfig: boolean) => {
-    const name = normalizedString(modelName)
-    if (!name || !hasConfig) return
-    const key = `${provider}:${name}`
-    if (seen.has(key)) return
-    seen.add(key)
-    options.push(createStoredModelOption(provider, name))
-  }
-
-  addOption('default', defaultModelId, !isEmptyValue(defaultBaseUrl) && !isEmptyValue(defaultApiKey))
-  addOption('openai', openAiModelId, !isEmptyValue(openAiBaseUrl) && !isEmptyValue(openAiApiKey))
-  addOption('anthropic', anthropicModelId, !isEmptyValue(anthropicApiKey))
-  addOption('litellm', liteLlmModelId, !isEmptyValue(liteLlmBaseUrl) && !isEmptyValue(liteLlmApiKey))
-  addOption('ollama', ollamaModelId, !isEmptyValue(ollamaBaseUrl))
-  addOption('deepseek', apiModelId, !isEmptyValue(deepSeekApiKey))
-  addOption('bedrock', apiModelId, !isEmptyValue(awsAccessKey) && !isEmptyValue(awsSecretKey) && !isEmptyValue(awsRegion))
-
-  return options
-}
-
 /**
  * Composable for AI model configuration management
  * Handles model selection, configuration and initialization
@@ -644,15 +568,6 @@ export const useModelConfiguration = createGlobalState(() => {
 
       // Skip loading built-in models if user skipped login
       if (isSkippedLogin) {
-        const skippedLoginModelOptions = await bootstrapSkippedLoginModelOptions(initialSavedModelOptions)
-        await updateGlobalState('modelOptions', skippedLoginModelOptions)
-        await updateGlobalState('enterpriseModelConfigs', [])
-        await updateGlobalState('enterpriseModelConfigVersion', '')
-        await updateGlobalState('enterpriseModelPluginActive', false)
-        clearEnterpriseSyncTimer()
-        const defaultBaseUrl = (await getGlobalState('defaultBaseUrl')) as string | undefined
-        const defaultApiKey = await getSecret('defaultApiKey')
-        refreshDefaultModelInfoMapInBackground(defaultBaseUrl, defaultApiKey)
         return
       }
 
@@ -682,6 +597,7 @@ export const useModelConfiguration = createGlobalState(() => {
       allLockedNames.value = enterprisePluginActive ? [] : subscriptionModelsList.filter((model) => !availableSet.has(model))
       budgetResetAt.value = userData.budgetResetAt || ''
       subscription.value = userData.subscription || ''
+      await updateGlobalState('defaultLockedModelNames', allLockedNames.value)
 
       if (enterprisePluginActive) {
         refreshDefaultModelInfoMapInBackground(gatewayAddr, gatewayKey)
@@ -695,8 +611,15 @@ export const useModelConfiguration = createGlobalState(() => {
         type: 'standard',
         apiProvider: 'default'
       }))
+      const lockedModelOptions: ModelOption[] = allLockedNames.value.map((model) => ({
+        id: model,
+        name: model,
+        checked: true,
+        type: 'standard',
+        apiProvider: 'default'
+      }))
 
-      const serializableModelOptions = modelOptions.map((model) => ({
+      const serializableModelOptions = [...modelOptions, ...lockedModelOptions].map((model) => ({
         id: model.id,
         name: model.name,
         checked: Boolean(model.checked),
@@ -745,6 +668,7 @@ export const useModelConfiguration = createGlobalState(() => {
       if (enterprisePluginActive) {
         allLockedNames.value = []
         lockedModels.value = []
+        await updateGlobalState('defaultLockedModelNames', [])
         await initModel()
         return
       }
@@ -759,6 +683,7 @@ export const useModelConfiguration = createGlobalState(() => {
     const availableSet = new Set(serverModels)
     const lockedFromServer = subscriptionModelsList.filter((m) => !availableSet.has(m))
     allLockedNames.value = lockedFromServer
+    await updateGlobalState('defaultLockedModelNames', lockedFromServer)
 
     // Skip update if server returns empty list to avoid accidental clearing
     if (enterpriseModelConfigs.length === 0 && serverModels.length === 0 && subscriptionModelsList.length === 0) {
@@ -857,6 +782,7 @@ export const useModelConfiguration = createGlobalState(() => {
   )
 
   const showLockedModelUpgradeTag = computed(() => {
+    if (isEnterpriseDeployEnabled()) return false
     const sub = (subscription.value || '').toLowerCase()
     return sub === 'free' || sub === 'lite'
   })

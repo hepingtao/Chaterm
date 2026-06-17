@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
+import { message } from 'ant-design-vue'
 import AssetForm from '../AssetForm.vue'
+import eventBus from '@/utils/eventBus'
 
 // Mock ant-design-vue
 vi.mock('ant-design-vue', () => ({
@@ -36,6 +38,11 @@ const translations: Record<string, string> = {
   'personal.pleaseInputUsername': 'Please input username',
   'personal.pleaseInputPassword': 'Please input password',
   'personal.pleaseSelectKeychain': 'Please select keychain',
+  'personal.passwordCredential': 'Password Credential',
+  'personal.pleaseSelectPasswordCredential': 'Please select password credential',
+  'personal.passwordCredentialLoadFailed': 'Failed to load password credential',
+  'personal.validationPasswordCredentialRequired': 'Password credential cannot be empty',
+  'personal.validationPasswordCredentialUsernameRequired': 'Password credential is missing a username. Please update it in credential management.',
   'personal.proxyConfig': 'Proxy Config',
   'personal.pleaseSelectSshProxy': 'Please select SSH proxy',
   'personal.advancedOptions': 'Advanced Options',
@@ -62,7 +69,8 @@ const translations: Record<string, string> = {
   'personal.validationIpNoSpaces': 'IP cannot contain spaces',
   'personal.validationPortNoSpaces': 'Port cannot contain spaces',
   'personal.validationUsernameNoSpaces': 'Username cannot contain spaces',
-  'personal.validationPasswordNoSpaces': 'Password cannot contain spaces'
+  'personal.validationPasswordNoSpaces': 'Password cannot contain spaces',
+  'keyChain.newCredential': 'New Credential'
 }
 
 // Mock i18n
@@ -100,7 +108,8 @@ vi.mock('@/utils/eventBus', () => ({
 
 // Mock window.api
 const mockWindowApi = {
-  getBastionDefinitions: vi.fn().mockResolvedValue([])
+  getBastionDefinitions: vi.fn().mockResolvedValue([]),
+  getKeyChainInfo: vi.fn()
 }
 
 describe('AssetForm Validation', () => {
@@ -118,6 +127,7 @@ describe('AssetForm Validation', () => {
         isEditMode: false,
         initialData: {},
         keyChainOptions: [],
+        passwordChainOptions: [],
         sshProxyConfigs: [],
         defaultGroups: ['development', 'production'],
         ...props
@@ -400,6 +410,25 @@ describe('AssetForm Validation', () => {
       expect(wrapper.emitted('submit')).toBeUndefined()
     })
 
+    it('should not emit submit when auth is passwordCredential and no credential is selected', async () => {
+      wrapper = createWrapper({
+        initialData: {
+          ip: '192.168.1.1',
+          port: 22,
+          username: 'root',
+          password: '',
+          asset_type: 'person',
+          auth_type: 'passwordCredential',
+          keyChain: undefined
+        }
+      })
+      await nextTick()
+      await clickSubmit(wrapper)
+
+      expect(message.error).toHaveBeenCalledWith('Password credential cannot be empty')
+      expect(wrapper.emitted('submit')).toBeUndefined()
+    })
+
     it('should emit submit when auth is password and password is provided', async () => {
       wrapper = createWrapper({
         initialData: {
@@ -415,6 +444,59 @@ describe('AssetForm Validation', () => {
       await clickSubmit(wrapper)
 
       expect(wrapper.emitted('submit')).toBeTruthy()
+    })
+
+    it('should load password from selected password credential', async () => {
+      mockWindowApi.getKeyChainInfo.mockResolvedValue({
+        chain_type: 'PASSWORD',
+        passphrase: 'shared-secret',
+        public_key: 'root'
+      })
+      wrapper = createWrapper({
+        initialData: {
+          ip: '192.168.1.1',
+          port: 22,
+          username: 'manual-user',
+          password: '',
+          asset_type: 'person',
+          auth_type: 'passwordCredential'
+        },
+        passwordChainOptions: [{ key: 7, label: 'Shared root password' }]
+      })
+      await nextTick()
+
+      await wrapper.vm.handlePasswordChainChange(7)
+
+      expect(mockWindowApi.getKeyChainInfo).toHaveBeenCalledWith({ id: 7 })
+      expect(wrapper.vm.formData.password).toBe('shared-secret')
+      expect(wrapper.vm.formData.username).toBe('root')
+      expect(wrapper.vm.formData.keyChain).toBe(7)
+    })
+
+    it('should not emit submit when password credential has no username', async () => {
+      mockWindowApi.getKeyChainInfo.mockResolvedValue({
+        chain_type: 'PASSWORD',
+        passphrase: 'shared-secret',
+        public_key: ''
+      })
+      wrapper = createWrapper({
+        initialData: {
+          ip: '192.168.1.1',
+          port: 22,
+          username: '',
+          password: '',
+          asset_type: 'person',
+          auth_type: 'passwordCredential'
+        },
+        passwordChainOptions: [{ key: 8, label: 'Broken credential' }]
+      })
+      await nextTick()
+
+      await wrapper.vm.handlePasswordChainChange(8)
+      await clickSubmit(wrapper)
+
+      expect(message.error).toHaveBeenCalledWith('Password credential is missing a username. Please update it in credential management.')
+      expect(wrapper.emitted('submit')).toBeUndefined()
     })
 
     it('should emit submit when auth is keyBased and key is selected', async () => {
@@ -583,6 +665,212 @@ describe('AssetForm Validation', () => {
       expect(jumpSelect).toBeTruthy()
       expect(jumpSelect!.attributes('data-options-count')).toBe('2')
       expect(jumpSelect!.attributes('data-option-values')).toBe('a,b')
+    })
+  })
+
+  describe('handlers and side effects', () => {
+    const baseValidData = {
+      ip: '192.168.1.1',
+      port: 22,
+      username: 'root',
+      password: 'pass',
+      asset_type: 'person' as const,
+      auth_type: 'password'
+    }
+
+    it('should emit close when clicking close icon', async () => {
+      wrapper = createWrapper({ initialData: baseValidData })
+      await nextTick()
+      ;(wrapper.find('.close-icon').element as HTMLElement).click()
+      await nextTick()
+
+      expect(wrapper.emitted('close')).toBeTruthy()
+    })
+
+    it('should update formData for device type and switch brand changes', async () => {
+      wrapper = createWrapper({ initialData: baseValidData })
+      await nextTick()
+
+      wrapper.vm.handleDeviceTypeChange(['server', 'personal'])
+      expect(wrapper.vm.formData.asset_type).toBe('person')
+      expect(wrapper.vm.formData.auth_type).toBe('password')
+
+      wrapper.vm.handleDeviceTypeChange(['network', 'switch'])
+      expect(wrapper.vm.formData.asset_type).toBe('person-switch-cisco')
+      expect(wrapper.vm.formData.auth_type).toBe('password')
+
+      wrapper.vm.handleSwitchBrandChange()
+      expect(wrapper.vm.formData.asset_type).toBe('person-switch-cisco')
+    })
+
+    it('should update bastion type when handling bastion change', async () => {
+      wrapper = createWrapper({ initialData: { ...baseValidData, asset_type: 'organization' } })
+      await nextTick()
+
+      wrapper.vm.deviceTypePath = ['server', 'bastion']
+      wrapper.vm.bastionType = 'jumpserver'
+      wrapper.vm.handleBastionTypeChange()
+      expect(wrapper.vm.formData.asset_type).toBe('organization')
+
+      wrapper.vm.bastionType = 'chaterm'
+      wrapper.vm.handleBastionTypeChange()
+      expect(wrapper.vm.formData.asset_type).toBe('organization-chaterm')
+    })
+
+    it('should cache and restore auth credentials when auth type switches', async () => {
+      wrapper = createWrapper({
+        initialData: {
+          ...baseValidData,
+          password: 'secret'
+        }
+      })
+      await nextTick()
+
+      wrapper.vm.formData.auth_type = 'keyBased'
+      wrapper.vm.handleAuthChange()
+      expect(wrapper.emitted('auth-change')?.[0]).toEqual(['keyBased'])
+      expect(wrapper.vm.formData.password).toBe('')
+
+      wrapper.vm.formData.keyChain = 22
+      wrapper.vm.formData.auth_type = 'passwordCredential'
+      wrapper.vm.handleAuthChange()
+      expect(wrapper.vm.formData.keyChain).toBeUndefined()
+      expect(wrapper.vm.formData.password).toBe('')
+
+      wrapper.vm.selectedPasswordChain = 33
+      wrapper.vm.formData.keyChain = 33
+      wrapper.vm.formData.auth_type = 'password'
+      wrapper.vm.handleAuthChange()
+      expect(wrapper.vm.formData.keyChain).toBeUndefined()
+      expect(wrapper.vm.formData.password).toBe('secret')
+
+      wrapper.vm.formData.auth_type = 'keyBased'
+      wrapper.vm.handleAuthChange()
+      expect(wrapper.vm.formData.keyChain).toBe(22)
+
+      wrapper.vm.formData.auth_type = 'passwordCredential'
+      wrapper.vm.handleAuthChange()
+      expect(wrapper.vm.formData.keyChain).toBe(33)
+      expect(wrapper.vm.selectedPasswordChain).toBe(33)
+    })
+
+    it('should emit add-keychain event from handler', async () => {
+      wrapper = createWrapper({ initialData: baseValidData })
+      await nextTick()
+
+      wrapper.vm.handleAddKeychain()
+      expect(wrapper.emitted('add-keychain')).toBeTruthy()
+    })
+
+    it('should set empty group when select value is undefined', async () => {
+      wrapper = createWrapper({ initialData: baseValidData })
+      await nextTick()
+
+      wrapper.vm.handleGroupChange(undefined)
+      expect(wrapper.vm.formData.group_name).toBe('')
+    })
+
+    it('should support creating and canceling inline groups', async () => {
+      wrapper = createWrapper({
+        initialData: baseValidData,
+        defaultGroups: ['Hosts', 'development']
+      })
+      await nextTick()
+
+      wrapper.vm.startCreateGroup()
+      expect(wrapper.vm.isCreatingGroup).toBe(true)
+
+      wrapper.vm.newGroupName = 'development'
+      wrapper.vm.confirmCreateGroup()
+      expect(wrapper.vm.formData.group_name).toBe('development')
+      expect(wrapper.vm.isCreatingGroup).toBe(false)
+
+      wrapper.vm.startCreateGroup()
+      wrapper.vm.newGroupName = '  custom-group  '
+      wrapper.vm.confirmCreateGroup()
+      expect(wrapper.vm.formData.group_name).toBe('custom-group')
+
+      wrapper.vm.startCreateGroup()
+      wrapper.vm.newGroupName = 'tmp'
+      wrapper.vm.cancelCreateGroup()
+      expect(wrapper.vm.newGroupName).toBe('')
+      expect(wrapper.vm.isCreatingGroup).toBe(false)
+    })
+
+    it('should update proxy switch status via handler', async () => {
+      wrapper = createWrapper({ initialData: { ...baseValidData, needProxy: false } })
+      await nextTick()
+
+      await wrapper.vm.handleSshProxyStatusChange(true)
+      expect(wrapper.vm.formData.needProxy).toBe(true)
+
+      await wrapper.vm.handleSshProxyStatusChange(false)
+      expect(wrapper.vm.formData.needProxy).toBe(false)
+    })
+
+    it('should emit proxy-config navigation events in order', async () => {
+      vi.useFakeTimers()
+      wrapper = createWrapper({ initialData: baseValidData })
+      await nextTick()
+
+      wrapper.vm.handleAddProxyConfig()
+      expect((eventBus.emit as any).mock.calls[0]).toEqual(['openUserTab', 'userConfig'])
+
+      vi.advanceTimersByTime(100)
+      expect((eventBus.emit as any).mock.calls[1]).toEqual(['switchToTerminalTab'])
+
+      vi.advanceTimersByTime(200)
+      expect((eventBus.emit as any).mock.calls[2]).toEqual(['openAddProxyConfigModal'])
+
+      vi.useRealTimers()
+    })
+
+    it('should show keychain required message when key auth has no key', async () => {
+      mockWindowApi.getBastionDefinitions.mockResolvedValue([{ type: 'chaterm', authPolicy: ['keyBased'] }])
+      wrapper = createWrapper({
+        initialData: {
+          ip: '192.168.1.1',
+          port: 22,
+          username: 'root',
+          asset_type: 'organization-chaterm',
+          auth_type: 'keyBased'
+        }
+      })
+      await nextTick()
+
+      await clickSubmit(wrapper)
+
+      expect(message.error).toHaveBeenCalledWith('Keychain cannot be empty')
+      expect(wrapper.emitted('submit')).toBeUndefined()
+    })
+
+    it('should reset form data when initialData prop changes', async () => {
+      wrapper = createWrapper({
+        initialData: {
+          ...baseValidData,
+          group_name: 'g1',
+          jumpHostUuid: 'jump-1'
+        }
+      })
+      await nextTick()
+
+      await wrapper.setProps({
+        initialData: {
+          ip: '10.0.0.1',
+          port: 2200,
+          username: 'admin',
+          password: 'new-secret',
+          asset_type: 'person',
+          auth_type: 'password'
+        }
+      })
+
+      expect(wrapper.vm.formData.ip).toBe('10.0.0.1')
+      expect(wrapper.vm.formData.port).toBe(2200)
+      expect(wrapper.vm.formData.username).toBe('admin')
+      expect(wrapper.vm.formData.password).toBe('new-secret')
+      expect(wrapper.vm.formData.group_name).toBe('Hosts')
+      expect(wrapper.vm.formData.jumpHostUuid).toBe('')
     })
   })
 })

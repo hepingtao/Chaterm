@@ -5,9 +5,8 @@
 // Licensed under the Apache License, Version 2.0
 
 import type { BrowserWindow } from 'electron'
-import type { GlobalStateKey, SecretKey, ApiConfiguration, ApiProvider } from './types'
-import { getCurrentUserId, getGuestUserId } from '@storage/db/connection'
-import { ChatermDatabaseService } from '@storage/db/chaterm.service'
+import type { GlobalStateKey, SecretKey, ApiConfiguration } from './types'
+const logger = createLogger('agent')
 
 export interface ModelOption {
   id: string
@@ -17,451 +16,293 @@ export interface ModelOption {
   apiProvider: string
 }
 
-const logger = createLogger('agent')
-
-// Keep window reference for backward compatibility (external callers may still
-// reference initializeStorageMain, though storage no longer depends on it).
 let mainWindow: BrowserWindow | null = null
 
 export function initializeStorageMain(window: BrowserWindow): void {
   mainWindow = window
-  void mainWindow
-  logger.info('[Main] Storage initialized - using direct KV access.')
+  logger.info('[Main] Storage initialized - using executeJavaScript.')
 }
 
-// ─── Internal KV helpers ──────────────────────────────────────────────────────
-
-async function getDbInstance(): Promise<ChatermDatabaseService> {
-  const userId = getCurrentUserId() || getGuestUserId()
-  return await ChatermDatabaseService.getInstance(userId)
-}
-
-async function kvRead(key: string): Promise<any> {
-  try {
-    const db = await getDbInstance()
-    const row = db.getKeyValue(key)
-    if (row?.value) {
-      const { deserializeStoredKvValue } = await import('@storage/db/kv-serialization')
-      const result = await deserializeStoredKvValue(row.value)
-      return result.value
-    }
-    return undefined
-  } catch (error) {
-    logger.error(`kvRead failed for ${key}`, { error: error })
-    return undefined
-  }
-}
-
-async function kvWrite(key: string, value: any): Promise<void> {
-  try {
-    const db = await getDbInstance()
-    db.setKeyValue({ key, value: JSON.stringify(value) })
-  } catch (error) {
-    logger.error(`kvWrite failed for ${key}`, { error: error })
-  }
-}
-
-async function kvDelete(key: string): Promise<void> {
-  try {
-    const db = await getDbInstance()
-    db.deleteKeyValue(key)
-  } catch (error) {
-    logger.error(`kvDelete failed for ${key}`, { error: error })
-  }
-}
-
-// ─── Global State ──────────────────────────────────────────────────────────────
-
+// Main process API function - calls renderer's storage function via executeJavaScript
 export async function getGlobalState(key: GlobalStateKey): Promise<any> {
-  return kvRead(`global_${key}`)
+  if (!mainWindow) throw new Error('Main window not initialized')
+
+  const script = `
+    (async () => {
+      // Use global variable to access storage function
+      if (window.storageAPI && window.storageAPI.getGlobalState) {
+        return await window.storageAPI.getGlobalState('${key}');
+      } else {
+        throw new Error('Storage API not available in renderer');
+      }
+    })()
+  `
+
+  return await mainWindow.webContents.executeJavaScript(script)
 }
 
 export async function updateGlobalState(key: GlobalStateKey, value: any): Promise<void> {
-  return kvWrite(`global_${key}`, value)
+  if (!mainWindow) throw new Error('Main window not initialized')
+
+  const script = `
+    (async () => {
+      if (window.storageAPI && window.storageAPI.updateGlobalState) {
+        await window.storageAPI.updateGlobalState('${key}', ${JSON.stringify(value)});
+      } else {
+        throw new Error('Storage API not available in renderer');
+      }
+    })()
+  `
+
+  await mainWindow.webContents.executeJavaScript(script)
 }
 
-// ─── Secrets ───────────────────────────────────────────────────────────────────
-
 export async function getSecret(key: SecretKey): Promise<string | undefined> {
-  return kvRead(`secret_${key}`)
+  if (!mainWindow) throw new Error('Main window not initialized')
+
+  const script = `
+    (async () => {
+      if (window.storageAPI && window.storageAPI.getSecret) {
+        return await window.storageAPI.getSecret('${key}');
+      } else {
+        throw new Error('Storage API not available in renderer');
+      }
+    })()
+  `
+
+  return await mainWindow.webContents.executeJavaScript(script)
 }
 
 export async function storeSecret(key: SecretKey, value?: string): Promise<void> {
-  if (value !== undefined) {
-    return kvWrite(`secret_${key}`, value)
-  } else {
-    return kvDelete(`secret_${key}`)
-  }
+  if (!mainWindow) throw new Error('Main window not initialized')
+
+  const script = `
+    (async () => {
+      if (window.storageAPI && window.storageAPI.storeSecret) {
+        await window.storageAPI.storeSecret('${key}', ${value ? `'${value}'` : 'undefined'});
+      } else {
+        throw new Error('Storage API not available in renderer');
+      }
+    })()
+  `
+
+  await mainWindow.webContents.executeJavaScript(script)
 }
 
-// ─── Workspace State ──────────────────────────────────────────────────────────
-
 export async function getWorkspaceState(key: string): Promise<any> {
-  return kvRead(`workspace_${key}`)
+  if (!mainWindow) throw new Error('Main window not initialized')
+
+  const script = `
+    (async () => {
+      if (window.storageAPI && window.storageAPI.getWorkspaceState) {
+        return await window.storageAPI.getWorkspaceState('${key}');
+      } else {
+        throw new Error('Storage API not available in renderer');
+      }
+    })()
+  `
+
+  return await mainWindow.webContents.executeJavaScript(script)
 }
 
 export async function updateWorkspaceState(key: string, value: any): Promise<void> {
-  return kvWrite(`workspace_${key}`, value)
-}
+  if (!mainWindow) throw new Error('Main window not initialized')
 
-// ─── All Extension State (replicates renderer's logic using direct KV access) ─
+  const script = `
+    (async () => {
+      if (window.storageAPI && window.storageAPI.updateWorkspaceState) {
+        await window.storageAPI.updateWorkspaceState('${key}', ${JSON.stringify(value)});
+      } else {
+        throw new Error('Storage API not available in renderer');
+      }
+    })()
+  `
+
+  await mainWindow.webContents.executeJavaScript(script)
+}
 
 export async function getAllExtensionState(): Promise<any> {
-  try {
-    const [
-      storedApiProvider,
-      apiModelId,
-      apiKey,
-      awsAccessKey,
-      awsSecretKey,
-      awsSessionToken,
-      awsRegion,
-      awsUseCrossRegionInference,
-      awsBedrockUsePromptCache,
-      awsBedrockEndpoint,
-      awsProfile,
-      awsUseProfile,
-      awsBedrockCustomSelected,
-      awsBedrockCustomModelBaseId,
-      openAiBaseUrl,
-      openAiApiKey,
-      openAiModelId,
-      openAiModelInfo,
-      ollamaModelId,
-      ollamaBaseUrl,
-      ollamaApiOptionsCtxNum,
-      deepSeekApiKey,
-      anthropicApiKey,
-      anthropicBaseUrl,
-      anthropicModelId,
-      customInstructions,
-      userRules,
-      autoApprovalSettings,
-      chatSettings,
-      liteLlmBaseUrl,
-      liteLlmModelId,
-      liteLlmApiKey,
-      userInfo,
-      previousModeApiProvider,
-      previousModeModelId,
-      previousModeModelInfo,
-      previousModeThinkingBudgetTokens,
-      previousModeReasoningEffort,
-      previousModeAwsBedrockCustomSelected,
-      previousModeAwsBedrockCustomModelBaseId,
-      telemetrySetting,
-      thinkingBudgetTokens,
-      reasoningEffort,
-      favoritedModelIds,
-      requestTimeoutMs,
-      shellIntegrationTimeout,
-      needProxy,
-      proxyConfig,
-      defaultBaseUrl,
-      defaultModelId,
-      defaultApiKey,
-      defaultModelInfoMap
-    ] = await Promise.all([
-      getGlobalState('apiProvider'),
-      getGlobalState('apiModelId'),
-      getSecret('apiKey'),
-      getSecret('awsAccessKey'),
-      getSecret('awsSecretKey'),
-      getSecret('awsSessionToken'),
-      getGlobalState('awsRegion'),
-      getGlobalState('awsUseCrossRegionInference'),
-      getGlobalState('awsBedrockUsePromptCache'),
-      getGlobalState('awsBedrockEndpoint'),
-      getGlobalState('awsProfile'),
-      getGlobalState('awsUseProfile'),
-      getGlobalState('awsBedrockCustomSelected'),
-      getGlobalState('awsBedrockCustomModelBaseId'),
-      getGlobalState('openAiBaseUrl'),
-      getSecret('openAiApiKey'),
-      getGlobalState('openAiModelId'),
-      getGlobalState('openAiModelInfo'),
-      getGlobalState('ollamaModelId'),
-      getGlobalState('ollamaBaseUrl'),
-      getGlobalState('ollamaApiOptionsCtxNum'),
-      getSecret('deepSeekApiKey'),
-      getSecret('anthropicApiKey'),
-      getGlobalState('anthropicBaseUrl'),
-      getGlobalState('anthropicModelId'),
-      getGlobalState('customInstructions'),
-      getGlobalState('userRules'),
-      getGlobalState('autoApprovalSettings'),
-      getGlobalState('chatSettings'),
-      getGlobalState('liteLlmBaseUrl'),
-      getGlobalState('liteLlmModelId'),
-      getSecret('liteLlmApiKey'),
-      getGlobalState('userInfo'),
-      getGlobalState('previousModeApiProvider'),
-      getGlobalState('previousModeModelId'),
-      getGlobalState('previousModeModelInfo'),
-      getGlobalState('previousModeThinkingBudgetTokens'),
-      getGlobalState('previousModeReasoningEffort'),
-      getGlobalState('previousModeAwsBedrockCustomSelected'),
-      getGlobalState('previousModeAwsBedrockCustomModelBaseId'),
-      getGlobalState('telemetrySetting'),
-      getGlobalState('thinkingBudgetTokens'),
-      getGlobalState('reasoningEffort'),
-      getGlobalState('favoritedModelIds'),
-      getGlobalState('requestTimeoutMs'),
-      getGlobalState('shellIntegrationTimeout'),
-      getGlobalState('needProxy'),
-      getGlobalState('proxyConfig'),
-      getGlobalState('defaultBaseUrl'),
-      getGlobalState('defaultModelId'),
-      getSecret('defaultApiKey'),
-      getGlobalState('defaultModelInfoMap')
-    ])
+  if (!mainWindow) throw new Error('Main window not initialized')
 
-    const apiProvider: ApiProvider = storedApiProvider || 'bedrock'
+  const script = `
+    (async () => {
+      if (window.storageAPI && window.storageAPI.getAllExtensionState) {
+        return await window.storageAPI.getAllExtensionState();
+      } else {
+        throw new Error('Storage API not available in renderer');
+      }
+    })()
+  `
 
-    return {
-      apiConfiguration: {
-        apiProvider,
-        apiModelId,
-        apiKey,
-        awsAccessKey,
-        awsSecretKey,
-        awsSessionToken,
-        awsRegion,
-        awsUseCrossRegionInference,
-        awsBedrockUsePromptCache,
-        awsBedrockEndpoint,
-        awsProfile,
-        awsUseProfile,
-        awsBedrockCustomSelected,
-        awsBedrockCustomModelBaseId,
-        openAiBaseUrl,
-        openAiApiKey,
-        openAiModelId,
-        openAiModelInfo,
-        ollamaModelId,
-        ollamaBaseUrl,
-        ollamaApiOptionsCtxNum,
-        deepSeekApiKey,
-        anthropicApiKey,
-        anthropicBaseUrl,
-        anthropicModelId,
-        o3MiniReasoningEffort: 'medium',
-        thinkingBudgetTokens,
-        reasoningEffort,
-        liteLlmBaseUrl,
-        liteLlmModelId,
-        liteLlmApiKey,
-        favoritedModelIds,
-        requestTimeoutMs,
-        needProxy,
-        proxyConfig,
-        defaultBaseUrl,
-        defaultModelId,
-        defaultApiKey,
-        defaultModelInfoMap
-      },
-      customInstructions,
-      userRules,
-      autoApprovalSettings: autoApprovalSettings || {
-        version: 1,
-        enabled: false,
-        actions: {
-          readFiles: true,
-          readFilesExternally: false,
-          editFiles: false,
-          editFilesExternally: false,
-          executeSafeCommands: true,
-          executeAllCommands: false,
-          useBrowser: false,
-          useMcp: false
-        },
-        maxRequests: 0,
-        enableNotifications: false,
-        favorites: []
-      },
-      chatSettings: chatSettings || { mode: 'agent' },
-      userInfo,
-      previousModeApiProvider,
-      previousModeModelId,
-      previousModeModelInfo,
-      previousModeThinkingBudgetTokens,
-      previousModeReasoningEffort,
-      previousModeAwsBedrockCustomSelected,
-      previousModeAwsBedrockCustomModelBaseId,
-      mcpMarketplaceEnabled: true,
-      telemetrySetting: telemetrySetting || 'unset',
-      shellIntegrationTimeout: shellIntegrationTimeout || 4000
-    }
-  } catch (error) {
-    logger.error('Failed to get all extension state', { error: error })
-    return {}
-  }
+  return await mainWindow.webContents.executeJavaScript(script)
 }
-
-// ─── Update API Configuration ──────────────────────────────────────────────────
 
 export async function updateApiConfiguration(config: ApiConfiguration): Promise<void> {
-  const {
-    apiProvider,
-    apiModelId,
-    awsAccessKey,
-    awsSecretKey,
-    awsSessionToken,
-    awsRegion,
-    awsUseCrossRegionInference,
-    awsBedrockUsePromptCache,
-    awsBedrockEndpoint,
-    awsProfile,
-    awsUseProfile,
-    thinkingBudgetTokens,
-    reasoningEffort,
-    liteLlmBaseUrl,
-    liteLlmModelId,
-    liteLlmApiKey,
-    favoritedModelIds,
-    deepSeekApiKey,
-    anthropicApiKey,
-    anthropicBaseUrl,
-    anthropicModelId,
-    openAiBaseUrl,
-    openAiApiKey,
-    openAiModelId,
-    openAiModelInfo,
-    ollamaModelId,
-    ollamaBaseUrl,
-    ollamaApiOptionsCtxNum,
-    defaultBaseUrl,
-    defaultModelId,
-    defaultApiKey
-  } = config
+  if (!mainWindow) throw new Error('Main window not initialized')
 
-  await Promise.all([
-    updateGlobalState('apiProvider', apiProvider),
-    updateGlobalState('apiModelId', apiModelId),
-    storeSecret('awsAccessKey', awsAccessKey),
-    storeSecret('awsSecretKey', awsSecretKey),
-    storeSecret('awsSessionToken', awsSessionToken),
-    updateGlobalState('awsRegion', awsRegion),
-    updateGlobalState('awsUseCrossRegionInference', awsUseCrossRegionInference),
-    updateGlobalState('awsBedrockUsePromptCache', awsBedrockUsePromptCache),
-    updateGlobalState('awsBedrockEndpoint', awsBedrockEndpoint),
-    updateGlobalState('awsProfile', awsProfile),
-    updateGlobalState('awsUseProfile', awsUseProfile),
-    updateGlobalState('openAiBaseUrl', openAiBaseUrl),
-    storeSecret('openAiApiKey', openAiApiKey),
-    updateGlobalState('openAiModelId', openAiModelId),
-    updateGlobalState('openAiModelInfo', openAiModelInfo),
-    updateGlobalState('ollamaModelId', ollamaModelId),
-    updateGlobalState('ollamaBaseUrl', ollamaBaseUrl),
-    updateGlobalState('ollamaApiOptionsCtxNum', ollamaApiOptionsCtxNum),
-    storeSecret('deepSeekApiKey', deepSeekApiKey),
-    storeSecret('anthropicApiKey', anthropicApiKey),
-    updateGlobalState('anthropicBaseUrl', anthropicBaseUrl),
-    updateGlobalState('anthropicModelId', anthropicModelId),
-    storeSecret('liteLlmApiKey', liteLlmApiKey),
-    updateGlobalState('liteLlmBaseUrl', liteLlmBaseUrl),
-    updateGlobalState('liteLlmModelId', liteLlmModelId),
-    updateGlobalState('thinkingBudgetTokens', thinkingBudgetTokens),
-    updateGlobalState('reasoningEffort', reasoningEffort),
-    updateGlobalState('favoritedModelIds', favoritedModelIds),
-    updateGlobalState('requestTimeoutMs', config.requestTimeoutMs),
-    updateGlobalState('needProxy', config.needProxy),
-    updateGlobalState('proxyConfig', config.proxyConfig),
-    updateGlobalState('defaultBaseUrl', defaultBaseUrl),
-    updateGlobalState('defaultModelId', defaultModelId),
-    storeSecret('defaultApiKey', defaultApiKey)
-  ])
+  const script = `
+    (async () => {
+      if (window.storageAPI && window.storageAPI.updateApiConfiguration) {
+        await window.storageAPI.updateApiConfiguration(${JSON.stringify(config)});
+      } else {
+        throw new Error('Storage API not available in renderer');
+      }
+    })()
+  `
+
+  await mainWindow.webContents.executeJavaScript(script)
 }
-
-// ─── Reset Extension State ────────────────────────────────────────────────────
 
 export async function resetExtensionState(): Promise<void> {
-  try {
-    const db = await getDbInstance()
-    const allKeys = db.getAllKeys()
+  if (!mainWindow) throw new Error('Main window not initialized')
 
-    const operations: Array<Promise<void>> = []
-    for (const key of allKeys) {
-      if (key.startsWith('global_') || key.startsWith('secret_') || key.startsWith('workspace_')) {
-        operations.push(kvDelete(key))
+  const script = `
+    (async () => {
+      if (window.storageAPI && window.storageAPI.resetExtensionState) {
+        await window.storageAPI.resetExtensionState();
+      } else {
+        throw new Error('Storage API not available in renderer');
       }
-    }
-    await Promise.all(operations)
-  } catch (error) {
-    logger.error('resetExtensionState failed', { error: error })
-  }
+    })()
+  `
+
+  await mainWindow.webContents.executeJavaScript(script)
 }
 
-// ─── User ID (from main process) ──────────────────────────────────────────────
-
+// Get user information
 export async function getUserId(): Promise<any> {
-  try {
-    const userId = getCurrentUserId()
-    return userId || null
-  } catch (error) {
-    return null
-  }
-}
+  if (!mainWindow) throw new Error('Main window not initialized')
 
-// ─── User Config (from KV store, no window dependency) ────────────────────────
-
-export async function getUserConfig(): Promise<any> {
-  try {
-    const config = await kvRead('userConfig')
-    return (
-      config || {
-        language: 'zh-CN',
-        aliasStatus: 2,
-        uid: 0,
-        autoCompleteStatus: 2,
-        commonVimStatus: 2,
-        quickVimStatus: 2,
-        cursorStyle: 'bar',
-        fontSize: 12,
-        highlightStatus: 2,
-        scrollBack: 1000,
-        watermark: 'open',
-        secretRedaction: 'disabled',
-        dataSync: 'disabled',
-        feature: 0.0,
-        terminalType: 'xterm',
-        theme: 'dark',
-        background: {
-          image: '',
-          opacity: 0.15,
-          brightness: 0.45,
-          mode: 'none'
-        }
+  const script = `
+    (async () => {
+      if (window.storageAPI && window.storageAPI.getUserId) {
+        return await window.storageAPI.getUserId();
+      } else {
+        throw new Error('Storage API not available in renderer');
       }
-    )
-  } catch (error) {
-    logger.error('getUserConfig failed', { error: error })
-    return { language: 'zh-CN' }
-  }
+    })()
+  `
+
+  return await mainWindow.webContents.executeJavaScript(script)
 }
 
-// ─── Model Options ────────────────────────────────────────────────────────────
+// Get user config from renderer process
+export async function getUserConfig(): Promise<any> {
+  if (!mainWindow) throw new Error('Main window not initialized')
 
+  const script = `
+      (async () => {
+        if (window.storageAPI && window.storageAPI.getUserConfig) {
+          return await window.storageAPI.getUserConfig();
+        } else {
+          throw new Error('Storage API not available in renderer');
+        }
+      })()
+    `
+
+  return await mainWindow.webContents.executeJavaScript(script)
+}
+
+/**
+ * Get model options from renderer process global state
+ * @param excludeThinking - Whether to exclude models with "-Thinking" suffix
+ * @returns Array of model options
+ */
 export async function getModelOptions(excludeThinking = false): Promise<ModelOption[]> {
   try {
-    const modelOptions = await kvRead('global_modelOptions')
+    if (!mainWindow) {
+      logger.error('Main window not initialized')
+      return []
+    }
+
+    const script = `
+      (async () => {
+        if (window.storageAPI && window.storageAPI.getGlobalState) {
+          return await window.storageAPI.getGlobalState('modelOptions') || [];
+        }
+        return [];
+      })()
+    `
+    const modelOptions = await mainWindow.webContents.executeJavaScript(script)
+
     if (!Array.isArray(modelOptions)) {
       return []
     }
 
+    // Filter out thinking models if requested
     if (excludeThinking) {
       return modelOptions.filter((model: ModelOption) => !model.name.endsWith('-Thinking'))
     }
 
     return modelOptions
   } catch (error) {
-    logger.error('getModelOptions failed', { error: error })
+    logger.error('Failed to get model options', { error: error })
     return []
   }
 }
 
-// ─── Test (kept for backward compatibility) ────────────────────────────────────
-
+// Test function
 export async function testStorageFromMain(): Promise<void> {
-  logger.info('[Main Storage Test] Using direct KV access mode.')
+  // if (!mainWindow) {
+  //   logger.warn('[Main Storage Test] mainWindow is not initialized. Skipping test.');
+  //   return;
+  // }
+  // // Check if webContents is available and not loading, with a retry mechanism
+  // if (mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) {
+  //   logger.warn('[Main Storage Test] mainWindow destroyed or webContents is loading. Retrying in 1 second...');
+  //   setTimeout(testStorageFromMain, 1000);
+  //   return;
+  // }
+  // logger.info('[Main Storage Test] Running comprehensive storage tests...');
+  // try {
+  //   // Test getGlobalState and updateGlobalState
+  //   const globalStateKey = 'apiProvider' as GlobalStateKey; // Example key
+  //   logger.info(`[Main Storage Test] Attempting to call getGlobalState('${globalStateKey}')`);
+  //   let globalStateValue = await getGlobalState(globalStateKey);
+  //   logger.info(`[Main Storage Test] Initial getGlobalState('${globalStateKey}') result`, { value: globalStateValue });
+  //   const newProvider = 'testProviderFromMainAgentStorage'; // Example value
+  //   logger.info(`[Main Storage Test] Attempting to call updateGlobalState('${globalStateKey}', '${newProvider}')`);
+  //   await updateGlobalState(globalStateKey, newProvider);
+  //   logger.info(`[Main Storage Test] updateGlobalState('${globalStateKey}', '${newProvider}') called`);
+  //   logger.info(`[Main Storage Test] Attempting to call getGlobalState('${globalStateKey}') after update`);
+  //   globalStateValue = await getGlobalState(globalStateKey);
+  //   logger.info(`[Main Storage Test] getGlobalState('${globalStateKey}') after update`, { value: globalStateValue });
+  //   if (globalStateValue !== newProvider) {
+  //       logger.error(`[Main Storage Test] FAILED: updateGlobalState did not persist. Expected ${newProvider}, got ${globalStateValue}`);
+  //   } else {
+  //       logger.info(`[Main Storage Test] PASSED: updateGlobalState for ${globalStateKey}`);
+  //   }
+  //   // Test getAllExtensionState
+  //   logger.info('[Main Storage Test] Attempting to call getAllExtensionState()');
+  //   const allState = await getAllExtensionState();
+  //   // logger.info('[Main Storage Test] getAllExtensionState result', { value: JSON.stringify(allState, null, 2 })); // Avoid overly long output in normal runs
+  //   logger.info('[Main Storage Test] getAllExtensionState() call completed. Result keys:', allState ? Object.keys(allState) : 'null/undefined');
+  //   // Test storeSecret and getSecret
+  //   const secretKey = 'testSecretKeyFromMainAgentStorage' as SecretKey;
+  //   const secretValue = 'mySuperSecretValueFromMainAgentStorage';
+  //   logger.info(`[Main Storage Test] Attempting to call storeSecret('${secretKey}', '********')`);
+  //   await storeSecret(secretKey, secretValue);
+  //   logger.info(`[Main Storage Test] storeSecret('${secretKey}', '********') called`);
+  //   logger.info(`[Main Storage Test] Attempting to call getSecret('${secretKey}')`);
+  //   const retrievedSecret = await getSecret(secretKey);
+  //   logger.info(`[Main Storage Test] getSecret('${secretKey}') result`, { value: retrievedSecret });
+  //   if (retrievedSecret !== secretValue) {
+  //       logger.error(`[Main Storage Test] FAILED: storeSecret/getSecret did not work as expected. Expected ${secretValue}, got ${retrievedSecret}`);
+  //   } else {
+  //       logger.info(`[Main Storage Test] PASSED: storeSecret/getSecret for ${secretKey}`);
+  //   }
+  //   // Cleanup test secret
+  //   logger.info(`[Main Storage Test] Attempting to call storeSecret('${secretKey}', undefined) to delete it`);
+  //   await storeSecret(secretKey, undefined);
+  //   const deletedSecret = await getSecret(secretKey);
+  //   logger.info(`[Main Storage Test] getSecret('${secretKey}') after deletion attempt`, { value: deletedSecret });
+  //   if (deletedSecret) {
+  //       logger.error(`[Main Storage Test] FAILED: Secret '${secretKey}' was not deleted.`);
+  //   } else {
+  //       logger.info(`[Main Storage Test] PASSED: Secret '${secretKey}' deleted successfully.`);
+  //   }
+  //   logger.info('[Main Storage Test] All tests completed!');
+  // } catch (error) {
+  //   logger.error('[Main Storage Test] Error during storage tests', { error: error });
+  // }
 }

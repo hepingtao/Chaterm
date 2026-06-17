@@ -372,6 +372,7 @@ import { useAiSidebarModelRefresh } from './composables/useAiSidebarModelRefresh
 import { useMultiWindowAi } from './composables/useMultiWindowAi'
 import { isFocusInAiTab } from '@/utils/domUtils'
 import { aiTabStorageKey, migrateLegacyAiTabStorage } from '@/views/components/AiTab/workspace'
+import { mark } from '@/utils/perf'
 
 import 'dockview-vue/dist/styles/dockview.css'
 import { type DockviewReadyEvent, DockviewVue } from 'dockview-vue'
@@ -590,6 +591,27 @@ const setLeftSidebarSize = (size: number) => {
   }
 }
 
+const handleDockviewTabsWheel = (event: WheelEvent) => {
+  const target = event.target
+  if (!(target instanceof Element)) return
+
+  const tabsContainer = target.closest('.dv-tabs-container') as HTMLElement | null
+  if (!tabsContainer) return
+
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+  if (delta === 0) return
+
+  const maxScrollLeft = tabsContainer.scrollWidth - tabsContainer.clientWidth
+  if (maxScrollLeft <= 0) return
+
+  const nextScrollLeft = Math.min(Math.max(tabsContainer.scrollLeft + delta, 0), maxScrollLeft)
+  if (nextScrollLeft === tabsContainer.scrollLeft) return
+
+  tabsContainer.scrollLeft = nextScrollLeft
+  event.preventDefault()
+  event.stopPropagation()
+}
+
 // Detect if splitter was clicked
 const handleMouseDown = (e: MouseEvent) => {
   const target = e.target as HTMLElement
@@ -805,8 +827,11 @@ const switchToSpecificTab = (tabNumber: number) => {
 const configLoaded = ref(false)
 
 onMounted(async () => {
+  mark('chaterm/renderer/willInitTerminalLayout')
   const store = piniaUserConfigStore()
+  mark('chaterm/renderer/willLoadShortcuts')
   await shortcutService.loadShortcuts()
+  mark('chaterm/renderer/didLoadShortcuts')
 
   const handleCtrlW = (event: KeyboardEvent) => {
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
@@ -841,6 +866,7 @@ onMounted(async () => {
     // overwriting it would lose data-theme-id plus any non-default theme class.
   })
   try {
+    mark('chaterm/renderer/willLoadTerminalUserConfig')
     let config = await userConfigStore.getConfig()
     if (!config.feature || config.feature < 1.0) {
       config.autoCompleteStatus = 1
@@ -851,6 +877,7 @@ onMounted(async () => {
     configLoaded.value = true
     currentTheme.value = getActualTheme(config.theme || 'dark')
     hideTabCloseButton.value = config.showCloseButton === 2
+    mark('chaterm/renderer/didLoadTerminalUserConfig')
 
     // Delay of 2 seconds to wait for the main thread to complete initializeTelemetrySetting
     setTimeout(async () => {
@@ -871,6 +898,7 @@ onMounted(async () => {
       showWatermark.value = config.watermark !== 'close'
     })
   } catch (e) {
+    mark('chaterm/renderer/didFailLoadTerminalUserConfig')
     currentTheme.value = getActualTheme('dark')
     nextTick(() => {
       showWatermark.value = true
@@ -1006,6 +1034,7 @@ onMounted(async () => {
   document.addEventListener('mousedown', handleMouseDown)
   document.addEventListener('mouseup', handleGlobalMouseUp)
   document.addEventListener('mousemove', handleGlobalMouseMove)
+  document.addEventListener('wheel', handleDockviewTabsWheel, { capture: true, passive: false })
 
   aliasConfig.initialize()
 
@@ -1051,7 +1080,10 @@ onMounted(async () => {
       }
     }
   })
+
+  mark('chaterm/renderer/willSetupXshellWakeupBridge')
   await setupXshellWakeupBridge()
+  mark('chaterm/renderer/didSetupXshellWakeupBridge')
 
   // Try to restore state on initial mount (unified for both modes)
   nextTick(async () => {
@@ -1083,8 +1115,11 @@ onMounted(async () => {
   })
 
   nextTick(async () => {
+    mark('chaterm/renderer/willInitializeTheme')
     await initializeThemeFromDatabase()
+    mark('chaterm/renderer/didInitializeTheme')
   })
+  mark('chaterm/renderer/didInitTerminalLayout')
 })
 const timer = ref<number | null>(null)
 watch(mainTerminalSize, () => {
@@ -2002,6 +2037,7 @@ onUnmounted(() => {
   // Unregister global mouse event listeners
   document.removeEventListener('mousedown', handleMouseDown)
   document.removeEventListener('mouseup', handleGlobalMouseUp)
+  document.removeEventListener('wheel', handleDockviewTabsWheel, true)
 
   if ((globalThis as any).__ctrlWHandler) {
     document.removeEventListener('keydown', (globalThis as any).__ctrlWHandler, true)
@@ -3756,5 +3792,26 @@ defineExpose({
 .dockview-theme-dark .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {
   opacity: 0;
   transition: none;
+}
+
+.dockview-theme-light .dv-tab,
+.dockview-theme-dark .dv-tab {
+  max-width: 180px;
+  min-width: 0;
+}
+
+.dockview-theme-light .dv-default-tab,
+.dockview-theme-dark .dv-default-tab {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.dockview-theme-light .dv-default-tab .dv-default-tab-content,
+.dockview-theme-dark .dv-default-tab .dv-default-tab-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 </style>

@@ -2,9 +2,9 @@
   <div class="term_left_tab">
     <div class="main-menu">
       <a-tooltip
-        v-for="i in menuTabsData.slice(0, -2)"
+        v-for="i in visibleMainMenuTabs"
         :key="i.key"
-        :title="i.name"
+        :title="$t(i.nameKey)"
         placement="right"
         :mouse-enter-delay="1"
       >
@@ -108,7 +108,7 @@
       <a-tooltip
         v-for="i in menuTabsData.slice(-2)"
         :key="i.key"
-        :title="i.name"
+        :title="$t(i.nameKey)"
         :mouse-enter-delay="1"
       >
         <div v-if="i.key === 'user'">
@@ -172,20 +172,34 @@
         v-if="isSkippedLogin"
         class="menu-item"
         @click="goToLogin"
-        >{{ $t('common.login') }}</div
       >
+        <LoginOutlined class="menu-item-icon" />
+        <span>{{ $t('common.login') }}</span>
+      </div>
+      <div
+        v-if="!isSkippedLogin && !isEnterpriseDeploy"
+        class="menu-item"
+        @click="openAccountCenter"
+      >
+        <DashboardOutlined class="menu-item-icon" />
+        <span>{{ $t('common.accountCenter') }}</span>
+      </div>
       <div
         v-if="!isSkippedLogin"
         class="menu-item"
         @click="userInfo"
-        >{{ $t('common.userInfo') }}</div
       >
+        <UserOutlined class="menu-item-icon" />
+        <span>{{ $t('common.userInfo') }}</span>
+      </div>
       <div
         v-if="!isSkippedLogin"
         class="menu-item"
         @click="logout"
-        >{{ $t('common.logout') }}</div
       >
+        <LogoutOutlined class="menu-item-icon" />
+        <span>{{ $t('common.logout') }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -205,11 +219,20 @@ import { shortcutService } from '@/services/shortcutService'
 import { dataSyncService } from '@/services/dataSyncService'
 import { chatSyncService } from '@/services/chatSyncService'
 import { convertFileLocalResourceSrc } from '@/utils/convertFileLocalResourceSrc'
+import { getAccountCenterUrl } from '@/utils/edition'
+import { isEnterpriseDeployEnabled } from '@/views/components/AiTab/composables/useModelConfiguration'
+import { captureButtonClick } from '@/utils/telemetry'
+import { DashboardOutlined, LoginOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons-vue'
 
 const logger = createRendererLogger('leftTab')
 let storageEventHandler: ((e: StorageEvent) => void) | null = null
 let removePluginMetadataListener: (() => void) | null = null
 const pluginViews = ref<any[]>([])
+const kbSearchPolicyEnabled =
+  String(import.meta.env.RENDERER_KB_SEARCH_ENABLED || '')
+    .trim()
+    .toLowerCase() !== 'false'
+const visibleMainMenuTabs = computed(() => menuTabsData.slice(0, -2).filter((tab) => kbSearchPolicyEnabled || tab.key !== 'knowledgecenter'))
 
 /** file:// URLs cannot be used in img src in the renderer; map via custom protocol (see main process). */
 const pluginViewIconSrc = (icon: string) => convertFileLocalResourceSrc(icon)
@@ -218,6 +241,7 @@ const activeKey = ref('workspace')
 const showUserMenu = ref<boolean>(false)
 const isSkippedLogin = ref<boolean>(localStorage.getItem('login-skipped') === 'true')
 const showUserAvatar = computed(() => !isSkippedLogin.value && !!userStore.userInfo.avatar)
+const isEnterpriseDeploy = isEnterpriseDeployEnabled()
 const isVipUser = computed(() => {
   if (isSkippedLogin.value) return false
   const info: any = userStore.userInfo
@@ -297,6 +321,17 @@ const openAiRight = () => {
 const userInfo = () => {
   emit('open-user-tab', 'userInfo')
   showUserMenu.value = false
+}
+
+const openAccountCenter = async () => {
+  showUserMenu.value = false
+  const token = localStorage.getItem('ctm-token') || ''
+  await captureButtonClick('account_center_menu_clicked', {
+    source: 'left_tab_menu',
+    entryType: 'menu',
+    subscription: userStore.userInfo?.subscription || ''
+  })
+  await window.api.openExternalUrl(getAccountCenterUrl(token))
 }
 
 const userConfig = () => {
@@ -469,7 +504,8 @@ onUnmounted(() => {
     .vip-flag {
       position: absolute;
       bottom: 0;
-      right: 2px;
+      left: 50%;
+      transform: translateX(-50%);
       background: linear-gradient(135deg, #ffd700, #ff8f00);
       color: #000;
       font-size: 8px;
@@ -500,6 +536,14 @@ onUnmounted(() => {
       cursor: pointer;
       transition: all 0.2s ease;
       font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .menu-item-icon {
+        font-size: 14px;
+        opacity: 0.85;
+      }
 
       &:hover {
         background: var(--hover-bg-color);

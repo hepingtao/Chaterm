@@ -6,19 +6,23 @@ import { onMounted, onUnmounted, watch, type Ref } from 'vue'
  * - Registers the current window as the AI-bound window when AI sidebar is active,
  *   so AI responses are always routed here even when the user switches to another window.
  * - Provides createTerminalWindow() to spawn a terminal-only window.
+ *
+ * Note: These APIs (registerAiWindow, unregisterAiWindow, createTerminalWindow)
+ * are local-only and may not be available in all builds.
  */
 export function useMultiWindowAi(showAiSidebar: Ref<boolean>) {
   let registered = false
+  const api = window.api as any
 
   const register = (): void => {
     if (registered) return
-    window.api.registerAiWindow()
+    api.registerAiWindow?.()
     registered = true
   }
 
   const unregister = (): void => {
     if (!registered) return
-    window.api.unregisterAiWindow()
+    api.unregisterAiWindow?.()
     registered = false
   }
 
@@ -44,7 +48,7 @@ export function useMultiWindowAi(showAiSidebar: Ref<boolean>) {
 
   const createTerminalWindow = async (): Promise<void> => {
     try {
-      await window.api.createTerminalWindow()
+      await api.createTerminalWindow?.()
     } catch (error) {
       console.error('[MultiWindowAi] Failed to create terminal window', error)
     }

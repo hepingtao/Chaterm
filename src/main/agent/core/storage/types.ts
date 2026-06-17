@@ -38,21 +38,7 @@ export type GlobalStateKey =
   | 'mcpMarketplaceEnabled'
   | 'kbSearchEnabled'
   | 'experienceExtractionEnabled'
-  | 'openAiBaseUrl'
-  | 'openAiModelId'
-  | 'openAiModelInfo'
-  | 'ollamaModelId'
-  | 'ollamaBaseUrl'
-  | 'ollamaApiOptionsCtxNum'
-  | 'anthropicBaseUrl'
-  | 'anthropicModelId'
-  | 'liteLlmBaseUrl'
-  | 'liteLlmModelId'
-  | 'needProxy'
-  | 'proxyConfig'
-  | 'defaultBaseUrl'
-  | 'defaultModelId'
-  | 'defaultModelInfoMap'
+  | 'commandOutputFilteringEnabled'
   | 'testGlobalKey' // For testing
 
 export type SecretKey =
@@ -76,14 +62,11 @@ export type SecretKey =
   | 'asksageApiKey'
   | 'xaiApiKey'
   | 'sambanovaApiKey'
-  | 'defaultApiKey'
-  | 'anthropicApiKey'
   | 'testSecretKey' // For testing
 
 export interface ApiHandlerOptions {
   apiModelId?: string
   taskId?: string
-  apiKey?: string
   awsAccessKey?: string
   awsSecretKey?: string
   awsSessionToken?: string
@@ -97,28 +80,6 @@ export interface ApiHandlerOptions {
   reasoningEffort?: string
   requestTimeoutMs?: number
   onRetryAttempt?: (attempt: number, maxRetries: number, delay: number, error: any) => void
-  // Additional API provider fields (for getAllExtensionState round-trip)
-  openAiBaseUrl?: string
-  openAiApiKey?: string
-  openAiModelId?: string
-  openAiModelInfo?: Record<string, unknown>
-  ollamaModelId?: string
-  ollamaBaseUrl?: string
-  ollamaApiOptionsCtxNum?: string
-  deepSeekApiKey?: string
-  anthropicApiKey?: string
-  anthropicBaseUrl?: string
-  anthropicModelId?: string
-  liteLlmBaseUrl?: string
-  liteLlmModelId?: string
-  liteLlmApiKey?: string
-  defaultBaseUrl?: string
-  defaultModelId?: string
-  defaultApiKey?: string
-  defaultModelInfoMap?: Record<string, { contextWindow?: number; maxTokens?: number } | undefined>
-  needProxy?: boolean
-  proxyConfig?: { type?: string; host?: string; port?: number; enableProxyIdentity?: boolean; username?: string; password?: string }
-  o3MiniReasoningEffort?: string
 }
 
 export type ApiConfiguration = ApiHandlerOptions & {

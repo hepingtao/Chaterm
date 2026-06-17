@@ -1,6 +1,11 @@
 {
   "edition": "global",
   "displayName": "Chaterm",
+  "branding": {
+    "enterpriseBrandingEnabled": false,
+    "productNameZh": "",
+    "productNameEn": ""
+  },
   "api": {
     "baseUrl": "https://api.chaterm.net/v1",
     "kmsUrl": "https://api.chaterm.net/v1",
@@ -11,7 +16,8 @@
     "releaseNotesUrl": "https://chaterm.net/release-notes"
   },
   "auth": {
-    "loginBaseUrl": "https://auth.chaterm.ai"
+    "loginBaseUrl": "https://auth.chaterm.ai",
+    "accountCenterBaseUrl": "https://account.chaterm.ai"
   },
   "defaults": {
     "language": "en-US"

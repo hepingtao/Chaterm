@@ -15,6 +15,11 @@ export type Edition = 'cn' | 'global'
 export interface EditionConfig {
   edition: Edition
   displayName: string
+  branding?: {
+    enterpriseBrandingEnabled?: boolean
+    productNameZh?: string
+    productNameEn?: string
+  }
   api: {
     baseUrl: string
     kmsUrl: string
@@ -26,6 +31,7 @@ export interface EditionConfig {
   }
   auth: {
     loginBaseUrl: string
+    accountCenterBaseUrl: string
   }
   defaults: {
     language: string

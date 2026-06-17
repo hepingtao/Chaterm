@@ -4,6 +4,7 @@ import { ConnectionInfo } from '../agent/integrations/remote-terminal'
 import { createProxySocket } from './proxy'
 import {
   createProxyCommandSocket,
+  enrichConnectionCredentials,
   getReusableSshConnection,
   registerReusableSshSession,
   releaseReusableSshSession,
@@ -15,7 +16,6 @@ import net from 'net'
 import tls from 'tls'
 import { randomUUID } from 'crypto'
 import { getUserConfigFromRenderer } from '../index'
-import { getSshKeepaliveConfig } from './sshConfig'
 const logger = createLogger('ssh')
 
 // Store SSH connections
@@ -34,6 +34,7 @@ function isSystemError(_command: string, exitCode: number | null): boolean {
 }
 
 export async function remoteSshConnect(connectionInfo: ConnectionInfo): Promise<{ id?: string; error?: string }> {
+  connectionInfo = (await enrichConnectionCredentials(connectionInfo as unknown as Record<string, unknown>)) as unknown as ConnectionInfo
   const { host, port, username, password, privateKey, passphrase } = connectionInfo
   const connectionId = `ssh_${randomUUID()}`
   const normalizedHost = host ?? ''
@@ -75,7 +76,7 @@ export async function remoteSshConnect(connectionInfo: ConnectionInfo): Promise<
       port: jumpAsset.port || 22,
       username: jumpAsset.username,
       asset_type: jumpAsset.asset_type,
-      password: jumpAsset.auth_type === 'password' ? jumpAsset.password : undefined,
+      password: jumpAsset.auth_type !== 'keyBased' ? jumpAsset.password : undefined,
       privateKey: jumpAsset.auth_type === 'keyBased' ? jumpAsset.privateKey : undefined,
       passphrase: jumpAsset.auth_type === 'keyBased' ? jumpAsset.passphrase : undefined
     }
@@ -94,8 +95,6 @@ export async function remoteSshConnect(connectionInfo: ConnectionInfo): Promise<
       sock = await createProxySocket(proxyConfig, connectionInfo.host || '', connectionInfo.port || 22)
     }
   }
-
-  const keepaliveCfg = await getSshKeepaliveConfig()
 
   return new Promise((resolve) => {
     const conn = new Client()
@@ -148,8 +147,7 @@ export async function remoteSshConnect(connectionInfo: ConnectionInfo): Promise<
       host,
       port: normalizedPort,
       username,
-      keepaliveInterval: keepaliveCfg.keepaliveInterval,
-      keepaliveCountMax: keepaliveCfg.keepaliveCountMax,
+      keepaliveInterval: 10000, // Keep connection alive
       tryKeyboard: true, // Disable keyboard-interactive
       algorithms: LEGACY_ALGORITHMS
     }

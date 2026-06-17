@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/codecov/c/github/chaterm/Chaterm?style=flat&logo=codecov" alt="Coverage">
   <img src="https://img.shields.io/badge/AI-Native-blue?style=flat" alt="AI Native">
   <a href="https://x.com/chaterm_ai"><img src="https://img.shields.io/twitter/follow/chaterm_ai?style=flat&logo=x&logoColor=white&label=Follow" alt="Follow on X"></a>
-  <a href="https://discord.gg/AgsYzwRp62"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://deepwiki.com/chaterm/Chaterm"><img src="https://deepwiki.com/badge.svg" alt="DeepWiki"></a>
 </p>
 
 <p align="center">
@@ -43,6 +43,7 @@
   - [How Chaterm’s Security Architecture Ensures Data Security and Reliability](https://aws.amazon.com/cn/blogs/china/chaterm-aws-kms-envelope-encryption-for-zero-trust-security-en/)
   - [Enhancing DevOps Intelligence with Chaterm Skills and Qwen Large Models](https://chaterm.ai/blog/posts/agent-skills)
 - [Gold Sponsors](#gold-sponsors)
+- [Acknowledgements](#acknowledgements)
 - [Contributors](#contributors)
 
 # Introduction
@@ -84,6 +85,8 @@ There is a saying that every agent fails all the time, but Chaterm helps you fix
 
   Combining user habits, local memory, and the current server context, the Agent recommends the most suitable commands, making terminal input smarter and more efficient.
 
+  Optional local echo renders safe interactive typing immediately on high-latency SSH sessions while suppressing the confirmed remote echo.
+
   Supports cross-device session synchronization and reduces mobile input costs through quick commands and voice interaction, making remote maintenance smoother.
 
 - 🧩 **Knowledge Base**
@@ -104,6 +107,10 @@ There is a saying that every agent fails all the time, but Chaterm helps you fix
 
   Provide a more efficient resource access experience and facilitate centralized infrastructure management.
 
+- 🗄️ **Database Workspace**
+
+  Connect to MySQL, PostgreSQL, SQLite, and Oracle to browse schemas, query data, inspect DDL, edit table rows, and use database-aware AI assistance.
+
 ![Preview image](resources/features.webp)
 
 ## Development Guide
@@ -120,6 +127,14 @@ npm i electron -D
 node scripts/patch-package-lock.js
 npm install
 ```
+
+If Electron reports a native module ABI mismatch, rebuild native dependencies for Electron instead of the local Node.js runtime:
+
+```bash
+npm run rebuild:native
+```
+
+Do not use `npm rebuild better-sqlite3` for Electron runtime fixes; it can compile the module against the wrong Node ABI.
 
 ### Development
 
@@ -143,6 +158,13 @@ npm run build:linux
 ## Gold Sponsors
 
 ![Preview image](resources/aws.webp) ![Preview image](resources/aliyun.webp)
+
+## Acknowledgements
+
+Chaterm builds upon excellent open-source projects. We gratefully acknowledge:
+
+- **[Cline](https://github.com/cline/cline)** — portions of the AI Agent system are adapted from Cline.
+- **[RTK](https://github.com/rtk-ai/rtk)** — command output filtering to reduce token usage in agent workflows.
 
 ## Contributors
 

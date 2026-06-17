@@ -6,10 +6,10 @@
     >
       <img
         class="about-logo"
-        src="@/assets/logo.svg"
+        :src="brandingConfig.logoUrl"
       />
       <div v-if="isUpdate">
-        <div class="about-title">{{ editionConfig.displayName }} {{ newVersion }}</div>
+        <div class="about-title">{{ brandingConfig.displayName }} {{ newVersion }}</div>
         <a-progress
           class="about-progress"
           :percent="progress"
@@ -20,7 +20,7 @@
         <div class="about-progress-text">{{ t('about.downloading') }} ({{ progress }}%)</div>
       </div>
       <div v-else>
-        <div class="about-title">{{ editionConfig.displayName }}</div>
+        <div class="about-title">{{ brandingConfig.displayName }}</div>
         <div class="about-description">{{ t('about.version') }} {{ appInfo.version }}</div>
         <div class="about-update-btn-wrapper">
           <button
@@ -35,7 +35,7 @@
       <div
         class="about-description"
         style="margin-top: 32px"
-        >Copyright © {{ new Date().getFullYear() }} {{ editionConfig.displayName }} All rights reserved.</div
+        >Copyright © {{ new Date().getFullYear() }} {{ brandingConfig.displayName }} All rights reserved.</div
       >
     </a-card>
 
@@ -69,15 +69,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { Notice } from '../../Notice'
 import { FolderOpenOutlined, CommentOutlined, ExportOutlined } from '@ant-design/icons-vue'
 import i18n from '@/locales'
-import { getEditionConfig } from '@/utils/edition'
+import { getDefaultBrandingConfig, loadBrandingConfig } from '@/utils/branding'
 
 const { t } = i18n.global
-const editionConfig = getEditionConfig()
 const logger = createRendererLogger('settings.about')
+const brandingConfig = ref(getDefaultBrandingConfig())
 
 const appInfo = {
   ...__APP_INFO__
@@ -105,6 +105,11 @@ const progress = ref(0)
 const btnText = ref(t('about.checkUpdate'))
 const btnDisabled = ref(false)
 const updateStatus = ref(0)
+
+onMounted(async () => {
+  brandingConfig.value = await loadBrandingConfig()
+})
+
 const onCheckUpdate = async () => {
   btnDisabled.value = true
   try {
@@ -275,6 +280,18 @@ const handleCheckUpdate = async () => {
   color: var(--text-color-secondary);
   cursor: not-allowed;
 }
+.theme-light .about-update-btn {
+  background: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+.theme-light .about-update-btn:hover:not(:disabled) {
+  background: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+.theme-light .about-update-btn:disabled {
+  background: #e2e8f0 !important;
+  color: #64748b !important;
+}
 .log-diagnostics {
   width: 90%;
   max-width: 600px;
@@ -310,6 +327,14 @@ const handleCheckUpdate = async () => {
 .log-diagnostics-btn:hover {
   background: var(--bg-color-default);
   color: var(--text-color);
+}
+.theme-light .log-diagnostics-btn {
+  background: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+.theme-light .log-diagnostics-btn:hover {
+  background: #cbd5e1 !important;
+  color: #0f172a !important;
 }
 .feedback-section {
   width: 90%;
@@ -347,5 +372,15 @@ const handleCheckUpdate = async () => {
 }
 .feedback-btn:hover {
   background: rgba(24, 144, 255, 0.1);
+}
+.theme-light .feedback-btn {
+  background: #e2e8f0 !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+.theme-light .feedback-btn:hover {
+  background: #cbd5e1 !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
 }
 </style>

@@ -646,7 +646,10 @@
           </a-button>
         </a-tooltip>
         <a-tooltip :title="$t('ai.showChatHistory')">
-          <a-dropdown :trigger="['click']">
+          <a-dropdown
+            :trigger="['click']"
+            transition-name="history-dropdown-motion"
+          >
             <a-button
               type="text"
               class="action-icon-btn"
@@ -885,6 +888,7 @@ import { getGlobalState } from '@renderer/agent/storage/state'
 import type { MessageContent } from './types'
 import i18n from '@/locales'
 import eventBus from '@/utils/eventBus'
+import { mark } from '@/utils/perf'
 import historyIcon from '@/assets/icons/history.svg'
 import plusIcon from '@/assets/icons/plus.svg'
 import skillsIcon from '@/assets/icons/skills.svg'
@@ -932,7 +936,7 @@ interface Props {
     assetId?: string
     databaseName?: string
     schemaName?: string
-    dbType?: 'mysql' | 'postgresql'
+    dbType?: 'mysql' | 'postgresql' | 'sqlite' | 'oracle'
   }
   /** Database tree for ConnectionPicker / DatabasePicker / SchemaPicker options. */
   dbTree?: DatabaseTreeNode[]
@@ -1171,7 +1175,7 @@ interface ContextTruncationNoticeMessage {
 }
 
 interface DbQueryResultView {
-  engine: 'mysql' | 'postgresql'
+  engine: 'mysql' | 'postgresql' | 'sqlite' | 'oracle'
   executedSql: string
   columns: string[]
   rows: Array<Record<string, unknown>>
@@ -1322,6 +1326,7 @@ const handleAiChatSearchKeyDown = (e: KeyboardEvent) => {
 }
 
 onMounted(async () => {
+  mark('chaterm/renderer/willInitAiTab')
   await initModelOptions()
 
   if (props.savedState && props.savedState.chatTabs && props.savedState.chatTabs.length > 0) {
@@ -1341,6 +1346,7 @@ onMounted(async () => {
   if (window.api?.onCommandExplainResponse) {
     unsubscribeExplainResponse = window.api.onCommandExplainResponse(handleExplainCommandResponse)
   }
+  mark('chaterm/renderer/didInitAiTab')
 })
 
 onBeforeUnmount(() => {
