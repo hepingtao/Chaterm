@@ -310,6 +310,7 @@ export class Task {
   private pendingToolResults: ToolResult[] = []
   private didRejectTool = false
   private didAlreadyUseTool = false
+  private didCompleteTask = false
   private didCompleteReadingStream = false
   private experienceExtractionQueue: Promise<void> = Promise.resolve()
   // private didAutomaticallyRetryFailedApiRequest = false
@@ -2851,6 +2852,30 @@ export class Task {
       logger.warn('Timeout waiting for userMessageContentReady', { event: 'agent.task.user_message_content_ready.timeout' })
     }
 
+    // If the LLM produced text but no tool calls (userMessageContent is empty
+    // and no tool results are pending), return false so initiateTaskLoop sends
+    // the noToolsUsed message and tracks consecutive mistakes. Without this,
+    // recursivelyMakeChatermRequests would call itself with empty content,
+    // creating an infinite loop.
+    //
+    // In cmd mode, pushToolResult only pushes to pendingToolResults (not
+    // userMessageContent), so we check both. If pendingToolResults is non-empty,
+    // a tool WAS used — proceed to the next API call so the LLM can see the
+    // tool result and generate attempt_completion, rather than incorrectly
+    // telling the LLM it didn't use a tool.
+    // When attempt_completion was accepted (yesButtonClicked), the task is
+    // done. Return true to terminate the task loop immediately instead of
+    // making another API request that would produce extraneous output.
+    // Check this BEFORE the empty content check so both tool_use and
+    // text-only completion paths work correctly.
+    if (this.didCompleteTask) {
+      return true
+    }
+
+    if (this.userMessageContent.length === 0 && this.pendingToolResults.length === 0) {
+      return false
+    }
+
     return await this.recursivelyMakeChatermRequests(this.userMessageContent)
   }
 
@@ -3009,9 +3034,20 @@ export class Task {
             return
           }
 
-          // Only cmd mode returns directly, wait for frontend to execute command
+          // Only cmd mode: the frontend executes the command in the terminal.
+          // Push a tool result so the agent loop has content for the next API call.
+          // The LLM must NOT try to execute more tools — it should immediately
+          // call attempt_completion to summarize what it did and hand control
+          // back to the user, who will see the command output in their terminal.
           if (mode === 'cmd') {
-            // Wait for frontend to execute command and return result
+            await this.pushToolResult(
+              toolDescription,
+              'The command has been sent to the user\'s terminal for execution. ' +
+              'You will NOT receive the command output — the user will see it in their terminal. ' +
+              'You must now call the attempt_completion tool to summarize what you did. ' +
+              'Do not attempt to execute any more commands or use any other tools.'
+            )
+            await this.saveCheckpoint()
             return
           }
           // In agent mode, continue executing subsequent logic
@@ -3445,7 +3481,7 @@ export class Task {
           if (lastMessage && lastMessage.ask === 'command') {
             await this.ask('command', this.removeClosingTag(block.partial, 'command', command), block.partial).catch(() => {})
           } else {
-            await this.say('completion_result', this.removeClosingTag(block.partial, 'result', result), false)
+            await this.say('completion_result', this.removeClosingTag(block.partial, 'result', result), block.partial)
             await this.saveCheckpoint(true)
             await addNewChangesFlagToLastCompletionResultMessage()
             await this.ask('command', this.removeClosingTag(block.partial, 'command', command), block.partial).catch(() => {})
@@ -3517,7 +3553,10 @@ export class Task {
 
       const { response, text, contentParts } = await this.ask('completion_result', '', false)
       if (response === 'yesButtonClicked') {
-        await this.pushToolResult(toolDescription, '')
+        // Push a clear success message instead of empty string,
+        // otherwise LLM sees "(tool did not return anything)" and retries attempt_completion
+        await this.pushToolResult(toolDescription, this.responseFormatter.taskCompleted())
+        this.didCompleteTask = true
         return
       }
       await this.saveUserMessage(text ?? '', contentParts)
@@ -3538,7 +3577,20 @@ export class Task {
       this.userMessageContent.push({ type: 'text', text: `${toolDescription} Result:` })
       this.userMessageContent.push(...toolResults)
     } catch (error) {
-      await this.handleToolError(toolDescription, 'attempting completion', error as Error)
+      const err = error as Error
+      // When the ask promise was invalidated (e.g. lastMessageTs changed), pushing
+      // a tool error would cause the LLM to retry attempt_completion infinitely.
+      // Instead, treat this as a silent completion to break the retry loop.
+      if (err.message === 'Current ask promise was ignored') {
+        logger.warn('ask promise was ignored during attempt_completion, treating as accepted', {
+          event: 'agent.task.attempt_completion.ask_ignored',
+          taskId: this.taskId
+        })
+        await this.pushToolResult(toolDescription, this.responseFormatter.taskCompleted())
+        this.didCompleteTask = true
+      } else {
+        await this.handleToolError(toolDescription, 'attempting completion', err)
+      }
       await this.saveCheckpoint()
     }
   }
@@ -4472,6 +4524,10 @@ export class Task {
       const { response, text, contentParts } = await this.ask('completion_result', '', false)
 
       if (response === 'yesButtonClicked') {
+        // Signal that the task is complete so processAssistantResponse
+        // terminates the task loop instead of sending noToolsUsed and
+        // causing the LLM to generate repetitive output.
+        this.didCompleteTask = true
         return
       }
 
