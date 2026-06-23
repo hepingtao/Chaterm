@@ -591,7 +591,13 @@ export class Task {
     } else {
       // taskId-only = resume, same as the old historyItem path
       // resolveDbReady is called inside resumeTaskFromHistory after DB operations complete
-      this.resumeTaskFromHistory()
+      this.resumeTaskFromHistory().catch((err) => {
+        logger.error('Failed to resume task from history', {
+          event: 'agent.task.resume_failed',
+          taskId: this.taskId,
+          error: err instanceof Error ? err.message : String(err)
+        })
+      })
     }
 
     // initialize telemetry
@@ -1771,16 +1777,34 @@ export class Task {
     this.resolveDbReady()
 
     // Wait for user to send a message to continue
-    const { text, contentParts } = await this.ask('resume_task', '', false)
+    try {
+      const { text, contentParts } = await this.ask('resume_task', '', false)
 
-    // TODO:support only chip or image input
-    if (text) {
-      await this.saveUserMessage(text, contentParts)
+      // TODO:support only chip or image input
+      if (text) {
+        await this.saveUserMessage(text, contentParts)
 
-      // If last API message is user, remove it (API requires user/assistant alternation)
-      let userContent: UserContent = [{ type: 'text', text }]
+        // If last API message is user, remove it (API requires user/assistant alternation)
+        let userContent: UserContent = [{ type: 'text', text }]
 
-      await this.initiateTaskLoop(userContent)
+        await this.initiateTaskLoop(userContent)
+      }
+    } catch (err) {
+      // Handle ask timeout or other errors during task resume gracefully.
+      // The ask method already shows an error message and calls abortTask on timeout,
+      // so we just need to log and prevent the unhandled promise rejection.
+      if (err instanceof Error && err.message.includes('timed out')) {
+        logger.warn('Task resume timed out waiting for user input', {
+          event: 'agent.task.resume_timeout',
+          taskId: this.taskId
+        })
+      } else {
+        logger.error('Error during task resume', {
+          event: 'agent.task.resume_error',
+          taskId: this.taskId,
+          error: err instanceof Error ? err.message : String(err)
+        })
+      }
     }
   }
 
@@ -2267,7 +2291,7 @@ export class Task {
     let stream = this.api.createMessage(systemPrompt, conversationHistory)
 
     const iterator = stream[Symbol.asyncIterator]()
-    const apiTimeoutMs = 60000
+    const apiTimeoutMs = 120000 // Increased from 60s to 120s for slow API responses
 
     try {
       // awaiting first chunk to see if it will throw an error
@@ -2350,6 +2374,12 @@ export class Task {
       if (this.currentStreamingContentIndex < this.assistantMessageContent.length) {
         this.presentAssistantMessage()
         return
+      } else {
+        logger.debug('[Task] All content blocks processed', {
+          event: 'agent.task.content_blocks.completed',
+          taskId: this.taskId,
+          totalBlocks: this.assistantMessageContent.length
+        })
       }
     }
     // block is partial, but the read stream may have finished
@@ -2816,6 +2846,14 @@ export class Task {
     }
 
     this.didCompleteReadingStream = true
+    logger.debug('[Task] Stream reading completed', {
+      event: 'agent.task.stream.completed',
+      taskId: this.taskId,
+      assistantMessageContentLength: this.assistantMessageContent.length,
+      currentStreamingContentIndex: this.currentStreamingContentIndex,
+      didCompleteTask: this.didCompleteTask,
+      abort: this.abort
+    })
     this.finalizePartialBlocks()
 
     messageUpdater.updateApiReqMsg()
@@ -2825,6 +2863,12 @@ export class Task {
 
   private finalizePartialBlocks(): void {
     const partialBlocks = this.assistantMessageContent.filter((block) => block.partial)
+    logger.debug('[Task] Finalizing partial blocks', {
+      event: 'agent.task.finalize_partial_blocks',
+      taskId: this.taskId,
+      partialBlockCount: partialBlocks.length,
+      totalBlockCount: this.assistantMessageContent.length
+    })
     partialBlocks.forEach((block) => {
       block.partial = false
     })
@@ -3036,16 +3080,17 @@ export class Task {
 
           // Only cmd mode: the frontend executes the command in the terminal.
           // Push a tool result so the agent loop has content for the next API call.
-          // The LLM must NOT try to execute more tools — it should immediately
-          // call attempt_completion to summarize what it did and hand control
-          // back to the user, who will see the command output in their terminal.
+          // The LLM should call attempt_completion to summarize what it did and
+          // hand control back to the user, who will see the command output in
+          // their terminal. However, if the user reports errors in feedback,
+          // the LLM should continue troubleshooting.
           if (mode === 'cmd') {
             await this.pushToolResult(
               toolDescription,
-              'The command has been sent to the user\'s terminal for execution. ' +
-              'You will NOT receive the command output — the user will see it in their terminal. ' +
-              'You must now call the attempt_completion tool to summarize what you did. ' +
-              'Do not attempt to execute any more commands or use any other tools.'
+              'The command was executed in the user\'s terminal. The user has seen the output. ' +
+              'You should now call the attempt_completion tool to present a final summary of what you did. ' +
+              'Do NOT ask the user for results or feedback — the user already sees everything. ' +
+              'Do NOT attempt to execute any more commands or use any other tools.'
             )
             await this.saveCheckpoint()
             return
