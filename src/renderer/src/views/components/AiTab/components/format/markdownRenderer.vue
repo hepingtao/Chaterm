@@ -903,6 +903,50 @@ const extractCodeBlocks = (content: string) => {
   return blocks.sort((a, b) => a.index - b.index)
 }
 
+const extractThinking = (content: string): { thinking?: string; rest: string; isComplete?: boolean } => {
+  // Try to find complete <think>...</think> tags anywhere in the content
+  const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/)
+  if (thinkMatch) {
+    return {
+      thinking: thinkMatch[1].trim(),
+      rest: content.replace(thinkMatch[0], '').trim(),
+      isComplete: true
+    }
+  }
+
+  // Try to find complete <thinking>...</thinking> tags anywhere in the content
+  const thinkingMatch = content.match(/<thinking>([\s\S]*?)<\/thinking>/)
+  if (thinkingMatch) {
+    return {
+      thinking: thinkingMatch[1].trim(),
+      rest: content.replace(thinkingMatch[0], '').trim(),
+      isComplete: true
+    }
+  }
+
+  // Check for opening <think> tag without closing tag (partial)
+  if (content.includes('<think>') && !content.includes('<\/think>')) {
+    const startIndex = content.indexOf('<think>')
+    return {
+      thinking: content.substring(startIndex + '<think>'.length).trim(),
+      rest: content.substring(0, startIndex).trim(),
+      isComplete: false
+    }
+  }
+
+  // Check for opening <thinking> tag without closing tag (partial)
+  if (content.includes('<thinking>') && !content.includes('<\/thinking>')) {
+    const startIndex = content.indexOf('<thinking>')
+    return {
+      thinking: content.substring(startIndex + '<thinking>'.length).trim(),
+      rest: content.substring(0, startIndex).trim(),
+      isComplete: false
+    }
+  }
+
+  return { rest: content }
+}
+
 const processContent = async (content: string) => {
   if (!content) {
     thinkingContent.value = ''
@@ -926,33 +970,18 @@ const processContent = async (content: string) => {
     return
   }
 
-  let startTag = ''
-  let endTag = ''
-
-  if (processedContent.startsWith('<think>')) {
-    startTag = '<think>'
-    endTag = '</think>'
-  } else if (processedContent.startsWith('<thinking>')) {
-    startTag = '<thinking>'
-    endTag = '</thinking>'
-  }
-
-  if (startTag) {
-    processedContent = processedContent.substring(startTag.length)
-
-    const endIndex = processedContent.indexOf(endTag)
-    if (endIndex !== -1) {
-      thinkingContent.value = processedContent.substring(0, endIndex).trim()
-      showThinkingMeasurement.value = true
-      processedContent = processedContent.substring(endIndex + endTag.length).trim()
+  // Extract thinking content from any position in the text
+  const extracted = extractThinking(processedContent)
+  if (extracted.thinking !== undefined) {
+    thinkingContent.value = extracted.thinking
+    showThinkingMeasurement.value = true
+    processedContent = extracted.rest
+    if (extracted.isComplete) {
       thinkingLoading.value = false
       if (activeKey.value.length !== 0) {
         checkContentHeight()
       }
     } else {
-      thinkingContent.value = processedContent.trim()
-      showThinkingMeasurement.value = true
-      processedContent = ''
       if (!isCancelled.value) {
         thinkingLoading.value = true
       }

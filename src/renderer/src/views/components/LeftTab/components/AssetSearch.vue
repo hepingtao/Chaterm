@@ -5,8 +5,10 @@
         v-model:value="searchValue"
         :placeholder="t('common.search')"
         class="search-input"
+        allow-clear
         @input="handleSearch"
         @change="handleSearch"
+        @clear="handleClear"
       >
         <template #suffix>
           <search-outlined />
@@ -133,6 +135,11 @@ watch(searchValue, (newValue) => {
 
 const handleSearch = () => {
   emit('search', searchValue.value)
+}
+
+const handleClear = () => {
+  searchValue.value = ''
+  emit('search', '')
 }
 
 const handleNewAsset = () => {

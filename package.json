@@ -20,6 +20,8 @@
     "dev:watch": "cross-env APP_EDITION=cn electron-vite dev --watch --mode development.cn",
     "dev:cn": "cross-env APP_EDITION=cn electron-vite dev --mode development.cn",
     "dev:global": "cross-env APP_EDITION=global electron-vite dev --mode development.global",
+    "dev:cn:isolated": "cross-env APP_EDITION=cn CHATERM_USER_DATA=%APPDATA%\\chaterm-dev electron-vite dev --mode development.cn",
+    "dev:global:isolated": "cross-env APP_EDITION=global CHATERM_USER_DATA=%APPDATA%\\chaterm-global-dev electron-vite dev --mode development.global",
     "build": "npm run check:external-deps && npm run check:ffmpeg && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-vite build",
     "build:cn": "npm run check:external-deps && npm run check:ffmpeg && cross-env NODE_OPTIONS=--max-old-space-size=8192 APP_EDITION=cn electron-vite build --mode production.cn",
     "build:global": "npm run check:external-deps && npm run check:ffmpeg && cross-env NODE_OPTIONS=--max-old-space-size=8192 APP_EDITION=global electron-vite build --mode production.global",

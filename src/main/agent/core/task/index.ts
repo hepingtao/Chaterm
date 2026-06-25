@@ -311,6 +311,13 @@ export class Task {
   private didRejectTool = false
   private didAlreadyUseTool = false
   private didCompleteTask = false
+  // Tracks whether handleAttemptCompletionToolUse has already been entered
+  // for the current LLM turn. Some models (e.g. GLM with native function
+  // calling enabled) may emit the same tool_use block multiple times — once
+  // via native delta.tool_calls and once via content XML — which would
+  // cause the same "task completed" card to be rendered twice. We use this
+  // flag to drop the duplicate before any say/ask side effects happen.
+  private didEnterAttemptCompletion = false
   private didCompleteReadingStream = false
   private experienceExtractionQueue: Promise<void> = Promise.resolve()
   // private didAutomaticallyRetryFailedApiRequest = false
@@ -2336,6 +2343,16 @@ export class Task {
       throw new Error('Chaterm instance aborted')
     }
 
+    // If the task was already completed (e.g. user accepted an
+    // attempt_completion block), skip all remaining blocks to prevent
+    // duplicate rendering. A trailing text block after attempt_completion
+    // would otherwise trigger another ask('completion_result') call and
+    // show the completion card a second time.
+    if (this.didCompleteTask) {
+      this.userMessageContentReady = true
+      return
+    }
+
     if (this.presentAssistantMessageLocked) {
       this.presentAssistantMessageHasPendingUpdates = true
       return
@@ -2671,6 +2688,8 @@ export class Task {
     this.didAlreadyUseTool = false
     this.presentAssistantMessageLocked = false
     this.presentAssistantMessageHasPendingUpdates = false
+    this.didEnterAttemptCompletion = false
+    this.didCompleteTask = false
     // this.didAutomaticallyRetryFailedApiRequest = false
   }
 
@@ -2962,6 +2981,29 @@ export class Task {
     const timeZoneOffsetStr = `${timeZoneOffset >= 0 ? '+' : ''}${timeZoneOffset}:00`
     details += `\n\n# ${this.messages.currentTimeTitle}:\n${formatter.format(now)} (${timeZone}, UTC${timeZoneOffsetStr})`
 
+    // Add operating system and shell information (critical for cmd mode command generation)
+    const platform = os.platform()
+    const arch = os.arch()
+    const release = os.release()
+    const shellPath = process.env.ComSpec || process.env.SHELL || 'unknown'
+    const shellName = shellPath.toLowerCase().includes('powershell')
+      ? 'PowerShell'
+      : shellPath.toLowerCase().includes('cmd.exe')
+        ? 'Command Prompt (cmd.exe)'
+        : shellPath.toLowerCase().includes('bash')
+          ? 'bash'
+          : shellPath.toLowerCase().includes('zsh')
+            ? 'zsh'
+            : shellPath.toLowerCase().includes('fish')
+              ? 'fish'
+              : path.basename(shellPath)
+    details += `\n\n# Operating System:\n${platform} ${release} (${arch})`
+    details += `\n\n# Shell:\n${shellName}`
+    const chatMode = await this.getChatMode()
+    if (chatMode === 'cmd') {
+      details += `\n\n# Mode: cmd (local terminal)\nCommands execute in the user's local ${shellName}. Use OS-specific syntax only — no Linux commands on Windows.`
+    }
+
     const hosts = this.hosts?.map((h) => h.host).join(', ') ?? ''
     details += `\n\n# ${this.messages.currentHostsTitle}:[${hosts}]\n\n`
 
@@ -3078,21 +3120,20 @@ export class Task {
             return
           }
 
-          // Only cmd mode: the frontend executes the command in the terminal.
-          // Push a tool result so the agent loop has content for the next API call.
-          // The LLM should call attempt_completion to summarize what it did and
-          // hand control back to the user, who will see the command output in
-          // their terminal. However, if the user reports errors in feedback,
-          // the LLM should continue troubleshooting.
+          // In cmd mode, the frontend executes the command in the user's local terminal.
+          // askApproval() handles pushing toolResult when the frontend sends it back.
+          // However, some frontends only send yesButtonClicked without toolResult.
+          // In that case didAlreadyUseTool is still false, meaning no tool result was
+          // pushed. Without a tool result, processAssistantResponse returns false and
+          // triggers the noToolsUsed loop. Push a minimal result to prevent that.
           if (mode === 'cmd') {
-            await this.pushToolResult(
-              toolDescription,
-              'The command was executed in the user\'s terminal. The user has seen the output. ' +
-              'You should now call the attempt_completion tool to present a final summary of what you did. ' +
-              'Do NOT ask the user for results or feedback — the user already sees everything. ' +
-              'Do NOT attempt to execute any more commands or use any other tools.'
-            )
-            await this.saveCheckpoint()
+            if (!this.didAlreadyUseTool) {
+              await this.pushToolResult(
+                toolDescription,
+                'Command was approved and executed in the user\'s terminal. The user can see the output.'
+              )
+              await this.saveCheckpoint()
+            }
             return
           }
           // In agent mode, continue executing subsequent logic
@@ -3503,6 +3544,19 @@ export class Task {
   }
 
   private async handleAttemptCompletionToolUse(block: ToolUse): Promise<void> {
+    // Partial blocks must NOT set the guard flag — they arrive repeatedly
+    // during streaming to incrementally update the displayed result. Only
+    // when a complete (non-partial) block arrives do we set the flag to
+    // prevent duplicate final renders (e.g. GLM dual output). Setting the
+    // flag at function entry would skip the complete-block path entirely,
+    // leaving the UI showing a partial result with no completion button.
+    if (this.didEnterAttemptCompletion && !block.partial) {
+      return
+    }
+    if (!block.partial) {
+      this.didEnterAttemptCompletion = true
+    }
+
     const toolDescription = this.getToolDescription(block)
     const result: string | undefined = block.params.result
     const command: string | undefined = block.params.command
@@ -3598,9 +3652,10 @@ export class Task {
 
       const { response, text, contentParts } = await this.ask('completion_result', '', false)
       if (response === 'yesButtonClicked') {
-        // Push a clear success message instead of empty string,
-        // otherwise LLM sees "(tool did not return anything)" and retries attempt_completion
-        await this.pushToolResult(toolDescription, this.responseFormatter.taskCompleted())
+        // didCompleteTask terminates the task loop, so no further LLM call
+        // happens. Do NOT push a tool result here — it would linger in
+        // pendingToolResults and get flushed on the next user message,
+        // causing the LLM to see and repeat "用户已确认任务完成..." text.
         this.didCompleteTask = true
         return
       }
@@ -3631,7 +3686,6 @@ export class Task {
           event: 'agent.task.attempt_completion.ask_ignored',
           taskId: this.taskId
         })
-        await this.pushToolResult(toolDescription, this.responseFormatter.taskCompleted())
         this.didCompleteTask = true
       } else {
         await this.handleToolError(toolDescription, 'attempting completion', err)
@@ -5073,7 +5127,7 @@ USERNAME:${localSystemInfo.userName}`
         false
       )
 
-      await this.pushToolResult(toolDescription, `Knowledge summary has been sent to knowledge base. File: ${fileName}.md`)
+      await this.pushToolResult(toolDescription, `Knowledge summary has been sent to knowledge base. File: ${fileName}.md`, { dontLock: true })
 
       await this.saveCheckpoint()
     } catch (error) {
@@ -5134,7 +5188,11 @@ USERNAME:${localSystemInfo.userName}`
         false
       )
 
-      await this.pushToolResult(toolDescription, `Skill has been created successfully. Name: ${skillName}`)
+      // Use dontLock so the stream is NOT interrupted. This allows the LLM to
+      // generate attempt_completion or text in the same response, rather than
+      // forcing a new API request where the LLM might not use any tool
+      // (triggering the noToolsUsed loop and getting stuck).
+      await this.pushToolResult(toolDescription, `Skill has been created successfully. Name: ${skillName}`, { dontLock: true })
 
       await this.saveCheckpoint()
     } catch (error) {

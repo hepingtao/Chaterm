@@ -673,6 +673,13 @@ export function useChatMessages(
 
       session.lastPartialMessage = message
       if (!partial.partial) {
+        logger.info('[useChatMessages] Partial message completed', {
+          type: partial.type,
+          ask: partial.ask,
+          say: partial.say,
+          textLength: partial.text?.length ?? 0,
+          ts: partial.ts
+        })
         session.showSendButton = true
         if (
           (partial.type === 'ask' &&

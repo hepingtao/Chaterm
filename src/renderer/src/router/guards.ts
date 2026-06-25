@@ -87,7 +87,7 @@ export const beforeEach = async (to, _from, next) => {
     try {
       const api = window.api as any
       mark('chaterm/renderer/willInitUserDatabase')
-      const dbResult = await api.initUserDatabase({ uid: 999999999 })
+      const dbResult = await api.initUserDatabase({ uid: 5003054 })
       mark('chaterm/renderer/didInitUserDatabase')
       logger.info('Database initialization result', { success: dbResult.success })
 

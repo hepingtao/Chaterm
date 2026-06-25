@@ -121,7 +121,7 @@ export function getCurrentUserId(): number | null {
 }
 
 export function getGuestUserId(): number {
-  return 999999999
+  return 5003054
 }
 
 function upgradeUserSnippetTable(db: Database.Database): void {

@@ -89,6 +89,16 @@ export function initUserDataPath(): void {
   }
 
   try {
+    // Support custom userData path via environment variable for isolated development
+    const customUserData = process.env.CHATERM_USER_DATA
+    if (customUserData) {
+      app.setPath('userData', customUserData)
+      userDataPath = customUserData
+      logger.info('Using custom userData path from CHATERM_USER_DATA', { path: customUserData })
+      userDataPathInitialized = true
+      return
+    }
+
     const edition = getEdition()
 
     if (edition === 'global') {

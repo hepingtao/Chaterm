@@ -158,8 +158,14 @@ export function useCommandInteraction(params: CommandInteractionOptions) {
           messageRsp.askResponse = 'yesButtonClicked'
           break
         case 'completion_result':
-          messageRsp.askResponse = 'messageResponse'
-          messageRsp.text = 'Task completed successfully.'
+          // The "Task Completed" button click signals acceptance of the
+          // completion, not a new user instruction. Send yesButtonClicked
+          // so the agent loop terminates via didCompleteTask = true.
+          // Sending messageResponse here would feed "Task completed
+          // successfully." back to the LLM, which then issues another
+          // attempt_completion on the next turn and re-renders the report.
+          messageRsp.askResponse = 'yesButtonClicked'
+          messageRsp.text = ''
           break
         case 'auto_approval_max_req_reached':
           messageRsp.askResponse = 'yesButtonClicked'

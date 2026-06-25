@@ -197,11 +197,21 @@ export class LiteLlmHandler implements ApiHandler {
       })
     }
 
+    // Disable native function calling for GLM models: the system prompt uses XML
+    // tool tags and the existing parser expects XML-formatted tool calls. Native
+    // function calling yields JSON tool_calls that we would have to convert, which
+    // adds complexity and has been observed to produce unparseable output. Keep
+    // GLM in the same XML-mode path as other models.
+    if (isGlmModel) {
+      logger.info('[GLM] Native function calling disabled, using XML tool tags', { event: 'glm.xml_tools' })
+    }
+
     const stream = await this.client.chat.completions.create(params)
 
     let usageInfo: OpenAI.CompletionUsage | undefined | null = undefined
     // GLM models with -Thinking suffix output <thinking>...</thinking> tags when thinking mode is enabled
     const glmThinkingParser = isGlmModel && reasoningOn ? createGlmThinkingParser() : null
+
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta
 
