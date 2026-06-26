@@ -1194,26 +1194,10 @@ interface ApiType {
   onTokenExpired: (callback: () => void) => () => void
 
   // --- Local-only APIs (cross-terminal command execution & multi-window) ---
-  crossExecuteCommand: (payload: {
-    command: string
-    tabId?: string
-    targetHost?: string
-    targetTerminalTabId?: string
-  }) => Promise<void>
-  relayOutput: (payload: {
-    senderWebContentsId: number
-    content: string
-    tabId?: string
-    toolResult?: any
-  }) => Promise<void>
+  crossExecuteCommand: (payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string }) => Promise<void>
+  relayOutput: (payload: { senderWebContentsId: number; content: string; tabId?: string; toolResult?: any }) => Promise<void>
   onCrossExecuteCommand: (
-    callback: (payload: {
-      command: string
-      tabId?: string
-      targetHost?: string
-      targetTerminalTabId?: string
-      senderWebContentsId?: number
-    }) => void
+    callback: (payload: { command: string; tabId?: string; targetHost?: string; targetTerminalTabId?: string; senderWebContentsId?: number }) => void
   ) => () => void
   onCrossOutput: (callback: (payload: { content: string; tabId?: string; toolResult?: any }) => void) => () => void
 }

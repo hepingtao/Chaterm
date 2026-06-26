@@ -1560,6 +1560,28 @@ export class Task {
       await this.truncateHistoryAtTimestamp(truncateAtMessageTs)
     }
 
+    // When the task loop has already terminated (didCompleteTask=true after
+    // attempt_completion), there is no ask() waiting to consume the payload.
+    // A messageResponse here is the user starting a new round — restart the
+    // task loop with their input so the frontend gets a response instead of
+    // hanging on "处理中" forever.
+    if (askResponse === 'messageResponse' && this.didCompleteTask && !this.abort) {
+      this.didCompleteTask = false
+      this.didEnterAttemptCompletion = false
+      this.consecutiveMistakeCount = 0
+      await this.saveUserMessage(text ?? '', contentParts)
+      const userContent: UserContent = [{ type: 'text', text: text ?? '' }]
+      this.setNextUserInputContentParts(contentParts)
+      this.initiateTaskLoop(userContent).catch((err) => {
+        logger.error('Failed to restart task loop after completion', {
+          event: 'agent.task.restart_after_completion.failed',
+          taskId: this.taskId,
+          error: err instanceof Error ? err.message : String(err)
+        })
+      })
+      return
+    }
+
     // Consume by the next API request only (prevents repeated doc/chat reads within the same round).
     this.setNextUserInputContentParts(contentParts)
     this.askResponsePayload = {
@@ -2909,10 +2931,23 @@ export class Task {
     })
 
     try {
-      await pWaitFor(() => this.userMessageContentReady, { timeout: 60_000 }) // 1 minute
+      // Wait for presentAssistantMessage to finish processing all content
+      // blocks. This includes waiting for user responses via ask(), which
+      // has a 5-minute timeout. The pWaitFor timeout must be LONGER than
+      // ask's timeout — otherwise processAssistantResponse would return
+      // false (triggering noToolsUsed) while attempt_completion's ask is
+      // still waiting for the user, causing the LLM to loop on
+      // "系统报错说我没有使用工具".
+      await pWaitFor(() => this.userMessageContentReady || this.abort, { timeout: 310_000 })
     } catch {
       // Timeout waiting for assistant message content to be fully presented
       logger.warn('Timeout waiting for userMessageContentReady', { event: 'agent.task.user_message_content_ready.timeout' })
+    }
+
+    // If the task was aborted (e.g. ask timed out and called abortTask),
+    // terminate the loop immediately instead of sending noToolsUsed.
+    if (this.abort) {
+      return true
     }
 
     // If the LLM produced text but no tool calls (userMessageContent is empty
@@ -3128,10 +3163,7 @@ export class Task {
           // triggers the noToolsUsed loop. Push a minimal result to prevent that.
           if (mode === 'cmd') {
             if (!this.didAlreadyUseTool) {
-              await this.pushToolResult(
-                toolDescription,
-                'Command was approved and executed in the user\'s terminal. The user can see the output.'
-              )
+              await this.pushToolResult(toolDescription, "Command was approved and executed in the user's terminal. The user can see the output.")
               await this.saveCheckpoint()
             }
             return
@@ -3144,7 +3176,9 @@ export class Task {
 
         if (
           !needsSecurityApproval &&
-          ((!requiresApprovalPerLLM && autoApproveSafe) || (mode === 'agent' && autoApproveSafe) || (requiresApprovalPerLLM && autoApproveSafe && autoApproveAll))
+          ((!requiresApprovalPerLLM && autoApproveSafe) ||
+            (mode === 'agent' && autoApproveSafe) ||
+            (requiresApprovalPerLLM && autoApproveSafe && autoApproveAll))
         ) {
           // In auto-approval mode, commands without security risks execute directly
           this.removeLastPartialMessageIfExistsWithType('ask', 'command')
@@ -3544,13 +3578,17 @@ export class Task {
   }
 
   private async handleAttemptCompletionToolUse(block: ToolUse): Promise<void> {
-    // Partial blocks must NOT set the guard flag — they arrive repeatedly
-    // during streaming to incrementally update the displayed result. Only
-    // when a complete (non-partial) block arrives do we set the flag to
-    // prevent duplicate final renders (e.g. GLM dual output). Setting the
-    // flag at function entry would skip the complete-block path entirely,
-    // leaving the UI showing a partial result with no completion button.
-    if (this.didEnterAttemptCompletion && !block.partial) {
+    // After the first complete (non-partial) attempt_completion block has been
+    // processed, didEnterAttemptCompletion is set to true. ALL subsequent
+    // blocks — both partial and complete — must be skipped to prevent
+    // duplicate "任务已完成" renders. This handles GLM dual output where a
+    // second attempt_completion block's partial chunks would otherwise create
+    // a new say('completion_result') message with a different ts, causing the
+    // frontend to render a second completion card.
+    //
+    // The flag is NOT set for partial blocks, so the initial streaming
+    // partials (before the first complete block) are still processed normally.
+    if (this.didEnterAttemptCompletion) {
       return
     }
     if (!block.partial) {
@@ -3602,7 +3640,6 @@ export class Task {
         showSystemNotification({ subtitle: 'Task Completed', message: result.replace(/\n/g, ' ') })
       }
 
-      let commandResult: ToolResponse | undefined
       if (command) {
         if (lastMessage && lastMessage.ask !== 'command') {
           await this.say('completion_result', result, false)
@@ -3617,8 +3654,7 @@ export class Task {
           await this.saveCheckpoint()
           return
         }
-        const execCommandResult = await this.executeCommandTool(command!, ip!)
-        commandResult = execCommandResult
+        await this.executeCommandTool(command!, ip!)
       } else {
         await this.say('completion_result', result, false)
         await this.saveCheckpoint(true)
@@ -3650,46 +3686,15 @@ export class Task {
         // Chat sync module may not be available, ignore silently
       }
 
-      const { response, text, contentParts } = await this.ask('completion_result', '', false)
-      if (response === 'yesButtonClicked') {
-        // didCompleteTask terminates the task loop, so no further LLM call
-        // happens. Do NOT push a tool result here — it would linger in
-        // pendingToolResults and get flushed on the next user message,
-        // causing the LLM to see and repeat "用户已确认任务完成..." text.
-        this.didCompleteTask = true
-        return
-      }
-      await this.saveUserMessage(text ?? '', contentParts)
-      await this.saveCheckpoint()
-
-      const toolResults: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []
-      if (commandResult) {
-        if (typeof commandResult === 'string') {
-          toolResults.push({ type: 'text', text: commandResult })
-        } else if (Array.isArray(commandResult)) {
-          toolResults.push(...commandResult)
-        }
-      }
-      toolResults.push({
-        type: 'text',
-        text: formatMessage(this.messages.userProvidedFeedback, { feedback: text })
-      })
-      this.userMessageContent.push({ type: 'text', text: `${toolDescription} Result:` })
-      this.userMessageContent.push(...toolResults)
+      // Task is complete — terminate the loop immediately. No ask() wait:
+      // the user has no "confirm" button to click, and waiting would cause
+      // processAssistantResponse's pWaitFor to time out and send noToolsUsed,
+      // making the LLM loop on "系统报错说我没有使用工具". If the user wants
+      // to continue, they send a new message which starts a fresh task.
+      this.didCompleteTask = true
     } catch (error) {
       const err = error as Error
-      // When the ask promise was invalidated (e.g. lastMessageTs changed), pushing
-      // a tool error would cause the LLM to retry attempt_completion infinitely.
-      // Instead, treat this as a silent completion to break the retry loop.
-      if (err.message === 'Current ask promise was ignored') {
-        logger.warn('ask promise was ignored during attempt_completion, treating as accepted', {
-          event: 'agent.task.attempt_completion.ask_ignored',
-          taskId: this.taskId
-        })
-        this.didCompleteTask = true
-      } else {
-        await this.handleToolError(toolDescription, 'attempting completion', err)
-      }
+      await this.handleToolError(toolDescription, 'attempting completion', err)
       await this.saveCheckpoint()
     }
   }
@@ -4614,12 +4619,11 @@ export class Task {
 
     await this.say('text', content, block.partial)
 
-    // If this is a complete text block and the last content block, wait for user input
-    if (!block.partial && this.currentStreamingContentIndex === this.assistantMessageContent.length - 1) {
-      // Check if there is a tool call
-      // const hasToolUse = this.assistantMessageContent.some((block) => block.type === 'tool_use')
-
-      // if (!hasToolUse) {
+    // If this is a complete text block and the last content block, wait for user input.
+    // Skip if attempt_completion was already processed in this response to avoid
+    // a duplicate ask('completion_result') call (e.g. LLM outputs text after
+    // attempt_completion).
+    if (!block.partial && this.currentStreamingContentIndex === this.assistantMessageContent.length - 1 && !this.didEnterAttemptCompletion) {
       const { response, text, contentParts } = await this.ask('completion_result', '', false)
 
       if (response === 'yesButtonClicked') {

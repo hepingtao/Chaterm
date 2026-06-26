@@ -204,19 +204,55 @@ describe('Task interaction-heavy branches', () => {
     expect(task.triggerExperienceExtraction).not.toHaveBeenCalled()
   })
 
-  it('handleAttemptCompletionToolUse should push empty tool result on acceptance', async () => {
-    task.ask = vi.fn().mockResolvedValue({ response: 'yesButtonClicked', text: '', contentParts: [] })
-
+  it('handleAttemptCompletionToolUse should set didCompleteTask immediately without ask', async () => {
     await task.handleAttemptCompletionToolUse({
       name: 'attempt_completion',
       params: { result: 'all good', depositExperience: 'true' },
       partial: false
     })
 
+    expect(task.say).toHaveBeenCalledWith('completion_result', 'all good', false)
     expect(task.completeAllInProgressTodos).toHaveBeenCalledTimes(1)
     expect(task.clearEphemeralToolResults).toHaveBeenCalledTimes(1)
-    expect(task.pushToolResult).toHaveBeenCalledWith('[mock-tool]', '')
+    // No ask() call — task terminates immediately after showing the result.
+    // Waiting for user input caused pWaitFor timeout → noToolsUsed loop.
+    expect(task.ask).not.toHaveBeenCalled()
+    expect(task.pushToolResult).not.toHaveBeenCalled()
+    expect(task.didCompleteTask).toBe(true)
     expect(task.enqueueExperienceExtraction).toHaveBeenCalledWith()
+  })
+
+  it('handleAttemptCompletionToolUse should skip duplicate partial blocks after first complete block', async () => {
+    // First complete block — should be processed normally
+    await task.handleAttemptCompletionToolUse({
+      name: 'attempt_completion',
+      params: { result: 'first result' },
+      partial: false
+    })
+
+    expect(task.say).toHaveBeenCalledWith('completion_result', 'first result', false)
+    expect(task.didCompleteTask).toBe(true)
+
+    // Reset mock to detect any further calls
+    task.say = vi.fn().mockResolvedValue(undefined)
+
+    // Second block (partial) — should be skipped to prevent duplicate render
+    await task.handleAttemptCompletionToolUse({
+      name: 'attempt_completion',
+      params: { result: 'second result' },
+      partial: true
+    })
+
+    expect(task.say).not.toHaveBeenCalled()
+
+    // Second block (complete) — should also be skipped
+    await task.handleAttemptCompletionToolUse({
+      name: 'attempt_completion',
+      params: { result: 'second result' },
+      partial: false
+    })
+
+    expect(task.say).not.toHaveBeenCalled()
   })
 
   it('handleAttemptCompletionToolUse should skip experience extraction when depositExperience is false', async () => {
