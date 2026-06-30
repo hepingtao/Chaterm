@@ -30,50 +30,90 @@
         v-if="currentMenuLevel === 'main'"
         class="main-menu-list"
       >
-        <!-- Opened hosts section (quick selection, max 4 items) -->
-        <template v-if="displayedOpenedHosts.length > 0">
+        <!-- Global search results (when search value is non-empty) -->
+        <template v-if="isGlobalSearch">
           <div
-            v-for="(host, index) in displayedOpenedHosts"
-            :key="'opened-' + (host.tabSessionId || host.uuid)"
-            class="menu-item opened-host-item"
+            v-if="globalSearchFetching"
+            class="menu-empty"
+          >
+            {{ $t('ai.loading') }}...
+          </div>
+          <div
+            v-for="(item, index) in globalSearchResults"
+            :key="item.key"
+            class="menu-item global-search-item"
             :class="{ 'keyboard-selected': keyboardSelectedIndex === index }"
-            @click.stop="onHostClick(host)"
+            @click.stop="onGlobalSearchItemClick(item)"
             @mouseover="handleMenuMouseOver(index)"
           >
-            <LaptopOutlined class="menu-icon" />
-            <span class="menu-label">{{ host.label }}</span>
-            <CheckOutlined
-              v-if="isHostSelected(host)"
-              class="selected-icon"
+            <component
+              :is="globalSearchIcon(item.type)"
+              class="menu-icon"
             />
+            <div class="global-search-content">
+              <span class="menu-label">{{ item.label }}</span>
+              <span
+                v-if="item.sublabel"
+                class="menu-sublabel"
+              >{{ item.sublabel }}</span>
+            </div>
+            <span class="global-search-type-tag">{{ $t('ai.' + item.type) }}</span>
           </div>
-          <div class="menu-divider" />
+          <div
+            v-if="!globalSearchFetching && globalSearchResults.length === 0"
+            class="menu-empty"
+          >
+            {{ $t('ai.noResults') }}
+          </div>
         </template>
 
-        <!-- Category menu items -->
-        <div
-          v-for="(item, index) in mainMenuItems"
-          :key="item.key"
-          class="menu-item"
-          :class="{ 'keyboard-selected': keyboardSelectedIndex === displayedOpenedHosts.length + index }"
-          :data-onboarding-id="item.key === 'hosts' ? 'ai-context-hosts-menu' : undefined"
-          @click.stop="goToLevel2(item.key)"
-          @mouseover="handleMenuMouseOver(displayedOpenedHosts.length + index)"
-        >
-          <img
-            v-if="item.svgSrc"
-            :src="item.svgSrc"
-            alt=""
-            class="menu-icon-svg"
-          />
-          <component
-            :is="item.icon"
-            v-else
-            class="menu-icon"
-          />
-          <span class="menu-label">{{ $t(item.labelKey) }}</span>
-          <RightOutlined class="arrow-icon" />
-        </div>
+        <!-- Default main menu (opened hosts + categories) -->
+        <template v-else>
+          <!-- Opened hosts section (quick selection, max 4 items) -->
+          <template v-if="displayedOpenedHosts.length > 0">
+            <div
+              v-for="(host, index) in displayedOpenedHosts"
+              :key="'opened-' + (host.tabSessionId || host.uuid)"
+              class="menu-item opened-host-item"
+              :class="{ 'keyboard-selected': keyboardSelectedIndex === index }"
+              @click.stop="onHostClick(host)"
+              @mouseover="handleMenuMouseOver(index)"
+            >
+              <LaptopOutlined class="menu-icon" />
+              <span class="menu-label">{{ host.label }}</span>
+              <CheckOutlined
+                v-if="isHostSelected(host)"
+                class="selected-icon"
+              />
+            </div>
+            <div class="menu-divider" />
+          </template>
+
+          <!-- Category menu items -->
+          <div
+            v-for="(item, index) in mainMenuItems"
+            :key="item.key"
+            class="menu-item"
+            :class="{ 'keyboard-selected': keyboardSelectedIndex === displayedOpenedHosts.length + index }"
+            :data-onboarding-id="item.key === 'hosts' ? 'ai-context-hosts-menu' : undefined"
+            @click.stop="goToLevel2(item.key)"
+            @mouseover="handleMenuMouseOver(displayedOpenedHosts.length + index)"
+          >
+            <img
+              v-if="item.svgSrc"
+              :src="item.svgSrc"
+              alt=""
+              class="menu-icon-svg"
+            />
+            <component
+              :is="item.icon"
+              v-else
+              class="menu-icon"
+            />
+            <span class="menu-label">{{ $t(item.labelKey) }}</span>
+            <RightOutlined class="arrow-icon" />
+          </div>
+        </template>
       </div>
 
       <!-- Level 2: Hosts List -->
@@ -397,6 +437,11 @@ const {
   skillsOptionsLoading,
   isSkillSelected,
   onSkillClick,
+  // Global search
+  isGlobalSearch,
+  globalSearchResults,
+  globalSearchFetching,
+  onGlobalSearchItemClick,
   // Handlers
   handleSearchKeyDown,
   handleMouseOver,
@@ -433,6 +478,22 @@ const popupClass = computed(() => ({
   'is-edit-mode': currentMode.value === 'edit',
   'is-positioning': !popupReady.value
 }))
+
+// Icon for global search result item based on its type
+const globalSearchIcon = (type: string): Component => {
+  switch (type) {
+    case 'host':
+      return LaptopOutlined
+    case 'doc':
+      return FileTextOutlined
+    case 'skill':
+      return MessageOutlined
+    case 'chat':
+      return MessageOutlined
+    default:
+      return FileTextOutlined
+  }
+}
 
 interface MainMenuItem {
   key: Exclude<ContextMenuLevel, 'main'>
@@ -486,6 +547,8 @@ void searchInputRef
   z-index: 1000;
   position: fixed;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: var(--popup-bg-color);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -544,6 +607,9 @@ void searchInputRef
 
 .main-menu-list {
   padding: 4px 0;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .menu-divider {
@@ -604,6 +670,41 @@ void searchInputRef
     margin-left: 6px;
     flex-shrink: 0;
   }
+}
+
+.global-search-item {
+  .global-search-content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .menu-sublabel {
+    font-size: 10px;
+    color: var(--text-color-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .global-search-type-tag {
+    font-size: 10px;
+    color: var(--text-color-tertiary);
+    background: var(--bg-color-secondary);
+    padding: 1px 6px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    margin-left: 6px;
+  }
+}
+
+.menu-empty {
+  color: var(--text-color-tertiary);
+  text-align: center;
+  padding: 16px 12px;
+  font-size: 12px;
 }
 
 .select-list {

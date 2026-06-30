@@ -2587,6 +2587,11 @@ export class Task {
         const { command, path, summarizeUpToTs } = chip.ref
         let expandedContent = ''
 
+        // Apply summarizeUpToTs for any command that carries it (file-based or built-in)
+        if (summarizeUpToTs) {
+          this.summarizeUpToTs = summarizeUpToTs
+        }
+
         if (path) {
           try {
             const { content } = await this.readFile(path, MAX_DOC_BYTES)
@@ -2597,16 +2602,10 @@ export class Task {
             expandedContent = `[Error: Failed to load command file ${path}]`
           }
         } else {
-          // Built-in command: get prompt content
+          // Built-in command fallback (kept for backward compatibility with old chips)
           if (command === SLASH_COMMANDS.SUMMARY_TO_DOC) {
-            if (summarizeUpToTs) {
-              this.summarizeUpToTs = summarizeUpToTs
-            }
             expandedContent = getSummaryToDocPrompt(isChinese)
           } else if (command === SLASH_COMMANDS.SUMMARY_TO_SKILL) {
-            if (summarizeUpToTs) {
-              this.summarizeUpToTs = summarizeUpToTs
-            }
             expandedContent = getSummaryToSkillPrompt(isChinese)
           }
         }

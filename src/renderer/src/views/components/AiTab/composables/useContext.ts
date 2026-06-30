@@ -3,7 +3,7 @@ import type { InjectionKey } from 'vue'
 import debounce from 'lodash/debounce'
 
 const logger = createRendererLogger('ai.context')
-import type { Host, HostOption, HostItemType, ContextMenuLevel, DocOption, ChatOption, SkillOption } from '../types'
+import type { Host, HostOption, HostItemType, ContextMenuLevel, DocOption, ChatOption, SkillOption, GlobalSearchItem } from '../types'
 import { formatHosts, hostLabelOrTitleMatches, isSwitchAssetType } from '../utils'
 import { isBastionHostType } from '../types'
 import { useSessionState } from './useSessionState'
@@ -104,6 +104,13 @@ export const useContext = (options: UseContextOptions = {}) => {
   // ========== Skills State ==========
   const skillsOptions = ref<SkillOption[]>([])
   const skillsOptionsLoading = ref(false)
+
+  // ========== Global Search State ==========
+  // Whether data has been fetched for global search (avoids refetch on every keystroke)
+  const globalSearchFetched = ref(false)
+  const globalSearchFetching = ref(false)
+  // All docs (files) recursively loaded from knowledge base, for global search
+  const allDocsForGlobalSearch = ref<DocOption[]>([])
 
   // ========== Opened Hosts State ==========
   // List of hosts from currently opened terminal tabs for quick selection
@@ -265,6 +272,157 @@ export const useContext = (options: UseContextOptions = {}) => {
     return displayedOpenedHosts.value.length + mainMenuItems.value.length
   })
 
+  // Whether global search mode is active (main menu with non-empty search value)
+  const isGlobalSearch = computed(() => {
+    return currentMenuLevel.value === 'main' && searchValue.value.trim() !== ''
+  })
+
+  /**
+   * Recursively load all files from a knowledge base directory.
+   * Used for global search to find docs in subdirectories.
+   */
+  const fetchAllDocsRecursive = async (relDir: string): Promise<DocOption[]> => {
+    try {
+      // Ensure kbRoot is fetched
+      if (!kbRoot.value) {
+        const { root } = await window.api.kbGetRoot()
+        kbRoot.value = root
+      }
+      const separator = kbRoot.value.includes('\\') ? '\\' : '/'
+      const result = await window.api.kbListDir(relDir)
+      const files: DocOption[] = []
+      for (const item of result) {
+        const absPath = kbRoot.value + separator + item.relPath.replace(/\//g, separator)
+        if (item.type === 'file') {
+          files.push({ name: item.name, relPath: item.relPath, absPath, type: 'file' })
+        } else if (item.type === 'dir') {
+          // Recursively load subdirectory
+          const subFiles = await fetchAllDocsRecursive(item.relPath)
+          files.push(...subFiles)
+        }
+      }
+      return files
+    } catch (error) {
+      logger.error('Failed to fetch docs recursively', { error: error, relDir })
+      return []
+    }
+  }
+
+  /**
+   * Fetch all categories' data for global search.
+   * Called once when user starts typing in the main menu search box.
+   * Note: hosts are NOT fetched here — they use server-side search via debouncedSearch
+   * to avoid the loading guard conflict and ensure full results.
+   */
+  const fetchAllForGlobalSearch = async () => {
+    if (globalSearchFetching.value) return
+    globalSearchFetching.value = true
+    try {
+      const tasks: Promise<void>[] = []
+      // Recursively load all docs for global search
+      tasks.push(
+        (async () => {
+          allDocsForGlobalSearch.value = await fetchAllDocsRecursive('')
+        })()
+      )
+      tasks.push(fetchChatsOptions())
+      tasks.push(fetchSkillsOptions())
+      await Promise.all(tasks)
+    } finally {
+      globalSearchFetching.value = false
+    }
+  }
+
+  /**
+   * Global search results: merge filtered items from all categories into a flat list.
+   * Limits each category to avoid an overly long list.
+   */
+  const globalSearchResults = computed<GlobalSearchItem[]>(() => {
+    if (!isGlobalSearch.value) return []
+    const term = searchValue.value.toLowerCase()
+    const results: GlobalSearchItem[] = []
+    const MAX_HOSTS = 50
+    const MAX_PER_CATEGORY = 5
+
+    // Hosts
+    let hostCount = 0
+    for (const host of filteredHostOptions.value) {
+      if (!host.selectable) continue
+      results.push({
+        key: 'host-' + (host.tabSessionId || host.uuid || host.key),
+        type: 'host',
+        label: host.label,
+        sublabel: host.title && host.title !== host.label ? host.title : undefined
+      })
+      hostCount++
+      if (hostCount >= MAX_HOSTS) break
+    }
+
+    // Docs (search through all recursively loaded files)
+    let docCount = 0
+    for (const doc of allDocsForGlobalSearch.value) {
+      if (doc.name.toLowerCase().includes(term)) {
+        results.push({ key: 'doc-' + doc.absPath, type: 'doc', label: doc.name })
+        docCount++
+        if (docCount >= MAX_PER_CATEGORY) break
+      }
+    }
+
+    // Skills
+    let skillCount = 0
+    for (const skill of skillsOptions.value) {
+      if (skill.name.toLowerCase().includes(term) || skill.description.toLowerCase().includes(term)) {
+        results.push({ key: 'skill-' + skill.name, type: 'skill', label: skill.name, sublabel: skill.description })
+        skillCount++
+        if (skillCount >= MAX_PER_CATEGORY) break
+      }
+    }
+
+    // Chats
+    let chatCount = 0
+    for (const chat of chatsOptions.value) {
+      if (chat.title.toLowerCase().includes(term)) {
+        results.push({ key: 'chat-' + chat.id, type: 'chat', label: chat.title })
+        chatCount++
+        if (chatCount >= MAX_PER_CATEGORY) break
+      }
+    }
+
+    return results
+  })
+
+  /**
+   * Handle click on a global search result item.
+   */
+  const onGlobalSearchItemClick = async (item: GlobalSearchItem) => {
+    switch (item.type) {
+      case 'host': {
+        const key = item.key.replace('host-', '')
+        const host = filteredHostOptions.value.find((h) => (h.tabSessionId || h.uuid || h.key) === key)
+        if (host) onHostClick(host)
+        break
+      }
+      case 'doc': {
+        const absPath = item.key.replace('doc-', '')
+        const doc = allDocsForGlobalSearch.value.find((d) => d.absPath === absPath)
+        if (doc) await onDocClick(doc)
+        break
+      }
+      case 'skill': {
+        const name = item.key.replace('skill-', '')
+        const skill = skillsOptions.value.find((s) => s.name === name)
+        if (skill) onSkillClick(skill)
+        break
+      }
+      case 'chat': {
+        const id = item.key.replace('chat-', '')
+        const chat = chatsOptions.value.find((c) => c.id === id)
+        if (chat) onChatClick(chat)
+        break
+      }
+    }
+  }
+
   const isSameHostSelection = (
     selectedHost: Pick<Host, 'uuid' | 'tabSessionId'>,
     candidate: Pick<HostOption, 'uuid' | 'tabSessionId'> | Pick<Host, 'uuid' | 'tabSessionId'>
@@ -422,19 +580,22 @@ export const useContext = (options: UseContextOptions = {}) => {
 
   const scrollToSelectedItem = () => {
     nextTick(() => {
-      const selectedItem = document.querySelector('.select-item.keyboard-selected') as HTMLElement
+      // Support both submenu items (.select-item) and global search items (.global-search-item)
+      const selectedItem = document.querySelector(
+        '.select-item.keyboard-selected, .global-search-item.keyboard-selected'
+      ) as HTMLElement
       if (!selectedItem) return
 
-      const selectList = selectedItem.closest('.select-list') as HTMLElement
-      if (!selectList) return
+      const scrollContainer = selectedItem.closest('.select-list, .main-menu-list') as HTMLElement
+      if (!scrollContainer) return
 
-      const listRect = selectList.getBoundingClientRect()
+      const listRect = scrollContainer.getBoundingClientRect()
       const itemRect = selectedItem.getBoundingClientRect()
 
       if (itemRect.top < listRect.top) {
-        selectList.scrollTop -= listRect.top - itemRect.top
+        scrollContainer.scrollTop -= listRect.top - itemRect.top
       } else if (itemRect.bottom > listRect.bottom) {
-        selectList.scrollTop += itemRect.bottom - listRect.bottom
+        scrollContainer.scrollTop += itemRect.bottom - listRect.bottom
       }
     })
   }
@@ -459,11 +620,16 @@ export const useContext = (options: UseContextOptions = {}) => {
     if (!showContextPopup.value) return
 
     const currentList = getCurrentFilteredList()
+    const globalResults = isGlobalSearch.value ? globalSearchResults.value : []
 
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
-        if (currentMenuLevel.value === 'main') {
+        if (isGlobalSearch.value) {
+          if (globalResults.length > 0) {
+            keyboardSelectedIndex.value = keyboardSelectedIndex.value === -1 ? 0 : Math.min(keyboardSelectedIndex.value + 1, globalResults.length - 1)
+          }
+        } else if (currentMenuLevel.value === 'main') {
           // Main menu: opened hosts + category items
           const maxIndex = Math.max(0, mainMenuTotalItems.value - 1)
           keyboardSelectedIndex.value = Math.min(keyboardSelectedIndex.value + 1, maxIndex)
@@ -479,7 +645,11 @@ export const useContext = (options: UseContextOptions = {}) => {
 
       case 'ArrowUp':
         e.preventDefault()
-        if (currentMenuLevel.value === 'main') {
+        if (isGlobalSearch.value) {
+          if (globalResults.length > 0) {
+            keyboardSelectedIndex.value = keyboardSelectedIndex.value === -1 ? globalResults.length - 1 : Math.max(keyboardSelectedIndex.value - 1, 0)
+          }
+        } else if (currentMenuLevel.value === 'main') {
           keyboardSelectedIndex.value = Math.max(keyboardSelectedIndex.value - 1, 0)
         } else if (currentList.length > 0) {
           if (keyboardSelectedIndex.value === -1) {
@@ -493,7 +663,11 @@ export const useContext = (options: UseContextOptions = {}) => {
 
       case 'Enter':
         e.preventDefault()
-        if (currentMenuLevel.value === 'main') {
+        if (isGlobalSearch.value) {
+          if (keyboardSelectedIndex.value >= 0 && keyboardSelectedIndex.value < globalResults.length) {
+            await onGlobalSearchItemClick(globalResults[keyboardSelectedIndex.value])
+          }
+        } else if (currentMenuLevel.value === 'main') {
           const openedHostsCount = displayedOpenedHosts.value.length
           if (keyboardSelectedIndex.value >= 0 && keyboardSelectedIndex.value < openedHostsCount) {
             // Selected an opened host - directly select it
@@ -547,6 +721,8 @@ export const useContext = (options: UseContextOptions = {}) => {
     popupPosition.value = null
     popupReady.value = false
     searchValue.value = ''
+    globalSearchFetched.value = false
+    allDocsForGlobalSearch.value = []
     if (options.focusInput) {
       options.focusInput()
       return
@@ -725,7 +901,10 @@ export const useContext = (options: UseContextOptions = {}) => {
     hostOptionsLoading.value = true
 
     try {
-      const result = await window.api.getUserHosts(search, hostOptionsLimit)
+      // Use a larger limit for global search to avoid truncating results
+      const isGlobal = isGlobalSearch.value
+      const limit = isGlobal ? 500 : hostOptionsLimit
+      const result = await window.api.getUserHosts(search, limit)
 
       const formatted = result?.data ? formatHosts(result.data || {}) : []
 
@@ -1024,20 +1203,37 @@ export const useContext = (options: UseContextOptions = {}) => {
 
   // Debounced search handler based on current menu level
   const debouncedSearch = debounce(() => {
-    // For hosts, refetch with search term
+    // For hosts, refetch with search term (server-side search)
     if (currentMenuLevel.value === 'hosts') {
       if (chatTypeValue.value === 'cmd') {
         fetchHostOptionsForCommandMode(searchValue.value)
       } else {
         fetchHostOptions(searchValue.value)
       }
+    } else if (currentMenuLevel.value === 'main' && isGlobalSearch.value) {
+      // Global search: use server-side search for hosts (handles large host lists)
+      if (chatTypeValue.value !== 'chat') {
+        if (chatTypeValue.value === 'cmd') {
+          fetchHostOptionsForCommandMode(searchValue.value)
+        } else {
+          fetchHostOptions(searchValue.value)
+        }
+      }
     }
     // For docs and chats, filtering is done via computed properties
   }, 300)
 
-  watch(searchValue, () => {
+  watch(searchValue, (newVal) => {
     keyboardSelectedIndex.value = -1
-    debouncedSearch()
+    // Trigger global search data fetch when typing in main menu
+    if (currentMenuLevel.value === 'main' && newVal.trim() && !globalSearchFetched.value) {
+      globalSearchFetched.value = true
+      void fetchAllForGlobalSearch()
+    }
+    // Always debounce-search (handles both level 2 hosts and global search hosts)
+    if (currentMenuLevel.value !== 'main' || isGlobalSearch.value) {
+      debouncedSearch()
+    }
   })
 
   const handleGlobalEscKey = (e: KeyboardEvent) => {
@@ -1237,6 +1433,13 @@ export const useContext = (options: UseContextOptions = {}) => {
     isSkillSelected,
     onSkillClick,
     fetchSkillsOptions,
+
+    // Global search state (main menu search across all categories)
+    isGlobalSearch,
+    globalSearchResults,
+    globalSearchFetching,
+    onGlobalSearchItemClick,
+
     openKbFile,
     // Chip insertion
     setChipInsertHandler: (handler: (chipType: 'doc' | 'chat' | 'skill', ref: DocOption | ChatOption | ContextSkillRef, label: string) => void) => {

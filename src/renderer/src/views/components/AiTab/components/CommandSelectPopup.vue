@@ -23,7 +23,7 @@
       <div class="select-list">
         <div
           v-for="(cmd, index) in filteredCommandOptions"
-          :key="cmd.absPath"
+          :key="cmd.name"
           class="select-item"
           :class="{
             hovered: hovered === cmd.absPath,

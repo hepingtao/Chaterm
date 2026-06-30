@@ -32,7 +32,7 @@
             </template>
           </a-input>
           <a-tooltip
-            :title="showIpMode ? t('personal.showHostname') : t('personal.showIp')"
+            :title="displayModeTooltip"
             placement="top"
           >
             <a-button
@@ -700,7 +700,7 @@ const selectedAssetForMove = ref<any>(null)
 const contextMenuVisible = ref(false)
 const contextMenuData = ref<any>(null)
 const contextMenuStyle = ref({})
-const showIpMode = ref(false)
+const displayMode = ref<'name' | 'ip' | 'both'>('name')
 const showTunnelListModal = ref(false)
 const showTunnelModal = ref(false)
 
@@ -890,8 +890,8 @@ const loadSavedExpandState = async () => {
       expandedKeys.value = config.workspaceExpandedKeys
     }
     // Load display mode preference
-    if (config.workspaceShowIpMode !== undefined) {
-      showIpMode.value = config.workspaceShowIpMode
+    if (config.workspaceDisplayMode !== undefined) {
+      displayMode.value = config.workspaceDisplayMode
     }
   } catch (error) {
     logger.error('Failed to load saved expand state', { error: error })
@@ -1849,14 +1849,28 @@ const assetManagement = () => {
   emit('open-user-tab', 'assetConfig')
 }
 
+const displayModeTooltip = computed(() => {
+  switch (displayMode.value) {
+    case 'name':
+      return t('personal.showIp')
+    case 'ip':
+      return t('personal.showIpAndName')
+    case 'both':
+      return t('personal.showHostname')
+  }
+  return t('personal.showIp')
+})
+
 const toggleDisplayMode = async () => {
-  showIpMode.value = !showIpMode.value
+  const order: Array<'name' | 'ip' | 'both'> = ['name', 'ip', 'both']
+  const idx = order.indexOf(displayMode.value)
+  displayMode.value = order[(idx + 1) % order.length]
   // Save preference to user config
   try {
     const currentConfig = await userConfigStore.getConfig()
     await userConfigStore.saveConfig({
       ...currentConfig,
-      workspaceShowIpMode: showIpMode.value
+      workspaceDisplayMode: displayMode.value
     })
   } catch (error) {
     logger.error('Failed to save display mode preference', { error: error })
@@ -1864,10 +1878,19 @@ const toggleDisplayMode = async () => {
 }
 
 const getDisplayText = (dataRef: any, title: string): string => {
-  if (showIpMode.value && dataRef.ip) {
-    return dataRef.ip
+  const ip = dataRef?.ip
+  switch (displayMode.value) {
+    case 'ip':
+      return ip || title
+    case 'both':
+      if (ip && ip !== title) {
+        return `${title} (${ip})`
+      }
+      return ip || title
+    case 'name':
+    default:
+      return title
   }
-  return title
 }
 
 const handleMenuClick = ({ key }) => {

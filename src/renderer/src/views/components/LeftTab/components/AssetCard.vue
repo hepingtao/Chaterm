@@ -36,7 +36,9 @@
           <div class="asset-name">
             {{ asset.title }}
           </div>
-          <div class="asset-type"> {{ t('personal.hostType') }}{{ asset.username ? ', ' + asset.username : '' }} </div>
+          <div class="asset-type">
+            {{ asset.ip }}{{ asset.username ? ' · ' + asset.username : '' }}
+          </div>
         </div>
         <div class="action-buttons">
           <div

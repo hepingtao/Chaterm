@@ -84,7 +84,7 @@ const isOrganizationAsset = vi.fn(() => false)
 vi.mock('../../LeftTab/utils/types', () => ({ isOrganizationAsset }))
 
 const userConfigStore = {
-  getConfig: vi.fn().mockResolvedValue({ workspaceShowIpMode: false, sshAgentsStatus: 0 }),
+  getConfig: vi.fn().mockResolvedValue({ workspaceDisplayMode: 'name', sshAgentsStatus: 0 }),
   saveConfig: vi.fn().mockResolvedValue(undefined)
 }
 vi.mock('@/services/userConfigStoreService', () => ({ userConfigStore }))
@@ -216,7 +216,7 @@ describe('tabIndex.vue (enhanced coverage)', () => {
     Object.defineProperty(window, 'innerHeight', { value: 200, configurable: true })
 
     // Safe defaults for each test
-    userConfigStore.getConfig.mockResolvedValue({ workspaceShowIpMode: false, sshAgentsStatus: 0 })
+    userConfigStore.getConfig.mockResolvedValue({ workspaceDisplayMode: 'name', sshAgentsStatus: 0 })
     api.getLocalAssetRoute.mockResolvedValue({ data: { routers: [] } })
     api.getShellsLocal.mockResolvedValue(null)
     api.getCustomFolders.mockResolvedValue({ data: { message: 'success', folders: [] } })
@@ -237,7 +237,7 @@ describe('tabIndex.vue (enhanced coverage)', () => {
   it('mount: loads tree + saved config (expanded keys + display mode)', async () => {
     userConfigStore.getConfig.mockResolvedValue({
       workspaceExpandedKeys: ['root'],
-      workspaceShowIpMode: true,
+      workspaceDisplayMode: 'ip',
       sshAgentsStatus: 0
     })
 
@@ -257,7 +257,7 @@ describe('tabIndex.vue (enhanced coverage)', () => {
     const vm: any = wrapper.vm
 
     expect(api.getLocalAssetRoute).toHaveBeenCalled()
-    expect(vm.showIpMode).toBe(true)
+    expect(vm.displayMode).toBe('ip')
     expect(vm.expandedKeys).toContain('root')
 
     // search by comment match (covers ip/comment/title filtering paths)
@@ -273,13 +273,13 @@ describe('tabIndex.vue (enhanced coverage)', () => {
     await flushPromises()
     expect(vm.assetTreeData.length).toBe(1)
 
-    // display text branch
+    // display text branch (mode 'ip' returns ip)
     expect(vm.getDisplayText({ ip: '1.1.1.1' }, 'hostname')).toBe('1.1.1.1')
 
-    // toggle display mode should save config
+    // toggle display mode should save config; 'ip' -> 'both'
     await vm.toggleDisplayMode()
     expect(userConfigStore.saveConfig).toHaveBeenCalled()
-    expect(vm.getDisplayText({ ip: '1.1.1.1' }, 'hostname')).toBe('hostname')
+    expect(vm.getDisplayText({ ip: '1.1.1.1' }, 'hostname')).toBe('hostname (1.1.1.1)')
 
     wrapper.unmount()
   })
@@ -288,7 +288,7 @@ describe('tabIndex.vue (enhanced coverage)', () => {
     api.getLocalAssetRoute.mockResolvedValueOnce({
       data: { routers: [{ key: 'root', title: 'Root', children: [{ key: 'leaf', title: 'Leaf' }] }] }
     })
-    userConfigStore.getConfig.mockResolvedValue({ workspaceExpandedKeys: ['root'], workspaceShowIpMode: false, sshAgentsStatus: 0 })
+    userConfigStore.getConfig.mockResolvedValue({ workspaceExpandedKeys: ['root'], workspaceDisplayMode: 'name', sshAgentsStatus: 0 })
 
     const wrapper = await mountView()
     const vm: any = wrapper.vm
