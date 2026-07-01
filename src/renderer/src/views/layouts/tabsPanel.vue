@@ -12,7 +12,7 @@
           <span
             class="tab-title"
             @click="emit('change-tab', localTab.id)"
-            >{{ localTab.ip ? localTab.title : $t(`common.${localTab.title}`) }}</span
+            >{{ displayTabTitle }}</span
           >
           <button
             class="close-btn"
@@ -93,6 +93,7 @@
 </template>
 <script setup lang="ts">
 import { computed, ref, ComponentPublicInstance, onMounted, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { userConfigStore } from '@/store/userConfigStore'
 import 'splitpanes/dist/splitpanes.css'
 import UserInfo from '@views/components/LeftTab/config/userInfo.vue'
@@ -155,6 +156,24 @@ const localTab = computed(() => {
 })
 const configStore = userConfigStore()
 const isTransparent = computed(() => !!configStore.getUserConfig.background.image)
+const { t } = useI18n()
+
+// 终端会话 tab 标题:有 IP 时采用"名称 (IP)"格式,与 dockview 顶部 tab 保持一致
+const displayTabTitle = computed(() => {
+  const tab = localTab.value
+  if (!tab) return ''
+  const titleStr = String(tab.title ?? '')
+  const ipStr = String(tab.ip ?? '')
+  if (ipStr) {
+    if (titleStr && !titleStr.includes(ipStr) && titleStr !== ipStr) {
+      return `${titleStr} (${ipStr})`
+    }
+    return titleStr
+  }
+  // 无 IP 时走 i18n 翻译
+  const translated = t(`common.${titleStr}`)
+  return translated === `common.${titleStr}` ? titleStr : translated
+})
 
 const closeTab = (value) => {
   if (localTab.value?.closeCurrentPanel) {
@@ -391,7 +410,8 @@ defineExpose({
   padding: 0 4px;
   border-right: 1px solid var(--border-color);
   background-color: var(--bg-color);
-  width: 120px;
+  min-width: 120px;
+  max-width: 320px;
   color: var(--text-color);
 }
 

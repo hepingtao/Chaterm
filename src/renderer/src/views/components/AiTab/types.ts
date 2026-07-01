@@ -160,6 +160,16 @@ export interface HostOption {
 // Menu level for context popup
 export type ContextMenuLevel = 'main' | 'hosts' | 'docs' | 'chats' | 'skills'
 
+// Global search result item type (for searching across all categories in main menu)
+export type GlobalSearchItemType = 'host' | 'doc' | 'skill' | 'chat'
+
+export interface GlobalSearchItem {
+  key: string
+  type: GlobalSearchItemType
+  label: string
+  sublabel?: string
+}
+
 // Knowledge base document option
 export interface DocOption {
   name: string

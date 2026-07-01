@@ -1,9 +1,9 @@
-import { getSummaryToDocPrompt } from '@core/prompts/slash-commands'
+import { getSummaryToDocPrompt, getSummaryToSkillPrompt } from '@core/prompts/slash-commands'
 import { app } from 'electron'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
-export const KB_DEFAULT_SEEDS_VERSION = 2
+export const KB_DEFAULT_SEEDS_VERSION = 3
 
 type KnowledgeBaseSeedBase = {
   /** Stable identifier for tracking rename/delete/move/update. */
@@ -57,6 +57,11 @@ export const KB_DEFAULT_SEEDS: KnowledgeBaseDefaultSeed[] = [
     id: 'summary_to_doc',
     defaultRelPath: 'commands/Summary to Doc.md',
     getContent: (isChinese) => getSummaryToDocPrompt(isChinese)
+  },
+  {
+    id: 'summary_to_skill',
+    defaultRelPath: 'commands/Summary to Skill.md',
+    getContent: (isChinese) => getSummaryToSkillPrompt(isChinese)
   },
   // {
   //   id: 'knowledge_base_readme',

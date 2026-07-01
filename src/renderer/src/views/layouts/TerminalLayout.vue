@@ -2824,7 +2824,14 @@ const addDockPanel = (params) => {
   if (params.content === 'CommonConfigEditor') {
     displayTitle = params.title
   } else if (params.ip || params.content.startsWith('plugins:')) {
-    displayTitle = params.title
+    // 终端会话:采用"名称 (IP)"格式,当 IP 与名称不同且名称中未已包含 IP 时追加
+    const titleStr = String(params.title ?? '')
+    const ipStr = String(params.ip ?? '')
+    if (ipStr && titleStr && !titleStr.includes(ipStr) && titleStr !== ipStr) {
+      displayTitle = `${titleStr} (${ipStr})`
+    } else {
+      displayTitle = params.title
+    }
   } else if (params.title === 'mcpConfigEditor') {
     displayTitle = t('mcp.configEditor')
   } else if (params.content === 'securityConfigEditor' || params.content === 'keywordHighlightEditor') {
@@ -3796,7 +3803,7 @@ defineExpose({
 
 .dockview-theme-light .dv-tab,
 .dockview-theme-dark .dv-tab {
-  max-width: 180px;
+  max-width: 320px;
   min-width: 0;
 }
 

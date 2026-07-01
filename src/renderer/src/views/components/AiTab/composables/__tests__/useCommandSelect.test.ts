@@ -39,6 +39,7 @@ describe('useCommandSelect', () => {
       await fetchCommandOptions()
 
       expect(mockKbListDir).toHaveBeenCalledWith('commands')
+      // Only knowledge base commands (no built-in)
       expect(commandOptions.value).toHaveLength(2)
       expect(commandOptions.value[0]).toEqual({
         name: 'deploy-guide',
@@ -57,6 +58,7 @@ describe('useCommandSelect', () => {
       const { fetchCommandOptions, commandOptions } = useCommandSelect()
       await fetchCommandOptions()
 
+      // Only knowledge base file commands (no built-in)
       expect(commandOptions.value).toHaveLength(1)
       expect(commandOptions.value[0].name).toBe('valid-cmd')
     })
@@ -67,6 +69,7 @@ describe('useCommandSelect', () => {
       const { fetchCommandOptions, commandOptions } = useCommandSelect()
       await fetchCommandOptions()
 
+      // No built-in commands; empty when knowledge base is empty
       expect(commandOptions.value).toHaveLength(0)
     })
 
@@ -77,6 +80,7 @@ describe('useCommandSelect', () => {
       const { fetchCommandOptions, commandOptions } = useCommandSelect()
       await fetchCommandOptions()
 
+      // Empty list when fetch fails
       expect(commandOptions.value).toHaveLength(0)
       expect(consoleSpy).toHaveBeenCalled()
       consoleSpy.mockRestore()
@@ -113,6 +117,7 @@ describe('useCommandSelect', () => {
       searchValue.value = ''
       await nextTick()
 
+      // Only knowledge base commands (no built-in)
       expect(filteredCommandOptions.value).toHaveLength(2)
     })
 
@@ -130,7 +135,7 @@ describe('useCommandSelect', () => {
   })
 
   describe('onCommandClick', () => {
-    it('should call chip insert handler with correct parameters', async () => {
+    it('should call chip insert handler with correct parameters for knowledge base command', async () => {
       mockKbListDir.mockResolvedValue([{ name: 'my-command.md', relPath: 'commands/my-command.md', type: 'file' }])
 
       const mockInsertHandler = vi.fn()
@@ -139,6 +144,7 @@ describe('useCommandSelect', () => {
       setCommandChipInsertHandler(mockInsertHandler)
       await fetchCommandOptions()
 
+      // Click the knowledge base command (index 0, no built-in commands anymore)
       onCommandClick(commandOptions.value[0])
 
       expect(mockInsertHandler).toHaveBeenCalledWith('/my-command', '/my-command', '/Users/test/.chaterm/knowledgebase/commands/my-command.md')

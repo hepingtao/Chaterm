@@ -99,7 +99,7 @@ export interface UserConfig {
     password?: string
   }>
   workspaceExpandedKeys?: string[]
-  workspaceShowIpMode?: boolean
+  workspaceDisplayMode?: 'name' | 'ip' | 'both'
   workspaceTunnelConfigs?: Record<
     string,
     Array<{

@@ -466,7 +466,7 @@ describe('TabsPanel Component', () => {
       expect(vm.localTab.id).toBe('test-tab-1')
     })
 
-    it('should display original title when tab has ip', () => {
+    it('should display title with IP in parentheses when tab has ip and title differs', () => {
       wrapper = createWrapper({
         title: 'Production Server',
         ip: '192.168.1.1',
@@ -475,7 +475,33 @@ describe('TabsPanel Component', () => {
 
       const tabTitle = wrapper.find('.tab-title')
       if (tabTitle.exists()) {
-        expect(tabTitle.text()).toBe('Production Server')
+        expect(tabTitle.text()).toBe('Production Server (192.168.1.1)')
+      }
+    })
+
+    it('should display title only when ip equals title', () => {
+      wrapper = createWrapper({
+        title: '192.168.1.1',
+        ip: '192.168.1.1',
+        organizationId: 'org-123'
+      })
+
+      const tabTitle = wrapper.find('.tab-title')
+      if (tabTitle.exists()) {
+        expect(tabTitle.text()).toBe('192.168.1.1')
+      }
+    })
+
+    it('should display title only when title already contains ip', () => {
+      wrapper = createWrapper({
+        title: 'user@192.168.1.1',
+        ip: '192.168.1.1',
+        organizationId: 'org-123'
+      })
+
+      const tabTitle = wrapper.find('.tab-title')
+      if (tabTitle.exists()) {
+        expect(tabTitle.text()).toBe('user@192.168.1.1')
       }
     })
 
