@@ -732,8 +732,23 @@ const buildSftpConnDataForFiles = async (node: any, side: PanelSide) => {
     remoteHomePath: node?.assetTitlePath || ''
   }
 
+  // Build compound username for JumpServer SFTP: <jumpserver_user>@<asset_hostname>@<asset_ip>
+  // This tells JumpServer's SFTP service (port 2222) to route directly to the target asset,
+  // giving access to the asset's real filesystem instead of the bastion's virtual FS.
+  if (connSshType === 'jumpserver' && connUsername && connHostname && connHost) {
+    connData.sftpCompoundUsername = `${connUsername}@${connHostname}@${connHost}`
+  }
+
   // Store JumpServer SFTP info for path resolution
-  logger.info('buildSftpConnDataForFiles', { data: { connSshType, connHostname, remoteHomePath: connData.remoteHomePath, assetTitlePath: node?.assetTitlePath } })
+  logger.info('buildSftpConnDataForFiles', {
+    data: {
+      connSshType,
+      connHostname,
+      remoteHomePath: connData.remoteHomePath,
+      assetTitlePath: node?.assetTitlePath,
+      sftpCompoundUsername: connData.sftpCompoundUsername
+    }
+  })
   api.sftpDebugLog('buildSftpConnDataForFiles', {
     connId: connData.id,
     connSshType,

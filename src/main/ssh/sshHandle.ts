@@ -2773,7 +2773,9 @@ export const pickReconnectConnectionInfo = (connectionInfo: any) => {
     assetUuid: connectionInfo.assetUuid,
     targetIp: connectionInfo.targetIp,
     terminalType: connectionInfo.terminalType,
-    remoteHomePath: connectionInfo.remoteHomePath
+    remoteHomePath: connectionInfo.remoteHomePath,
+    sftpCompoundUsername: connectionInfo.sftpCompoundUsername,
+    sftpPort: connectionInfo.sftpPort
   }
 }
 
