@@ -2772,7 +2772,8 @@ export const pickReconnectConnectionInfo = (connectionInfo: any) => {
     asset_type: connectionInfo.asset_type,
     assetUuid: connectionInfo.assetUuid,
     targetIp: connectionInfo.targetIp,
-    terminalType: connectionInfo.terminalType
+    terminalType: connectionInfo.terminalType,
+    remoteHomePath: connectionInfo.remoteHomePath
   }
 }
 

@@ -728,11 +728,19 @@ const buildSftpConnDataForFiles = async (node: any, side: PanelSide) => {
     connIdentToken: jmsToken,
     asset_type: connAssetType,
     proxyCommand: node?.proxyCommand || '',
-    sftpPort: cfg?.jumpserverSftpPort || 2222
+    sftpPort: cfg?.jumpserverSftpPort || 2222,
+    remoteHomePath: node?.assetTitlePath || ''
   }
 
   // Store JumpServer SFTP info for path resolution
-  logger.info('buildSftpConnDataForFiles', { data: { connSshType, connHostname } })
+  logger.info('buildSftpConnDataForFiles', { data: { connSshType, connHostname, remoteHomePath: connData.remoteHomePath, assetTitlePath: node?.assetTitlePath } })
+  api.sftpDebugLog('buildSftpConnDataForFiles', {
+    connId: connData.id,
+    connSshType,
+    connHostname,
+    remoteHomePath: connData.remoteHomePath,
+    assetTitlePath: node?.assetTitlePath
+  })
   if (connSshType === 'jumpserver') {
     jumpserverSftpInfo.set(connId, {
       sshType: connSshType,
@@ -754,10 +762,16 @@ const connectSftpFromAssetNode = async (node: any, side: PanelSide) => {
   const uuid = String(node?.uuid || '')
   if (!uuid) return
 
+  api.sftpDebugLog('connectSftpFromAssetNode entry', { uuid, side, assetTitlePath: node?.assetTitlePath })
+
   sideLoading[side] = true
   try {
     const connData = await buildSftpConnDataForFiles(node, side)
     const targetId = String(connData.id || '')
+    api.sftpDebugLog('connectSftpFromAssetNode built connData', {
+      targetId,
+      remoteHomePath: connData.remoteHomePath
+    })
     const targetDisplayName = getConnDisplayName(String(connData.id || ''))
 
     // Check whether there is already a similar connection on both the left and right sides
@@ -781,6 +795,10 @@ const connectSftpFromAssetNode = async (node: any, side: PanelSide) => {
       message.error(msg ? `${t('files.sftpConnectFailed')}：${msg}` : t('files.sftpConnectFailed'))
       return
     }
+
+    clearCachedPath(targetId)
+    // Fire-and-forget: probe HOME in background. Panel auto-jumps when resolved.
+    ensureHomeFor(targetId)
 
     // The current asset UUID corresponding to the side connection, used for drag-and-drop disablement judgment
     sideCurrentAssetKey[side] = uuid
@@ -1471,16 +1489,70 @@ const getBasePath = (value: string) => {
   return ''
 }
 
+// Cached remote HOME directory per connection id (probed on the backend via
+// sftp.realpath('.')). Populated after a successful SFTP connect or when an
+// active session is selected, so the file panel can land on the host's HOME.
+const remoteHomeMap = reactive(new Map<string, string>())
+
+const ensureHomeFor = async (id: string) => {
+  const sid = String(id || '')
+  if (!sid || isLocal(sid)) return
+  const existing = remoteHomeMap.get(sid)
+  api.sftpDebugLog('ensureHomeFor', { sid, existing })
+  if (existing && existing.includes('/home/')) return
+
+  // First fetch — may return bastion root while backend probes async.
+  try {
+    const home = await api.sftpGetHome(sid)
+    api.sftpDebugLog('ensureHomeFor result', { sid, home })
+    remoteHomeMap.set(sid, home || '/')
+  } catch (e: any) {
+    api.sftpDebugLog('ensureHomeFor error', { sid, error: e?.message || String(e) })
+    remoteHomeMap.set(sid, '/')
+  }
+
+  // If not yet resolved to asset HOME, retry — the backend async probe may
+  // have updated sftpHomeMap by then.
+  if (!remoteHomeMap.get(sid)?.includes('/home/')) {
+    for (let i = 0; i < 4; i++) {
+      await new Promise((r) => setTimeout(r, 3000))
+      if (remoteHomeMap.get(sid)?.includes('/home/')) return
+      try {
+        const retryHome = await api.sftpGetHome(sid)
+        api.sftpDebugLog('ensureHomeFor retry', { sid, attempt: i + 1, home: retryHome })
+        if (retryHome?.includes('/home/')) {
+          remoteHomeMap.set(sid, retryHome)
+          return
+        }
+      } catch {}
+    }
+  }
+}
+
+// Drop the cached last-path for a connection so the panel remounts at HOME
+// instead of restoring the previously visited directory.
+const clearCachedPath = (id: string) => {
+  const sid = String(id || '')
+  if (!sid) return
+  const entry = FS_CACHE.get(sid)
+  if (entry) {
+    delete entry.cache
+    FS_CACHE.set(sid, entry)
+  }
+}
+
 const resolvePaths = (value: string) => {
-  const isLocal = value.includes('localhost@127.0.0.1:local')
-  if (isLocal) {
+  const sid = String(value || '')
+  if (isLocal(sid)) {
     return localHome.value || ''
   }
-  const isJumpServer = value?.includes('local-team') && value?.includes('@')
+  const cached = remoteHomeMap.get(sid)
+  if (cached) return cached
+  const isJumpServer = sid?.includes('local-team') && sid?.includes('@')
   if (isJumpServer) {
     return '/'
   }
-  const [username] = String(value || '').split('@')
+  const [username] = sid.split('@')
   return username === 'root' ? '/root' : `/home/${username}`
 }
 
@@ -1576,10 +1648,16 @@ const onLeftSelectChange = async (v: any) => {
     return
   }
 
+  if (!isLocal(val)) {
+    clearCachedPath(resolveRawId(val))
+  }
   selectedLeftUuid.value = val
   ensureSessionState(val)
   openSession(val)
   await refreshAfterSelect(val)
+  if (!isLocal(val)) {
+    ensureHomeFor(val)
+  }
 }
 
 const refreshAfterSelect = async (uuid: string) => {
@@ -1639,6 +1717,10 @@ const openAddConnModal = async (side: AddConnTarget = 'right') => {
 const hoveredActive = ref<string | null>(null)
 
 const confirmPickActive = async (val) => {
+  api.sftpDebugLog('confirmPickActive entry', { val, isLocal: isLocal(val) })
+  if (!isLocal(val)) {
+    clearCachedPath(resolveRawId(val))
+  }
   if (addConnTargetSide.value === 'left') {
     selectedLeftUuid.value = val
     ensureSessionState(val)
@@ -1651,6 +1733,11 @@ const confirmPickActive = async (val) => {
 
   addConnVisible.value = false
   await refreshAfterSelect(val)
+
+  // Fire-and-forget: probe HOME in background. Panel auto-jumps when resolved.
+  if (!isLocal(val)) {
+    ensureHomeFor(val)
+  }
 }
 
 // Asset/Host search (extracted from ContextSelectPopup - Level 2: Hosts List)
@@ -2010,9 +2097,15 @@ const onRightSelectChange = async (v: any) => {
   if (val && selectedLeftUuid.value && val === String(selectedLeftUuid.value)) {
     selectedLeftUuid.value = ''
   }
+  if (!isLocal(val)) {
+    clearCachedPath(resolveRawId(val))
+  }
   ensureSessionState(val)
   openSession(val)
   await refreshAfterSelect(val)
+  if (!isLocal(val)) {
+    ensureHomeFor(val)
+  }
 }
 const addRightPanel = async () => {
   selectedRightUuid.value = lastRightUuid.value || ''

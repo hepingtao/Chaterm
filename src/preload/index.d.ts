@@ -466,6 +466,8 @@ interface ApiType {
   recordCommand: (params: any) => Promise<any>
   sshSftpList: (opts: { id: string; path: string }) => Promise<any>
   sftpConnList: () => Promise<string[]>
+  sftpGetHome: (id: string) => Promise<string>
+  sftpDebugLog: (message: string, data?: any) => Promise<boolean>
   sshConnExec: (args: { id: string; cmd: string }) => Promise<any>
   sendToMain: (message: WebviewMessage) => Promise<void | null>
   onMainMessage: (callback: (message: any) => void) => () => void

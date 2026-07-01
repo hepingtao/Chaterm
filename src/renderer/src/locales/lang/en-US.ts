@@ -1443,6 +1443,7 @@ export default {
     copyAbsolutePathFailed: 'Failed to Copy Absolute Path',
     more: 'More',
     download: 'Download',
+    downloadDirectory: 'Download Directory',
     doubleClickToOpen: 'Double Click to Open',
     sftpConnectFailed: 'SFTP connection failed',
     noDataAvailable: 'No data available, please connect to a server first',

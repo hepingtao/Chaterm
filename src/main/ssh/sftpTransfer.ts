@@ -22,6 +22,19 @@ import { getAlgorithmsByAssetType } from './algorithms'
 import { getPackageInfo } from './jumpserver/connectionManager'
 const sftpLogger = createLogger('ssh')
 
+// Debug logger for HOME-resolution investigation. Writes to a standalone file
+// so it can be inspected without filtering through the full app log.
+const HOME_DEBUG_LOG = path.join(app.getPath('home'), '.chaterm-home-debug.log')
+const homeDebug = (message: string, data?: any) => {
+  try {
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const local = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`
+    const line = `${local} ${message}${data ? ' ' + JSON.stringify(data) : ''}\n`
+    fs.appendFileSync(HOME_DEBUG_LOG, line)
+  } catch {}
+}
+
 export type SftpConnectResult = { status: string; message: string }
 
 const activeTasks = new Map<string, { read?: any; write?: any; localPath?: string; cancel?: () => void }>()
@@ -31,6 +44,10 @@ const sftpOwnedJumpServerConnections = new Map<string, Client>()
 const sftpOwnedJumpServerStreams = new Map<string, any>()
 
 export const sftpConnectionInfoMap = new Map<string, any>()
+
+// Remote HOME directory per SFTP connection id, probed via sftp.realpath('.').
+// Falls back to '/' when the HOME path cannot be resolved.
+export const sftpHomeMap = new Map<string, string>()
 
 type R2RFileArgs = {
   fromId: string
@@ -123,6 +140,13 @@ function createAsyncPool<T>(worker: (item: T) => Promise<void>, concurrency: num
 
 export const registerFileSystemHandlers = () => {
   ipcMain.handle('ssh:sftp:connect', async (_event, connectionInfo) => {
+    homeDebug('[connect] entry', {
+      id: connectionInfo?.id,
+      remoteHomePath: connectionInfo?.remoteHomePath,
+      username: connectionInfo?.username,
+      sshType: connectionInfo?.sshType,
+      targetIp: connectionInfo?.targetIp
+    })
     const result = await connectSftpReuseFirst(_event, connectionInfo)
 
     // Cache the minimum connection info needed for later SFTP reconnects.
@@ -130,8 +154,15 @@ export const registerFileSystemHandlers = () => {
       const picked = pickReconnectConnectionInfo(connectionInfo)
       if (picked) {
         sftpConnectionInfoMap.set(String(connectionInfo.id), picked)
+        homeDebug('[connect] cached connectionInfo', {
+          id: String(connectionInfo.id),
+          remoteHomePath: picked.remoteHomePath,
+          username: picked.username
+        })
       }
     }
+
+    homeDebug('[connect] result', { id: connectionInfo?.id, status: result?.status })
 
     return result
   })
@@ -139,6 +170,7 @@ export const registerFileSystemHandlers = () => {
     const id = String(payload?.id || '')
     const res = await closeSftpOnly(id)
     sftpConnectionInfoMap.delete(id)
+    sftpHomeMap.delete(id)
     return res
   })
 
@@ -164,6 +196,46 @@ export const registerFileSystemHandlers = () => {
   })
   ipcMain.handle('app:get-path', async (_e, { name }: { name: 'home' | 'documents' | 'downloads' }) => {
     return app.getPath(name)
+  })
+
+  ipcMain.handle('ssh:sftp:debug-log', async (_e, { message, data }: { message: string; data?: any }) => {
+    homeDebug(`[renderer] ${message}`, data)
+    return true
+  })
+
+  ipcMain.handle('ssh:sftp:get-home', async (_e, { id }: { id: string }) => {
+    const sid = String(id || '')
+    const current = sftpHomeMap.get(sid) || '/'
+    homeDebug('[get-home] return', { sid, current })
+
+    // If not yet resolved to asset HOME and this is a JumpServer connection,
+    // kick off an async probe (non-blocking). Frontend will re-fetch.
+    if (!current.includes('/home/') && sid.includes('local-team') && sid.includes('@')) {
+      const username = sid.split('@')[0]
+      // Decode hostname from connectionId for search prioritization.
+      let hostHint: string | undefined
+      const parts = sid.split(':')
+      if (parts.length >= 3) {
+        try {
+          hostHint = Buffer.from(parts[2], 'base64').toString('utf-8') || undefined
+        } catch {}
+      }
+      if (username) {
+        try {
+          const sftp = getSftpConnection(sid)
+          if (sftp) {
+            // Use current as root (already '/' or bastion root).
+            const root = current !== '/' ? current : '/'
+            homeDebug('[get-home] kick async probe', { sid, root, username, hostHint })
+            probeAssetHomeAsync(sftp, root, username, sid, hostHint)
+          }
+        } catch (e: any) {
+          homeDebug('[get-home] async probe kick failed', { sid, error: e?.message || String(e) })
+        }
+      }
+    }
+
+    return current
   })
 
   ipcMain.handle('ssh:sftp:list', async (event, { path: reqPath, id }) => {
@@ -559,6 +631,68 @@ const ensureSftpReady = async (event: any, id: string): Promise<any> => {
   return sftp
 }
 
+// JumpServer bastion SFTP exposes a virtual filesystem where the asset HOME is
+// at "<bastion-root>/.../<asset>/home/<username>". When the cached sftpHomeMap
+// value is only the bastion root (no "/home/" segment), this function recursively
+// searches the virtual tree for a "home/<username>" directory and returns its path.
+const probeAssetHome = async (
+  sftp: any,
+  root: string,
+  username: string,
+  hostHint?: string
+): Promise<string | null> => {
+  const joinPath = (base: string, name: string) =>
+    base.endsWith('/') ? `${base}${name}` : `${base}/${name}`
+
+  const hint = hostHint?.toLowerCase().trim()
+
+  const search = async (dir: string, depth: number): Promise<string | null> => {
+    if (depth > 10) return null
+
+    let entries: any[]
+    try {
+      entries = await sftpReaddirWithTimeout(sftp, dir, 8000)
+    } catch {
+      return null
+    }
+
+    // Check if a "home" directory exists at this level — assets expose it.
+    const homeEntry = entries.find((e) => e.filename === 'home' && isDirEntry(e))
+    if (homeEntry) {
+      const homePath = joinPath(dir, 'home')
+      try {
+        const homeEntries = await sftpReaddirWithTimeout(sftp, homePath, 5000)
+        const userEntry = homeEntries.find((e) => e.filename === username)
+        if (userEntry) {
+          return joinPath(homePath, username)
+        }
+      } catch {}
+    }
+
+    // Sort subdirs: hint-matching first to speed up search in large trees.
+    const subdirs = entries.filter(
+      (e) => e.filename !== '.' && e.filename !== '..' && e.filename !== 'home' && isDirEntry(e)
+    )
+    if (hint) {
+      subdirs.sort((a, b) => {
+        const aM = a.filename.toLowerCase().includes(hint) ? 0 : 1
+        const bM = b.filename.toLowerCase().includes(hint) ? 0 : 1
+        return aM - bM
+      })
+    }
+
+    for (const entry of subdirs) {
+      const subPath = joinPath(dir, entry.filename)
+      const found = await search(subPath, depth + 1)
+      if (found) return found
+    }
+
+    return null
+  }
+
+  return search(root, 0)
+}
+
 function sftpMkdir(sftp: any, p: string) {
   return new Promise<void>((resolve, reject) => {
     sftp.mkdir(p, (err: any) => {
@@ -896,6 +1030,75 @@ function waitStreamOpen(stream: any) {
   })
 }
 
+// Fallback for remote-to-remote transfers when the two hosts cannot stream
+// directly to each other: download the file to a local temp file, then upload
+// it to the destination. Used when the direct stream pipeline fails.
+const relayFileR2RViaLocal = async (
+  event: any,
+  args: R2RFileArgs & ChildTaskOptions,
+  fromPath: string,
+  toPath: string,
+  progressTaskKey: string,
+  base: { fromHost: string; toHost: string; parentTaskKey?: string; isGroup?: boolean; groupKind?: GroupKind }
+): Promise<TransferResult> => {
+  const { fromHost, toHost } = base
+  const nonce = `${Date.now().toString(36)}_${Math.random().toString(16).slice(2)}`
+  const tempPath = path.join(app.getPath('temp'), `r2r-relay-${nonce}${path.posix.extname(fromPath) || ''}`)
+
+  const emit = (extra: Record<string, any> = {}) =>
+    sendProgress(event, {
+      type: 'r2r',
+      fromId: args.fromId,
+      toId: args.toId,
+      fromHost,
+      toHost,
+      taskKey: progressTaskKey,
+      parentTaskKey: base.parentTaskKey,
+      isGroup: base.isGroup ?? false,
+      groupKind: base.groupKind ?? 'file',
+      ...extra
+    })
+
+  emit({ remotePath: fromPath, destPath: toPath, status: 'running', stage: 'relaying', message: 'Relaying via local' })
+
+  try {
+    const dl = await handleStreamTransfer(event, args.fromId, fromPath, tempPath, 'download', true, {
+      parentTaskKey: base.parentTaskKey,
+      taskKeyOverride: progressTaskKey,
+      isGroup: base.isGroup ?? false,
+      groupKind: base.groupKind ?? 'file'
+    })
+    if (dl?.status !== 'success') {
+      emit({ remotePath: fromPath, destPath: toPath, status: 'error', message: dl?.message || 'Relay download failed', errorSide: 'from' })
+      return { status: 'error', message: dl?.message || 'Relay download failed', taskKey: progressTaskKey, fromHost, toHost, errorSide: 'from' }
+    }
+
+    const up = await handleStreamTransfer(event, args.toId, tempPath, toPath, 'upload', true, {
+      parentTaskKey: base.parentTaskKey,
+      taskKeyOverride: progressTaskKey,
+      isGroup: base.isGroup ?? false,
+      groupKind: base.groupKind ?? 'file'
+    })
+    if (up?.status !== 'success') {
+      emit({ remotePath: fromPath, destPath: toPath, status: 'error', message: up?.message || 'Relay upload failed', errorSide: 'to' })
+      return { status: 'error', message: up?.message || 'Relay upload failed', taskKey: progressTaskKey, fromHost, toHost, errorSide: 'to' }
+    }
+
+    emit({ remotePath: fromPath, destPath: toPath, status: 'success' })
+    return { status: 'success', remotePath: toPath, taskKey: progressTaskKey, fromHost, toHost }
+  } catch (e: any) {
+    const msg = errToMessage(e)
+    emit({ remotePath: fromPath, destPath: toPath, status: 'error', message: msg, errorSide: 'local' })
+    return { status: 'error', message: msg, taskKey: progressTaskKey, fromHost, toHost, errorSide: 'local' }
+  } finally {
+    try {
+      await nodeFs.unlink(tempPath)
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
 // remote -> remote (single file)
 export async function transferFileR2R(event: any, args: R2RFileArgs & ChildTaskOptions): Promise<TransferResult> {
   const srcSftp = getSftpConnection(args.fromId)
@@ -1115,6 +1318,21 @@ export async function transferFileR2R(event: any, args: R2RFileArgs & ChildTaskO
     const primaryErr = firstErr || e
     const msg = errToMessage(primaryErr)
     const errorSide: ErrorSide = firstSide || 'from'
+
+    // Direct host-to-host streaming failed. Retry by relaying through a local
+    // temp file: download from the source, then upload to the destination.
+    // This succeeds when the two remotes cannot reach each other directly but
+    // each can reach this machine.
+    const relay = await relayFileR2RViaLocal(event, args, fromPath, toPath, progressTaskKey, {
+      fromHost,
+      toHost,
+      parentTaskKey: args.parentTaskKey,
+      isGroup: args.isGroup ?? false,
+      groupKind: args.groupKind ?? 'file'
+    })
+    if (relay?.status === 'success') {
+      return relay
+    }
 
     sendProgress(
       event,
@@ -2319,7 +2537,11 @@ export async function handleDirectoryTransfer(event: any, id: string, localDir: 
   return { status: 'success', host }
 }
 
-export const initSftpOnConnection = (conn: Client, connectionId: string): Promise<void> => {
+export const initSftpOnConnection = (
+  conn: Client,
+  connectionId: string,
+  homeHint?: { assetPath?: string; username?: string }
+): Promise<void> => {
   return new Promise<void>((resolve) => {
     try {
       conn.sftp((err, sftp) => {
@@ -2349,11 +2571,72 @@ export const initSftpOnConnection = (conn: Client, connectionId: string): Promis
               isSuccess: false,
               error: `sftp readdir error: "${readDirErr.message}"`
             })
+            resolve()
           } else {
             sftpConnections.set(connectionId, { isSuccess: true, sftp })
             connectionStatus.set(connectionId, { sftpAvailable: true })
+
+            // JumpServer bastion mode: when a homeHint is provided (asset title
+            // path + username), validate "<assetPath>/home/<username>" with readdir
+            // and use it as HOME. readdir is more reliable than realpath on
+            // JumpServer's virtual SFTP filesystem.
+            const hintAssetPath = homeHint?.assetPath?.trim()
+            const hintUsername = homeHint?.username?.trim()
+            if (hintAssetPath && hintUsername) {
+              const candidate = `${hintAssetPath}/home/${hintUsername}`
+              homeDebug('[initSftp] homeHint validate', { connectionId, candidate })
+              sftpReaddirWithTimeout(sftp, candidate, 5000)
+                .then(() => {
+                  sftpHomeMap.set(connectionId, candidate)
+                  homeDebug('[initSftp] homeHint SUCCESS', { connectionId, home: candidate })
+                  resolve()
+                })
+                .catch((e: any) => {
+                  homeDebug('[initSftp] homeHint FAILED, start async probe', {
+                    connectionId,
+                    candidate,
+                    error: e?.message || String(e)
+                  })
+                  // Fallback: use '/' and kick off async probe (realpath is
+                  // unreliable on JumpServer virtual FS and may never callback).
+                  sftpHomeMap.set(connectionId, '/')
+                  resolve()
+                  probeAssetHomeAsync(sftp, '/', hintUsername, connectionId)
+                })
+            } else {
+              // No hint.
+              const isJumpServer = connectionId.includes('local-team') && connectionId.includes('@')
+              if (isJumpServer) {
+                // JumpServer virtual FS: realpath('.') may never callback, so set
+                // HOME to '/' immediately and async-probe for asset HOME.
+                sftpHomeMap.set(connectionId, '/')
+                homeDebug('[initSftp] jumpserver set / and async probe', { connectionId })
+                resolve()
+                const user = connectionId.split('@')[0]
+                // Decode hostname from connectionId: user@ip:orgType:hostnameBase64:session
+                let hostHint: string | undefined
+                const parts = connectionId.split(':')
+                if (parts.length >= 3) {
+                  try {
+                    hostHint = Buffer.from(parts[2], 'base64').toString('utf-8') || undefined
+                  } catch {}
+                }
+                if (user) {
+                  sftpReaddirWithTimeout(sftp, '/', 5000)
+                    .then(() => probeAssetHomeAsync(sftp, '/', user, connectionId, hostHint))
+                    .catch(() => homeDebug('[initSftp] root readdir failed', { connectionId }))
+                }
+              } else {
+                // Normal SSH: realpath('.') reliably returns HOME.
+                sftp.realpath('.', (rpErr, absPath) => {
+                  const home = !rpErr && absPath ? absPath : '/'
+                  sftpHomeMap.set(connectionId, home)
+                  homeDebug('[initSftp] realpath set', { connectionId, home })
+                  resolve()
+                })
+              }
+            }
           }
-          resolve()
         })
       })
     } catch (err: any) {
@@ -2368,6 +2651,116 @@ export const initSftpOnConnection = (conn: Client, connectionId: string): Promis
       resolve()
     }
   })
+}
+
+// Build a homeHint from connectionInfo so initSftpOnConnection can probe the
+// JumpServer virtual asset HOME path. Returns undefined when no hint is available.
+const buildHomeHint = (connectionInfo: any): { assetPath?: string; username?: string } | undefined => {
+  const assetPath = connectionInfo?.remoteHomePath?.trim()
+  const username = connectionInfo?.username?.trim()
+  if (assetPath && username) return { assetPath, username }
+  return undefined
+}
+
+// Tracks connection IDs that currently have an active async HOME probe running,
+// to prevent duplicate concurrent probes from causing SFTP contention.
+const activeHomeProbes = new Set<string>()
+
+// Async (non-blocking) JumpServer asset HOME probe. Searches the virtual SFTP
+// filesystem for a "home/<username>" directory. Updates sftpHomeMap on success.
+// Each readdir has a timeout; the whole probe is bounded and never rejects.
+// hostHint (asset hostname) is used to prioritize matching subdirs for speed.
+const probeAssetHomeAsync = (
+  sftp: any,
+  root: string,
+  username: string,
+  connectionId: string,
+  hostHint?: string
+) => {
+  // Prevent duplicate concurrent probes for the same connection.
+  if (activeHomeProbes.has(connectionId)) {
+    homeDebug('[probeAsync] already in progress, skipping', { connectionId })
+    return
+  }
+  activeHomeProbes.add(connectionId)
+
+  const joinPath = (base: string, name: string) =>
+    base.endsWith('/') ? `${base}${name}` : `${base}/${name}`
+
+  const hint = hostHint?.toLowerCase().trim()
+
+  const search = async (dir: string, depth: number, inHintSubtree: boolean): Promise<string | null> => {
+    if (depth > 8) return null
+    let entries: any[]
+    try {
+      entries = await sftpReaddirWithTimeout(sftp, dir, 6000)
+    } catch {
+      return null
+    }
+
+    // Only check for "home" when inside a hint-matching subtree (or when no
+    // hint is available). Prevents matching "home/<user>" on other assets.
+    if (inHintSubtree || !hint) {
+      const homeEntry = entries.find((e) => e.filename === 'home' && isDirEntry(e))
+      if (homeEntry) {
+        const homePath = joinPath(dir, 'home')
+        homeDebug('[probeAsync] found home dir', { connectionId, homePath, inHintSubtree, dir })
+        try {
+          const homeEntries = await sftpReaddirWithTimeout(sftp, homePath, 4000)
+          // Prefer matching username; fall back to first user dir (asset
+          // account may differ from bastion login user).
+          const userEntry = homeEntries.find(
+            (e) => e.filename === username && e.filename !== '.' && e.filename !== '..'
+          )
+          if (userEntry) return joinPath(homePath, userEntry.filename)
+          const anyUser = homeEntries.find(
+            (e) => e.filename !== '.' && e.filename !== '..' && isDirEntry(e)
+          )
+          if (anyUser) return joinPath(homePath, anyUser.filename)
+        } catch (e: any) {
+          homeDebug('[probeAsync] home readdir failed', { connectionId, homePath, error: e?.message })
+        }
+      }
+    }
+
+    // Recurse into subdirectories. Prioritize hint-matching subdirs.
+    const subdirs = entries.filter(
+      (e) => e.filename !== '.' && e.filename !== '..' && e.filename !== 'home' && isDirEntry(e)
+    )
+    if (hint) {
+      subdirs.sort((a, b) => {
+        const aM = a.filename.toLowerCase().includes(hint) ? 0 : 1
+        const bM = b.filename.toLowerCase().includes(hint) ? 0 : 1
+        return aM - bM
+      })
+    }
+
+    for (const entry of subdirs) {
+      const childPath = joinPath(dir, entry.filename)
+      const childInHint = inHintSubtree || (hint ? entry.filename.toLowerCase().includes(hint) : false)
+      const found = await search(childPath, depth + 1, childInHint)
+      if (found) return found
+    }
+    return null
+  }
+
+  homeDebug('[probeAsync] start', { connectionId, root, username, hostHint, hint })
+
+  search(root, 0, false)
+    .then((result) => {
+      if (result) {
+        sftpHomeMap.set(connectionId, result)
+        homeDebug('[probeAsync] SUCCESS', { connectionId, home: result })
+      } else {
+        homeDebug('[probeAsync] not found', { connectionId, root, username, hostHint })
+      }
+    })
+    .catch((e: any) => {
+      homeDebug('[probeAsync] error', { connectionId, error: e?.message || String(e) })
+    })
+    .finally(() => {
+      activeHomeProbes.delete(connectionId)
+    })
 }
 
 const isSkippedConn = (conn: Client | undefined, skipped?: Client) => {
@@ -2458,10 +2851,12 @@ export const connectSftpReuseFirst = async (event: any, connectionInfo: any, opt
 
   markPending(id, requestId)
   const reused = findReusableConn(connectionInfo, options?.skipReusableConn)
+  homeDebug('[connectSftpReuseFirst] entry', { id, hasReused: !!reused, sshType: connectionInfo?.sshType, sftpCompoundUsername: !!connectionInfo?.sftpCompoundUsername, targetIp: connectionInfo?.targetIp })
 
   if (reused) {
     try {
-      await initSftpOnConnection(reused, id)
+      homeDebug('[connectSftpReuseFirst] init on reused conn', { id })
+      await initSftpOnConnection(reused, id, buildHomeHint(connectionInfo))
 
       const p = getPending(id)
       if (p?.cancelled) {
@@ -2601,7 +2996,7 @@ export const connectSftpNew = async (event: any, connectionInfo: any, options?: 
             return resolve({ status: 'cancelled', message: 'cancelled' })
           }
 
-          await initSftpOnConnection(conn as any, id)
+          await initSftpOnConnection(conn as any, id, buildHomeHint(connectionInfo))
 
           const p2 = getPending(id)
           if (p2?.cancelled) {
@@ -2673,8 +3068,11 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
     sftpCompoundUsername
   } = connectionInfo
 
+  homeDebug('[connectJumpServerSftpNew] entry', { id, hasCompound: !!sftpCompoundUsername, targetIp, host, username })
+
   // If we have sftpCompoundUsername from pickReconnectConnectionInfo, use it to directly access target asset
   if (sftpCompoundUsername && targetIp) {
+    homeDebug('[connectJumpServerSftpNew] using compound username path', { id, sftpCompoundUsername, targetIp })
     sftpLogger.info('JumpServer SFTP using sftpCompoundUsername for direct asset access', {
       event: 'sftp.jumpserver.compound.username',
       connectionId: id,
@@ -2764,7 +3162,7 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
       conn.on('ready', async () => {
         sftpOwnedJumpServerConnections.set(id, conn)
         try {
-          await initSftpOnConnection(conn, id)
+          await initSftpOnConnection(conn, id, buildHomeHint(connectionInfo))
           const p = getPending(id)
           if (p?.cancelled) {
             conn.end()
@@ -2803,10 +3201,12 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
   // No sftpCompoundUsername available - fall back to using reusable JumpServer connection
   // This will only give access to the bastion filesystem
   const reusableConn = findReusableJumpServerConn(connectionInfo, options?.skipReusableConn)
+  homeDebug('[connectJumpServerSftpNew] fallback path', { id, hasReusableJump: !!reusableConn })
   if (reusableConn) {
     const requestId = String(connectionInfo?.sftpRequestId || `${Date.now()}_${Math.random().toString(16).slice(2)}`)
     markPending(id, requestId)
-    await initSftpOnConnection(reusableConn, id)
+    homeDebug('[connectJumpServerSftpNew] init on reusable JumpServer conn', { id })
+    await initSftpOnConnection(reusableConn, id, buildHomeHint(connectionInfo))
 
     const p = getPending(id)
     if (p?.cancelled) {
@@ -2818,9 +3218,12 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
     clearPending(id)
     const st = connectionStatus.get(id) as any
     if (st?.sftpAvailable) {
+      homeDebug('[connectJumpServerSftpNew] reusable JumpServer conn SUCCESS', { id })
       return { status: 'connected', message: 'SFTP ready (reused JumpServer connection - bastion filesystem)' }
     }
   }
+
+  homeDebug('[connectJumpServerSftpNew] creating NEW SSH connection to JumpServer bastion', { id, host, username, readyTimeout: 180000 })
 
   const conn = new SSHClient()
 
@@ -2889,14 +3292,33 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
       await markSftpDead(id, reason)
     }
 
+    conn.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
+      ;(async () => {
+        try {
+          homeDebug('[connectJumpServerSftpNew] keyboard-interactive', { id })
+          const p = getPending(id)
+          if (p?.cancelled) {
+            conn.end()
+            return safeResolve({ status: 'cancelled', message: 'cancelled' })
+          }
+          await handleRequestKeyboardInteractive(_event, id, prompts, finish)
+        } catch (e: any) {
+          conn.end()
+          clearPending(id)
+          safeResolve({ status: 'error', message: e?.message || String(e) })
+        }
+      })()
+    })
+
     conn.on('ready', async () => {
       try {
+        homeDebug('[connectJumpServerSftpNew] ready, opening shell', { id })
         const stream = await openShell(conn, connectionInfo)
         // Store SFTP-owned JumpServer resources separately from connect-managed sessions.
         sftpOwnedJumpServerConnections.set(id, conn)
         sftpOwnedJumpServerStreams.set(id, stream)
 
-        await initSftpOnConnection(conn, id)
+        await initSftpOnConnection(conn, id, buildHomeHint(connectionInfo))
 
         clearPending(id)
 
@@ -2914,6 +3336,7 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
     })
 
     conn.on('error', (err) => {
+      homeDebug('[connectJumpServerSftpNew] error', { id, error: err?.message || String(err) })
       clearPending(id)
       conn.end()
       safeResolve({

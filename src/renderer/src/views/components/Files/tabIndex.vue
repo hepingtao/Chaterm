@@ -824,7 +824,45 @@ const getDisplayText = (dataRef: any, title: string): string => {
 
 const FILES_DRAG_MIME = 'application/x-asset-sftp'
 
+// Collect the title path from the asset-tree root down to the node matching targetKey.
+// For JumpServer bastion SFTP this maps to the virtual filesystem path prefix, which
+// combined with "/home/<username>" resolves to the target asset's HOME directory.
+const findAssetTitlePath = (nodes: AssetNode[], targetKey: string): string => {
+  const dfs = (list: AssetNode[], path: string[]): string | null => {
+    for (const node of list) {
+      const nextPath = [...path, node.title]
+      if (node.key === targetKey) {
+        return '/' + nextPath.join('/')
+      }
+      if (node.children?.length) {
+        const found = dfs(node.children, nextPath)
+        if (found) return found
+      }
+    }
+    return null
+  }
+  return dfs(nodes, []) || ''
+}
+
 const toSftpDragPayload = (dataRef: any) => {
+  const key = String(dataRef?.key || '')
+  const assetTitlePath = findAssetTitlePath(originalTreeData.value, key)
+  if (dataRef?.uuid) {
+    logger.info('toSftpDragPayload assetTitlePath', {
+      key,
+      uuid: dataRef?.uuid,
+      title: dataRef?.title,
+      assetTitlePath,
+      treeLoaded: originalTreeData.value.length > 0
+    })
+    api.sftpDebugLog('toSftpDragPayload', {
+      key,
+      uuid: dataRef?.uuid,
+      title: dataRef?.title,
+      assetTitlePath,
+      treeLoaded: originalTreeData.value.length > 0
+    })
+  }
   return {
     uuid: dataRef?.uuid,
     ip: dataRef?.ip,
@@ -836,7 +874,8 @@ const toSftpDragPayload = (dataRef: any) => {
     organizationId: dataRef?.organizationId,
     sshType: dataRef?.sshType,
     asset_type: dataRef?.asset_type,
-    proxyCommand: dataRef?.proxyCommand || ''
+    proxyCommand: dataRef?.proxyCommand || '',
+    assetTitlePath
   }
 }
 

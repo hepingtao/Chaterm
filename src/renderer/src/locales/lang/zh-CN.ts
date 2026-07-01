@@ -1417,6 +1417,7 @@ export default {
     copyAbsolutePathFailed: '复制绝对路径失败',
     more: '更多',
     download: '下载',
+    downloadDirectory: '下载文件夹',
     upload: '上传',
     taskList: '传输列表',
     collapseTransferList: '收起传输列表',

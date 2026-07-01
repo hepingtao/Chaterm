@@ -366,6 +366,24 @@
                     </template>
                   </a-dropdown>
                 </div>
+                <div
+                  v-if="!editableData[record.key] && record.isDir && !record.isLink && !isLocal"
+                  class="hover-actions"
+                  :data-record="record.name"
+                >
+                  <a-tooltip :title="t('files.downloadDirectory')">
+                    <a-button
+                      type="text"
+                      size="small"
+                      :title="t('files.downloadDirectory')"
+                      @click.stop="downloadDirectory(record as FileRecord)"
+                    >
+                      <template #icon>
+                        <DownloadOutlined />
+                      </template>
+                    </a-button>
+                  </a-tooltip>
+                </div>
               </div>
             </template>
             <template v-else>
@@ -1659,6 +1677,19 @@ watch(
   { deep: true }
 )
 
+// When the parent updates currentDirectoryInput (e.g. after async HOME probe
+// resolves), sync local state and reload the directory so the panel jumps
+// from the bastion root to the asset HOME automatically.
+watch(
+  () => props.currentDirectoryInput,
+  (newVal, oldVal) => {
+    if (!newVal || newVal === oldVal) return
+    if (newVal === localCurrentDirectoryInput.value) return
+    localCurrentDirectoryInput.value = newVal
+    handleRefresh()
+  }
+)
+
 const downloadFile = async (record: any) => {
   const remotePath = record.path
   const fileName = record.name
@@ -1699,6 +1730,34 @@ const downloadFile = async (record: any) => {
     })
   } catch (err: any) {
     logger.error('Download error', { error: err })
+    message.error({ content: `${t('files.downloadError')}：${(err as Error).message}`, key, duration: 3 })
+  }
+}
+
+const downloadDirectory = async (record: any) => {
+  const remoteDir = record.path
+
+  const localDir = await api.openDirectoryDialog()
+  if (!localDir) return
+
+  try {
+    const res = await api.downloadDirectory({
+      id: props.uuid,
+      remoteDir,
+      localDir
+    })
+
+    const config = {
+      success: { type: 'success', text: t('files.downloadSuccess') },
+      cancelled: { type: 'info', text: t('files.downloadCancel') }
+    }[res.status] || { type: 'error', text: `${t('files.downloadFailed')}：${res.message}` }
+    message[config.type]({
+      content: config.text,
+      key,
+      duration: 3
+    })
+  } catch (err: any) {
+    logger.error('Download directory error', { error: err })
     message.error({ content: `${t('files.downloadError')}：${(err as Error).message}`, key, duration: 3 })
   }
 }
@@ -1909,6 +1968,7 @@ defineExpose({
   uploadFile,
   uploadFolder,
   downloadFile,
+  downloadDirectory,
   refresh,
   basePath,
   localCurrentDirectoryInput
