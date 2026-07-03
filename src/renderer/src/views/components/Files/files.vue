@@ -674,10 +674,11 @@ watch(
   { immediate: true, deep: true }
 )
 
-const toggleHidden = () => {
+const toggleHidden = async () => {
   showHidden.value = !showHidden.value
-  // Update synchronously — don't wait for the watch callback
-  recalcVisibleFiles()
+  // Re-fetch the directory so the backend can attempt to retrieve hidden
+  // entries (e.g. via SSH exec fallback) when the user wants to show them.
+  await loadFiles(props.uuid, basePath.value + localCurrentDirectoryInput.value)
   emit('stateChange', {
     uuid: props.uuid,
     path: localCurrentDirectoryInput.value,
@@ -914,7 +915,7 @@ const loadFiles = async (uuid: string, filePath: string): Promise<void> => {
   await raf()
 
   const fetchList = async (path: string) => {
-    return await api.sshSftpList({ path, id: uuid })
+    return await api.sshSftpList({ path, id: uuid, includeHidden: showHidden.value })
   }
 
   let data = await fetchList(filePath || '/')

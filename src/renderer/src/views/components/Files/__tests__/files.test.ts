@@ -224,7 +224,7 @@ describe('files.vue (enhanced)', () => {
     await flushPromises()
 
     const vm = wrapper.vm as any
-    expect(api.sshSftpList).toHaveBeenCalledWith({ path: '/home', id: 'localhost@127.0.0.1:local' })
+    expect(api.sshSftpList).toHaveBeenCalledWith({ path: '/home', id: 'localhost@127.0.0.1:local', includeHidden: false })
 
     // Expect parent inserted at front
     expect(vm.files[0].name).toBe('..')
@@ -291,7 +291,7 @@ describe('files.vue (enhanced)', () => {
     api.sshSftpList.mockResolvedValueOnce([] as any)
     await vm.openLocalFolder()
     await flushPromises()
-    expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/tmp', id: 'localhost@127.0.0.1:local' })
+    expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/tmp', id: 'localhost@127.0.0.1:local', includeHidden: false })
 
     wrapper.unmount()
   })
@@ -810,7 +810,7 @@ describe('files.vue (enhanced)', () => {
       wrapper.unmount()
     })
 
-    it('toggleHidden flips the state and filters dot-prefixed files/dirs while keeping parent ".."', async () => {
+    it('toggleHidden flips the state, re-fetches directory, and filters dot-prefixed files/dirs while keeping parent ".."', async () => {
       api.sshSftpList.mockResolvedValueOnce(dotFilesListing as any)
       const wrapper = mountView({ currentDirectoryInput: '/home/u' })
       await flushPromises()
@@ -818,9 +818,15 @@ describe('files.vue (enhanced)', () => {
       const vm = wrapper.vm as any
 
       // show hidden (toggle from default false to true)
+      api.sshSftpList.mockResolvedValueOnce(dotFilesListing as any)
       vm.toggleHidden()
       await flushPromises()
       expect(vm.showHidden).toBe(true)
+      expect(api.sshSftpList).toHaveBeenLastCalledWith({
+        path: '/home/u',
+        id: 'localhost@127.0.0.1:local',
+        includeHidden: true
+      })
 
       const hiddenOnNames = vm.visibleFiles.map((f: any) => f.name)
       expect(hiddenOnNames).toContain('..')
@@ -835,9 +841,15 @@ describe('files.vue (enhanced)', () => {
       expect(rawNames).toContain('.ssh')
 
       // toggle back off
+      api.sshSftpList.mockResolvedValueOnce(dotFilesListing as any)
       vm.toggleHidden()
       await flushPromises()
       expect(vm.showHidden).toBe(false)
+      expect(api.sshSftpList).toHaveBeenLastCalledWith({
+        path: '/home/u',
+        id: 'localhost@127.0.0.1:local',
+        includeHidden: false
+      })
       const restored = vm.visibleFiles.map((f: any) => f.name)
       expect(restored).not.toContain('.bashrc')
       expect(restored).not.toContain('.ssh')
@@ -884,6 +896,9 @@ describe('files.vue (enhanced)', () => {
       expect(hiddenOffNames).not.toContain('.secret')
 
       // toggle on: hidden files become visible, parent ".." still visible
+      api.sshSftpList.mockResolvedValueOnce([
+        { name: '.secret', path: '/home/u/.secret', isDir: false, mode: '0600', isLink: false, modTime: '', size: 1 }
+      ] as any)
       vm.toggleHidden()
       await flushPromises()
       const hiddenOnNames = vm.visibleFiles.map((f: any) => f.name)
@@ -904,6 +919,10 @@ describe('files.vue (enhanced)', () => {
       const vm = wrapper.vm as any
       const before = vm.visibleFiles.map((f: any) => f.name)
 
+      api.sshSftpList.mockResolvedValueOnce([
+        { name: 'a.txt', path: '/home/u/a.txt', isDir: false, mode: '0644', isLink: false, modTime: '', size: 1 },
+        { name: 'b', path: '/home/u/b', isDir: true, mode: '0755', isLink: false, modTime: '', size: 0 }
+      ] as any)
       vm.toggleHidden()
       await flushPromises()
       const after = vm.visibleFiles.map((f: any) => f.name)
@@ -1186,7 +1205,7 @@ describe('files.vue (enhanced)', () => {
       api.sshSftpList.mockResolvedValueOnce([] as any)
       vm.rowClick({ name: 'sub', path: '/home/sub', isDir: true, isLink: false })
       await flushPromises()
-      expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/home/sub', id: 'localhost@127.0.0.1:local' })
+      expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/home/sub', id: 'localhost@127.0.0.1:local', includeHidden: false })
 
       const before = api.sshSftpList.mock.calls.length
       vm.rowClick({ name: 'a.txt', path: '/home/a.txt', isDir: false, isLink: false })
@@ -1206,7 +1225,7 @@ describe('files.vue (enhanced)', () => {
       vm.rowClick({ name: '..', path: '..', isDir: true, isLink: false })
       await flushPromises()
 
-      expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/home', id: 'localhost@127.0.0.1:local' })
+      expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/home', id: 'localhost@127.0.0.1:local', includeHidden: false })
 
       wrapper.unmount()
     })
@@ -1234,12 +1253,12 @@ describe('files.vue (enhanced)', () => {
       api.sshSftpList.mockResolvedValueOnce([] as any)
       vm.refresh()
       await flushPromises()
-      expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/etc', id: 'localhost@127.0.0.1:local' })
+      expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/etc', id: 'localhost@127.0.0.1:local', includeHidden: false })
 
       api.sshSftpList.mockResolvedValueOnce([] as any)
       vm.handleRefresh()
       await flushPromises()
-      expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/etc', id: 'localhost@127.0.0.1:local' })
+      expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/etc', id: 'localhost@127.0.0.1:local', includeHidden: false })
 
       wrapper.unmount()
     })
@@ -1253,7 +1272,7 @@ describe('files.vue (enhanced)', () => {
       api.sshSftpList.mockResolvedValueOnce([] as any)
       vm.rollback()
       await flushPromises()
-      expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/etc', id: 'localhost@127.0.0.1:local' })
+      expect(api.sshSftpList).toHaveBeenLastCalledWith({ path: '/etc', id: 'localhost@127.0.0.1:local', includeHidden: false })
 
       wrapper.unmount()
     })

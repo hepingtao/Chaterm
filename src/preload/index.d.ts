@@ -464,7 +464,7 @@ interface ApiType {
   ) => () => void
   recordTerminalState: (params: any) => Promise<any>
   recordCommand: (params: any) => Promise<any>
-  sshSftpList: (opts: { id: string; path: string }) => Promise<any>
+  sshSftpList: (opts: { id: string; path: string; includeHidden?: boolean }) => Promise<any>
   sftpConnList: () => Promise<string[]>
   sftpGetHome: (id: string) => Promise<string>
   sftpDebugLog: (message: string, data?: any) => Promise<boolean>

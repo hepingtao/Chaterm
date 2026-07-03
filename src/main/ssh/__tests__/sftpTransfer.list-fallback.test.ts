@@ -192,7 +192,22 @@ describe('sftpTransfer exec fallback helpers', () => {
     expect(result.find((i) => i.filename === '.bashrc')?.attrs.isFile()).toBe(true)
   })
 
-  it('readSftpDirWithFallback triggers exec when readdir has no dot files', async () => {
+  it('readSftpDirWithFallback triggers exec when includeHidden is true and readdir has no dot files', async () => {
+    const { readSftpDirWithFallback, sshConnections } = await setupModule()
+    const sftp = createMockSftp({
+      '/home/user/file1': { mode: 0o100644, size: 200, mtime: 0 },
+      '/home/user/.bashrc': { mode: 0o100644, size: 100, mtime: 0 }
+    })
+    const conn = createMockConn('..\n.\n.bashrc\nfile1\n')
+    sshConnections.set('user@host:ssh:abc:files-1', conn as any)
+
+    const result = await readSftpDirWithFallback(sftp, '/home/user', 'user@host:ssh:abc:files-1', true)
+
+    expect(conn.exec).toHaveBeenCalled()
+    expect(result.map((i) => i.filename).sort()).toEqual(['.bashrc', 'file1'])
+  })
+
+  it('readSftpDirWithFallback does not trigger exec without includeHidden even when readdir has no dot files', async () => {
     const { readSftpDirWithFallback, sshConnections } = await setupModule()
     const sftp = createMockSftp({
       '/home/user/file1': { mode: 0o100644, size: 200, mtime: 0 },
@@ -203,8 +218,8 @@ describe('sftpTransfer exec fallback helpers', () => {
 
     const result = await readSftpDirWithFallback(sftp, '/home/user', 'user@host:ssh:abc:files-1')
 
-    expect(conn.exec).toHaveBeenCalled()
-    expect(result.map((i) => i.filename).sort()).toEqual(['.bashrc', 'file1'])
+    expect(conn.exec).not.toHaveBeenCalled()
+    expect(result.map((i) => i.filename)).toEqual(['file1'])
   })
 
   it('readSftpDirWithFallback skips exec when readdir already has dot files', async () => {

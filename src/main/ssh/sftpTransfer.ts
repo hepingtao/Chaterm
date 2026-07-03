@@ -267,7 +267,7 @@ export const registerFileSystemHandlers = () => {
     return current
   })
 
-  ipcMain.handle('ssh:sftp:list', async (event, { path: reqPath, id }) => {
+  ipcMain.handle('ssh:sftp:list', async (event, { path: reqPath, id, includeHidden }) => {
     if (isLocalId(id)) {
       try {
         return await listLocalDir(reqPath)
@@ -281,14 +281,14 @@ export const registerFileSystemHandlers = () => {
       let sftp = await ensureSftpReady(event, id)
 
       try {
-        const list = await readSftpDirWithFallback(sftp, reqPath, id, 'readdir result')
+        const list = await readSftpDirWithFallback(sftp, reqPath, id, Boolean(includeHidden), 'readdir result')
         return formatSftpList(list, reqPath)
       } catch {
         // Retry once with a fresh SFTP session if the current handle fails mid-request.
         await closeSftpOnly(String(id))
         sftp = await ensureSftpReady(event, id)
 
-        const list = await readSftpDirWithFallback(sftp, reqPath, id, 'readdir result (retry)')
+        const list = await readSftpDirWithFallback(sftp, reqPath, id, Boolean(includeHidden), 'readdir result (retry)')
         return formatSftpList(list, reqPath)
       }
     } catch (err: any) {
@@ -556,27 +556,40 @@ export const enrichReaddirWithExecFallback = async (conn: any, sftp: any, reqPat
   return list
 }
 
-export const readSftpDirWithFallback = async (sftp: any, reqPath: string, id: string, label = 'readdir result'): Promise<any[]> => {
+export const readSftpDirWithFallback = async (
+  sftp: any,
+  reqPath: string,
+  id: string,
+  includeHidden = false,
+  label = 'readdir result'
+): Promise<any[]> => {
   const list = await sftpReaddirWithTimeout(sftp, reqPath, 10000)
   const rawNames = (list || []).map((i: any) => i?.filename).filter(Boolean)
   const dotFiles = rawNames.filter((n: string) => n.startsWith('.'))
 
   homeDebug(`[sftp:list] ${label}`, {
     path: reqPath,
+    includeHidden,
     total: rawNames.length,
     dotFileCount: dotFiles.length,
     dotFiles: dotFiles.slice(0, 20),
     allNames: rawNames.slice(0, 50)
   })
 
-  if (dotFiles.length === 0) {
+  // Only attempt exec fallback when the caller explicitly asks for hidden files
+  // and the SFTP server/proxy (e.g. JumpServer) returned no dot files at all.
+  // This avoids unnecessary SSH exec round-trips for normal listings.
+  if (includeHidden && dotFiles.length === 0) {
     const conn = findSshConnForSftp(id)
     if (conn) {
       try {
+        homeDebug('[sftp:list] exec fallback triggered', { path: reqPath, id })
         return await enrichReaddirWithExecFallback(conn, sftp, reqPath, list || [])
       } catch (e: any) {
         homeDebug('[sftp:list] exec fallback failed', { path: reqPath, error: e?.message || String(e) })
       }
+    } else {
+      homeDebug('[sftp:list] no underlying SSH connection for exec fallback', { path: reqPath, id })
     }
   }
 
