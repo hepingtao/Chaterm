@@ -40,7 +40,7 @@
           <template #icon>
             <LaptopOutlined />
           </template>
-          {{ item.host }}
+          {{ item.title && item.title !== item.host ? `${item.title} (${item.host})` : item.host }}
           <CloseOutlined
             v-if="chatTypeValue === 'agent'"
             class="tag-delete-btn"

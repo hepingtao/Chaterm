@@ -111,7 +111,9 @@ const filteredAssetGroups = computed(() => {
         .map((node) => {
           if (!node || typeof node.title !== 'string') return null
 
-          if (node.title.toLowerCase().includes(lowerCaseInput)) {
+          const titleMatch = node.title.toLowerCase().includes(lowerCaseInput)
+          const ipMatch = typeof node.ip === 'string' && node.ip.toLowerCase().includes(lowerCaseInput)
+          if (titleMatch || ipMatch) {
             return { ...node }
           }
 

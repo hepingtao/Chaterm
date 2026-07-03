@@ -192,7 +192,8 @@ describe('useHostState', () => {
         host: '192.168.1.50',
         uuid: 'asset-uuid-1',
         connection: 'personal',
-        assetType: 'server'
+        assetType: 'server',
+        title: 'Test Server'
       })
     })
 

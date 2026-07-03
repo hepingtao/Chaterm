@@ -18,6 +18,7 @@ export interface HostInfo {
   connection: string
   assetType?: string
   tabSessionId?: string
+  title?: string
 }
 
 /**
@@ -107,7 +108,8 @@ export const useHostState = (workspace: AiTabWorkspace = AI_TAB_DEFAULT_WORKSPAC
         uuid: hostInfo.uuid,
         connection: hostInfo.connection,
         assetType: hostInfo.assetType,
-        tabSessionId: hostInfo.tabSessionId
+        tabSessionId: hostInfo.tabSessionId,
+        title: hostInfo.title
       }
       hosts.value = [newHost]
     } else {
@@ -127,7 +129,8 @@ export const useHostState = (workspace: AiTabWorkspace = AI_TAB_DEFAULT_WORKSPAC
         uuid: assetInfo.uuid,
         connection: assetInfo.connection || 'personal',
         assetType: assetInfo.assetType,
-        tabSessionId: assetInfo.tabSessionId
+        tabSessionId: assetInfo.tabSessionId,
+        title: assetInfo.title
       })
     } else {
       updateHosts(null)

@@ -1762,9 +1762,12 @@ const connectSSH = async (_opts?: { isAutoReconnect?: boolean }) => {
           if (!isAutoReconnect) {
             const welcomeName = email.split('@')[0] || userInfoStore().userInfo.name
             const welcome = '\x1b[38;2;22;119;255m' + t('ssh.welcomeMessage', { username: welcomeName }) + ' \x1b[m\r\n'
+            const connHostname = assetInfo?.hostname || props.connectData.hostname
+            const displayHost =
+              connHostname && connHostname !== props.connectData.ip ? `${connHostname} (${props.connectData.ip})` : props.connectData.ip
             terminal.value?.writeln('')
             terminal.value?.writeln(welcome)
-            terminal.value?.writeln(t('ssh.connectingTo', { ip: props.connectData.ip }))
+            terminal.value?.writeln(t('ssh.connectingTo', { ip: displayHost }))
           }
           await startShell()
           shellOpenedAt = Date.now()
@@ -1899,9 +1902,11 @@ const connectSSH = async (_opts?: { isAutoReconnect?: boolean }) => {
             }
             const welcomeName = email.split('@')[0] || userInfoStore().userInfo.name
             const welcome = '\x1b[38;2;22;119;255m' + t('ssh.welcomeMessage', { username: welcomeName }) + ' \x1b[m\r\n'
+            const displayHost =
+              connHostname && connHostname !== props.connectData.ip ? `${connHostname} (${props.connectData.ip})` : props.connectData.ip
             terminal.value?.writeln('') // Add empty line separator
             terminal.value?.writeln(welcome)
-            terminal.value?.writeln(t('ssh.connectingTo', { ip: props.connectData.ip }))
+            terminal.value?.writeln(t('ssh.connectingTo', { ip: displayHost }))
           }
           await startShell()
           shellOpenedAt = Date.now()

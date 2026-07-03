@@ -581,9 +581,7 @@ export const useContext = (options: UseContextOptions = {}) => {
   const scrollToSelectedItem = () => {
     nextTick(() => {
       // Support both submenu items (.select-item) and global search items (.global-search-item)
-      const selectedItem = document.querySelector(
-        '.select-item.keyboard-selected, .global-search-item.keyboard-selected'
-      ) as HTMLElement
+      const selectedItem = document.querySelector('.select-item.keyboard-selected, .global-search-item.keyboard-selected') as HTMLElement
       if (!selectedItem) return
 
       const scrollContainer = selectedItem.closest('.select-list, .main-menu-list') as HTMLElement
@@ -1001,7 +999,14 @@ export const useContext = (options: UseContextOptions = {}) => {
         key: h.tabSessionId || h.uuid,
         value: h.tabSessionId || h.uuid,
         uuid: h.uuid,
-        label: h.ip,
+        label: (() => {
+          const t = String(h.title ?? '')
+          const i = String(h.ip ?? '')
+          if (!t) return i
+          if (!i || t === i || t.includes(i)) return t
+          if (i.includes(t) || i.includes('(')) return i
+          return `${t} (${i})`
+        })(),
         connect: h.connection || 'personal',
         title: h.title || h.ip,
         isLocalHost: h.ip === '127.0.0.1' || h.ip === 'localhost',

@@ -78,9 +78,12 @@ export const formatHosts = (data: { personal?: TreeHostOption[]; jumpservers?: T
   // Format personal assets (level 0)
   if (data.personal) {
     data.personal.forEach((item) => {
+      const name = item.label || item.title || ''
+      const ip = item.ip || ''
+      const label = name && ip && name !== ip ? `${name} (${ip})` : name || ip
       result.push({
         key: item.key,
-        label: item.label || '',
+        label,
         title: item.title,
         value: item.key,
         uuid: item.uuid,

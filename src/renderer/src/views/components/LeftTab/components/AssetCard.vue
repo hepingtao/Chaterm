@@ -34,10 +34,11 @@
         </div>
         <div class="asset-info">
           <div class="asset-name">
-            {{ asset.title }}
+            {{ asset.title
+            }}{{ asset.ip && asset.ip !== asset.title && !asset.ip.includes(asset.title) && !asset.ip.includes('(') ? ` (${asset.ip})` : '' }}
           </div>
           <div class="asset-type">
-            {{ asset.ip }}{{ asset.username ? ' · ' + asset.username : '' }}
+            {{ asset.username ? asset.username : '' }}
           </div>
         </div>
         <div class="action-buttons">

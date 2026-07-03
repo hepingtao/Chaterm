@@ -55,7 +55,8 @@
               <span
                 v-if="item.sublabel"
                 class="menu-sublabel"
-              >{{ item.sublabel }}</span>
+                >{{ item.sublabel }}</span
+              >
             </div>
             <span class="global-search-type-tag">{{ $t('ai.' + item.type) }}</span>
           </div>
@@ -175,7 +176,7 @@
               <span class="item-label">
                 {{ item.label
                 }}<span
-                  v-if="item.title"
+                  v-if="item.title && !String(item.label).includes(String(item.title))"
                   class="host-item-remark"
                 >
                   {{ ' ' }}{{ item.title }}

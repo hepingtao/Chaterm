@@ -49,6 +49,14 @@ export const sftpConnectionInfoMap = new Map<string, any>()
 // Falls back to '/' when the HOME path cannot be resolved.
 export const sftpHomeMap = new Map<string, string>()
 
+// Skip Python bytecode artifacts and cache directories during directory uploads.
+export const shouldSkipUploadEntry = (name: string, isDirectory: boolean): boolean => {
+  if (isDirectory) {
+    return name === '__pycache__' || name === '.pytest_cache'
+  }
+  return name.endsWith('.pyc') || name.endsWith('.pyo')
+}
+
 type R2RFileArgs = {
   fromId: string
   toId: string
@@ -216,10 +224,11 @@ export const registerFileSystemHandlers = () => {
     const current = sftpHomeMap.get(sid) || '/'
     homeDebug('[get-home] return', { sid, current })
 
-    // If not yet resolved to real asset HOME and this is a JumpServer connection,
-    // kick off an async probe (non-blocking). Frontend will re-fetch.
-    // Use startsWith to avoid matching bastion virtual FS paths like /A100/.../home/itouchtv
-    if (!current.startsWith('/home/') && (sid.includes('local-team') || sid.includes(':local:')) && sid.includes('@')) {
+    // If not yet resolved to a valid HOME (root or empty) and this is a JumpServer
+    // connection, kick off an async probe (non-blocking). Frontend will re-fetch.
+    // Accepts both real asset paths (/home/itouchtv) and bastion virtual FS paths
+    // (/A100/.../home/itouchtv) as valid — only probe when stuck at root.
+    if ((!current || current === '/') && (sid.includes('local-team') || sid.includes(':local:')) && sid.includes('@')) {
       const username = sid.split('@')[0]
       // Decode hostname from connectionId for search prioritization.
       let hostHint: string | undefined
@@ -239,7 +248,7 @@ export const registerFileSystemHandlers = () => {
             sftp = await ensureSftpReady(_e, sid)
             // After reconnect, check if HOME was resolved during init
             const newHome = sftpHomeMap.get(sid)
-            if (newHome && newHome.startsWith('/home/')) {
+            if (newHome && newHome !== '/') {
               homeDebug('[get-home] compound username reconnect resolved HOME', { sid, home: newHome })
               return newHome
             }
@@ -274,6 +283,19 @@ export const registerFileSystemHandlers = () => {
       try {
         const list = await sftpReaddirWithTimeout(sftp, reqPath, 10000)
 
+        // Debug: log raw readdir results to help diagnose hidden-file issues.
+        // If the SFTP server/proxy (e.g. JumpServer) strips dot files, they
+        // won't appear here — confirming the issue is server-side, not client-side.
+        const rawNames = (list || []).map((i: any) => i?.filename).filter(Boolean)
+        const dotFiles = rawNames.filter((n: string) => n.startsWith('.'))
+        homeDebug('[sftp:list] readdir result', {
+          path: reqPath,
+          total: rawNames.length,
+          dotFileCount: dotFiles.length,
+          dotFiles: dotFiles.slice(0, 20),
+          allNames: rawNames.slice(0, 50)
+        })
+
         return (list || []).map((item) => {
           const name = item.filename
           const attrs = item.attrs
@@ -295,6 +317,15 @@ export const registerFileSystemHandlers = () => {
         sftp = await ensureSftpReady(event, id)
 
         const list = await sftpReaddirWithTimeout(sftp, reqPath, 10000)
+
+        const rawNames = (list || []).map((i: any) => i?.filename).filter(Boolean)
+        const dotFiles = rawNames.filter((n: string) => n.startsWith('.'))
+        homeDebug('[sftp:list] readdir result (retry)', {
+          path: reqPath,
+          total: rawNames.length,
+          dotFileCount: dotFiles.length,
+          dotFiles: dotFiles.slice(0, 20)
+        })
 
         return (list || []).map((item) => {
           const name = item.filename
@@ -994,6 +1025,63 @@ const sftpMkdirpForTransfer = async (sftp: any, dir: string) => {
   }
 }
 
+// Backup helpers: before overwriting an existing remote file or directory,
+// rename it to originalName.YYYYmmdd-HH24MMSS in the same parent directory.
+
+export const formatBackupSuffix = (d: Date): string => {
+  const yyyy = d.getFullYear()
+  const mm = pad2(d.getMonth() + 1)
+  const dd = pad2(d.getDate())
+  const hh = pad2(d.getHours())
+  const mi = pad2(d.getMinutes())
+  const ss = pad2(d.getSeconds())
+  return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`
+}
+
+const buildBackupName = (originalName: string, suffix: string): string => `${originalName}.${suffix}`
+
+const sftpExists = async (sftp: any, p: string): Promise<boolean> => {
+  try {
+    await sftpStat(sftp, p)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const findUniqueBackupName = async (sftp: any, parentDir: string, baseName: string): Promise<string> => {
+  const suffix = formatBackupSuffix(new Date())
+  let candidate = buildBackupName(baseName, suffix)
+  let exists = await sftpExists(sftp, path.posix.join(parentDir, candidate))
+  if (!exists) return candidate
+
+  // Rare collision (same-second backup); append an incrementing counter.
+  let counter = 1
+  while (exists) {
+    candidate = buildBackupName(baseName, `${suffix}.${counter}`)
+    exists = await sftpExists(sftp, path.posix.join(parentDir, candidate))
+    counter++
+  }
+  return candidate
+}
+
+export const backupRemoteEntity = async (sftp: any, remotePath: string): Promise<string | undefined> => {
+  const normalized = toPosix(remotePath)
+  const exists = await sftpExists(sftp, normalized)
+  if (!exists) return undefined
+
+  const parentDir = path.posix.dirname(normalized)
+  const baseName = path.posix.basename(normalized)
+  const backupName = await findUniqueBackupName(sftp, parentDir, baseName)
+  const backupPath = path.posix.join(parentDir, backupName)
+
+  await new Promise<void>((resolve, reject) => {
+    sftp.rename(normalized, backupPath, (err: any) => (err ? reject(err) : resolve()))
+  })
+
+  return backupPath
+}
+
 const sendProgress = (event: any, payload: any) => {
   const wc = event?.sender
   if (!wc || wc.isDestroyed?.()) {
@@ -1691,8 +1779,9 @@ export async function handleStreamTransfer(
       try {
         const remoteDir = toPosix(destPath)
         const fileName = path.basename(srcPath)
-        const uniqueName = await getUniqueRemoteName(sftp, remoteDir, fileName, false)
-        finalRemotePath = path.posix.join(remoteDir, uniqueName)
+        const targetRemotePath = path.posix.join(remoteDir, fileName)
+        await backupRemoteEntity(sftp, targetRemotePath)
+        finalRemotePath = targetRemotePath
       } catch (e: any) {
         const msg = errToMessage(e)
         sendProgress(
@@ -2349,9 +2438,11 @@ export async function handleDirectoryTransfer(event: any, id: string, localDir: 
     return { status: 'error', message: msg, host, errorSide: 'local', localPath: absLocal }
   }
 
-  let finalDirName = originalDirName
+  const finalDirName = originalDirName
+  const finalRemoteBaseDir = path.posix.join(remoteParent, finalDirName)
+
   try {
-    finalDirName = await getUniqueRemoteName(sftp, remoteParent, originalDirName, true)
+    await backupRemoteEntity(sftp, finalRemoteBaseDir)
   } catch (e: any) {
     const msg = errToMessage(e)
     sendProgress(event, {
@@ -2361,7 +2452,7 @@ export async function handleDirectoryTransfer(event: any, id: string, localDir: 
       type: 'upload',
       isGroup: true,
       groupKind: 'directory',
-      remotePath: remoteParent,
+      remotePath: finalRemoteBaseDir,
       bytes: 1,
       total: 1,
       status: 'error',
@@ -2371,8 +2462,6 @@ export async function handleDirectoryTransfer(event: any, id: string, localDir: 
     activeTasks.delete(dirTaskKey)
     return { status: 'error', message: msg, host, errorSide: 'remote' }
   }
-
-  const finalRemoteBaseDir = path.posix.join(remoteParent, finalDirName)
 
   let scannedFiles = 0
   let finishedFiles = 0
@@ -2450,6 +2539,10 @@ export async function handleDirectoryTransfer(event: any, id: string, localDir: 
 
     for (const entry of entries) {
       if (cancelled) throw Object.assign(new Error('Transfer cancelled'), { __cancelled: true })
+
+      const name = entry.name
+      // Skip Python bytecode artifacts and cache directories
+      if (shouldSkipUploadEntry(name, entry.isDirectory())) continue
 
       scanCounter++
       if (scanCounter % 200 === 0) {

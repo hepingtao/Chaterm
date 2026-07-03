@@ -851,8 +851,6 @@ describe('files.vue (enhanced)', () => {
       await flushPromises()
 
       const vm = wrapper.vm as any
-      vm.toggleHidden()
-      await flushPromises()
       expect(vm.showHidden).toBe(false)
 
       // refresh with a new listing that contains a new dot-entry and a new regular entry
@@ -880,12 +878,17 @@ describe('files.vue (enhanced)', () => {
       await flushPromises()
 
       const vm = wrapper.vm as any
-      // hide
+      // default: hidden files are filtered out, but parent ".." stays visible
+      const hiddenOffNames = vm.visibleFiles.map((f: any) => f.name)
+      expect(hiddenOffNames).toContain('..')
+      expect(hiddenOffNames).not.toContain('.secret')
+
+      // toggle on: hidden files become visible, parent ".." still visible
       vm.toggleHidden()
       await flushPromises()
-      const names = vm.visibleFiles.map((f: any) => f.name)
-      expect(names).toContain('..')
-      expect(names).not.toContain('.secret')
+      const hiddenOnNames = vm.visibleFiles.map((f: any) => f.name)
+      expect(hiddenOnNames).toContain('..')
+      expect(hiddenOnNames).toContain('.secret')
 
       wrapper.unmount()
     })

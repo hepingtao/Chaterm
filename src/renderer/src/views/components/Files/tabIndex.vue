@@ -451,7 +451,7 @@ const selectedAssetForMove = ref<any>(null)
 const contextMenuVisible = ref(false)
 const contextMenuData = ref<any>(null)
 const contextMenuStyle = ref({})
-const displayMode = ref<'name' | 'ip' | 'both'>('name')
+const displayMode = ref<'name' | 'ip' | 'both'>('both')
 
 interface WorkspaceItem {
   key: string
@@ -834,11 +834,14 @@ const getDisplayText = (dataRef: any, title: string): string => {
   switch (displayMode.value) {
     case 'ip':
       return ip || title
-    case 'both':
-      if (ip && ip !== title) {
-        return `${title} (${ip})`
-      }
-      return ip || title
+    case 'both': {
+      const t = String(title ?? '')
+      const i = String(ip ?? '')
+      if (!i) return t || i
+      if (i === t || t.includes(i)) return t
+      if (i.includes(t) || i.includes('(')) return i
+      return `${t} (${i})`
+    }
     case 'name':
     default:
       return title

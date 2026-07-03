@@ -16,6 +16,10 @@ export type Host = {
   organizationUuid?: string
   assetType?: string
   /**
+   * Human-readable host name/title shown alongside the IP.
+   */
+  title?: string
+  /**
    * Dock/terminal tab id used to route commands to a specific terminal session,
    * even when that terminal is not the currently active tab/window.
    */

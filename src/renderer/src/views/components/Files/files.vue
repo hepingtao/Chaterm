@@ -105,6 +105,51 @@
           </a-space>
           <a-space>
             <div class="fs-header-right-item">
+              <a-tooltip :title="$t('files.favoriteDir')">
+                <a-dropdown @visible-change="onFavoriteDropdownVisible">
+                  <a-button
+                    type="primary"
+                    size="small"
+                    ghost
+                    @click.stop="toggleCurrentFavorite"
+                  >
+                    <template #icon>
+                      <StarFilled
+                        v-if="isCurrentFavorite"
+                        style="color: #faad14"
+                      />
+                      <StarOutlined v-else />
+                    </template>
+                  </a-button>
+                  <template #overlay>
+                    <a-menu @click="onFavoriteMenuClick">
+                      <a-menu-item
+                        v-if="favoriteDirs.length === 0"
+                        disabled
+                      >
+                        {{ $t('files.noFavorites') }}
+                      </a-menu-item>
+                      <a-menu-item
+                        v-for="fav in favoriteDirs"
+                        :key="fav.path"
+                      >
+                        <div class="fav-menu-item">
+                          <span class="fav-menu-label">{{ fav.name }}</span>
+                          <span class="fav-menu-path">{{ fav.path }}</span>
+                          <CloseOutlined
+                            class="fav-menu-remove"
+                            @click.stop="removeFavorite(fav.path)"
+                          />
+                        </div>
+                      </a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
+              </a-tooltip>
+            </div>
+          </a-space>
+          <a-space>
+            <div class="fs-header-right-item">
               <a-tooltip :title="$t('common.refresh')">
                 <a-button
                   type="primary"
@@ -511,6 +556,8 @@ import {
   RedoOutlined,
   RollbackOutlined,
   ScissorOutlined,
+  StarFilled,
+  StarOutlined,
   UploadOutlined,
   FolderOpenOutlined
 } from '@ant-design/icons-vue'
@@ -605,20 +652,32 @@ const localCurrentDirectoryInput = ref(props.currentDirectoryInput)
 const basePath = ref(props.basePath)
 const files = ref<FileRecord[]>([])
 const showHidden = ref(false)
+
+// Use a plain ref (not computed) for visibleFiles so we can update it
+// synchronously in toggleHidden, avoiding any computed-vs-render timing issues.
 const visibleFiles = ref<FileRecord[]>([])
+
+const recalcVisibleFiles = () => {
+  if (showHidden.value) {
+    visibleFiles.value = files.value
+  } else {
+    visibleFiles.value = files.value.filter((f) => f.key === '..' || !(f.name || '').startsWith('.'))
+  }
+}
+
+// Keep visibleFiles in sync when files array changes (e.g. after loadFiles)
 watch(
   [files, showHidden],
   () => {
-    if (showHidden.value) {
-      visibleFiles.value = [...files.value]
-    } else {
-      visibleFiles.value = files.value.filter((f) => f.key === '..' || !(f.name || '').startsWith('.'))
-    }
+    recalcVisibleFiles()
   },
   { immediate: true, deep: true }
 )
+
 const toggleHidden = () => {
   showHidden.value = !showHidden.value
+  // Update synchronously — don't wait for the watch callback
+  recalcVisibleFiles()
   emit('stateChange', {
     uuid: props.uuid,
     path: localCurrentDirectoryInput.value,
@@ -629,6 +688,77 @@ const loading = ref(false)
 const showErr = ref(false)
 const errTips = ref('')
 const tableRef = ref<HTMLElement | null>(null)
+
+// ---- Favorite Directories ----
+interface FavoriteDir {
+  path: string
+  name: string
+}
+
+const FAVORITE_STORAGE_PREFIX = 'chaterm:fav-dirs:'
+
+const getFavoriteStorageKey = (): string => {
+  return FAVORITE_STORAGE_PREFIX + String(props.uuid || '')
+}
+
+const favoriteDirs = ref<FavoriteDir[]>([])
+
+const loadFavorites = () => {
+  try {
+    const raw = localStorage.getItem(getFavoriteStorageKey())
+    favoriteDirs.value = raw ? JSON.parse(raw) : []
+  } catch {
+    favoriteDirs.value = []
+  }
+}
+
+const saveFavorites = () => {
+  try {
+    localStorage.setItem(getFavoriteStorageKey(), JSON.stringify(favoriteDirs.value))
+  } catch {
+    // ignore
+  }
+}
+
+const getCurrentFullPath = (): string => {
+  return basePath.value + localCurrentDirectoryInput.value
+}
+
+const isCurrentFavorite = computed(() => {
+  const cur = getCurrentFullPath()
+  return favoriteDirs.value.some((f) => f.path === cur)
+})
+
+const toggleCurrentFavorite = () => {
+  const cur = getCurrentFullPath()
+  if (!cur) return
+
+  if (isCurrentFavorite.value) {
+    removeFavorite(cur)
+    message.info(t('files.removedFromFavorites'))
+  } else {
+    const name = cur.split('/').filter(Boolean).pop() || cur
+    favoriteDirs.value.push({ path: cur, name })
+    saveFavorites()
+    message.success(t('files.addedToFavorites'))
+  }
+}
+
+const removeFavorite = (path: string) => {
+  favoriteDirs.value = favoriteDirs.value.filter((f) => f.path !== path)
+  saveFavorites()
+}
+
+const onFavoriteMenuClick = ({ key }: { key: string }) => {
+  const fav = favoriteDirs.value.find((f) => f.path === key)
+  if (!fav) return
+  loadFiles(props.uuid, fav.path)
+}
+
+const onFavoriteDropdownVisible = () => {
+  // Refresh favorites when dropdown opens
+  loadFavorites()
+}
 
 type FlexibleColumn = Partial<ColumnsType<FileRecord>[number]>
 
@@ -821,6 +951,8 @@ const loadFiles = async (uuid: string, filePath: string): Promise<void> => {
   }
 
   files.value = dirs
+  // Synchronously update visibleFiles so the table renders with correct data
+  recalcVisibleFiles()
   localCurrentDirectoryInput.value = getLoadFilePath(filePath)
 
   loading.value = false
@@ -1295,6 +1427,7 @@ onMounted(async () => {
   document.addEventListener('drop', onAnyDndFinish, true)
 
   isTeamCheck(props.uuid)
+  loadFavorites()
 
   // Debug logging
   logger.info('Files onMounted', {
@@ -2349,5 +2482,38 @@ defineExpose({
 .files-table :deep(.ant-table-body)::-webkit-scrollbar-thumb:hover,
 .files-table :deep(.ant-table-content)::-webkit-scrollbar-thumb:hover {
   background-color: var(--sb-thumb-hover, #555) !important;
+}
+
+/* Favorite directory menu items */
+.fav-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 360px;
+}
+
+.fav-menu-label {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.fav-menu-path {
+  color: var(--text-color-quaternary, #999);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.fav-menu-remove {
+  flex-shrink: 0;
+  color: var(--text-color-quaternary, #999);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.fav-menu-remove:hover {
+  color: var(--error-color, #ff4d4f);
 }
 </style>

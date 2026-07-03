@@ -266,7 +266,7 @@ describe('index.vue', () => {
     await flushPromises()
 
     const tree = (wrapper.vm as any).treeData as any[]
-    expect(tree.some((n) => n?.title === 'Local')).toBe(true)
+    expect(tree.some((n) => n?.title === 'Local (127.0.0.1)')).toBe(true)
     expect(tree.some((n) => n?.title === '10.0.0.2' && n?.class === 'active-terminal')).toBe(true)
     expect(tree.some((n) => String(n?.title).includes('decoded:') && n?.errorMsg === 'boom')).toBe(true)
     wrapper.unmount()

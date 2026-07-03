@@ -166,6 +166,7 @@ const displayTabTitle = computed(() => {
   const ipStr = String(tab.ip ?? '')
   if (ipStr) {
     if (titleStr && !titleStr.includes(ipStr) && titleStr !== ipStr) {
+      if (ipStr.includes(titleStr) || ipStr.includes('(')) return ipStr
       return `${titleStr} (${ipStr})`
     }
     return titleStr

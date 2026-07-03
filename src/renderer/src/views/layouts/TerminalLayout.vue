@@ -2828,7 +2828,11 @@ const addDockPanel = (params) => {
     const titleStr = String(params.title ?? '')
     const ipStr = String(params.ip ?? '')
     if (ipStr && titleStr && !titleStr.includes(ipStr) && titleStr !== ipStr) {
-      displayTitle = `${titleStr} (${ipStr})`
+      if (ipStr.includes(titleStr) || ipStr.includes('(')) {
+        displayTitle = ipStr
+      } else {
+        displayTitle = `${titleStr} (${ipStr})`
+      }
     } else {
       displayTitle = params.title
     }

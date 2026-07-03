@@ -1012,25 +1012,33 @@ const isJumpServerSession = (id: string) => {
 
 const getConnDisplayName = (id: string) => {
   const sid = String(id || '')
+
+  if (isLocal(sid)) {
+    return 'Local (127.0.0.1)'
+  }
+
   const [, rest = ''] = sid.split('@')
   const parts = rest.split(':')
-  let ip = parts[0] || ''
+  const ip = parts[0] || ''
 
+  let name = ''
   if (isLocalTeam(sid)) {
     const hostnameBase64 = parts[2] || ''
     try {
-      ip = Base64Util.decode(hostnameBase64)
+      name = Base64Util.decode(hostnameBase64)
     } catch {
       // ignore
     }
   }
 
-  const normalizedIp = String(ip || '').toLowerCase()
-  if (isLocal(sid) || normalizedIp === '127.0.0.1' || normalizedIp === 'localhost') {
-    ip = 'Local'
-  }
+  const n = String(name ?? '').trim()
+  const i = String(ip ?? '').trim()
+  if (!n || n === i) return i || sid
+  if (!i) return n || sid
+  if (i.includes(n) || i.includes('(')) return i
+  if (n.includes(i)) return n
 
-  return ip || sid
+  return `${n} (${i})`
 }
 
 const listUserSessions = async () => {
@@ -1834,6 +1842,35 @@ const normalizeHostArray = (input: any): any[] => {
   return out
 }
 
+const formatHostDisplayName = (name: string, ip: string): string => {
+  const n = String(name ?? '').trim()
+  const i = String(ip ?? '').trim()
+  if (!n && !i) return ''
+  if (!n || n === i) return i
+  if (!i) return n
+  if (i.includes(n) || i.includes('(')) return i
+  if (n.includes(i)) return n
+  return `${n} (${i})`
+}
+
+// Backend sometimes puts a pre-formatted "name (ip)" string in the label field.
+// These helpers recover the raw IP / name so we don't build "name (name (ip))".
+const extractIpFromDisplayLabel = (label: string): string => {
+  const s = String(label ?? '').trim()
+  const m = s.match(/\(([^)]+)\)$/)
+  if (m) return m[1].trim()
+  // If the label itself is a plain IP, use it as-is.
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(s)) return s
+  return ''
+}
+
+const extractNameFromDisplayLabel = (label: string): string => {
+  const s = String(label ?? '').trim()
+  const m = s.match(/^(.*?)\s*\(/)
+  if (m) return m[1].trim()
+  return s
+}
+
 const toHostOption = (raw: any): HostOption => {
   const childrenRaw =
     (Array.isArray(raw?.children) && raw.children) || (Array.isArray(raw?.hosts) && raw.hosts) || (Array.isArray(raw?.nodes) && raw.nodes) || []
@@ -1842,7 +1879,16 @@ const toHostOption = (raw: any): HostOption => {
 
   const uuid = String(raw?.uuid ?? raw?.assetUuid ?? raw?.asset_uuid ?? raw?.id ?? raw?.key ?? '')
   const key = String(raw?.key ?? uuid ?? raw?.id ?? raw?.ip ?? raw?.label ?? raw?.host ?? raw?.title ?? '')
-  const label = String(raw?.label ?? raw?.ip ?? raw?.host ?? raw?.title ?? raw?.name ?? key ?? '')
+  const rawName = String(raw?.title ?? raw?.name ?? raw?.hostname ?? '')
+  const rawIp = String(raw?.ip ?? raw?.asset_ip ?? raw?.host ?? '')
+  const labelFallback = String(raw?.label ?? '')
+
+  const ip = rawIp || extractIpFromDisplayLabel(labelFallback)
+  const name = rawName || extractNameFromDisplayLabel(labelFallback) || labelFallback
+  const fallbackLabel = labelFallback || rawIp || raw?.host || raw?.title || raw?.name || key || ''
+
+  const label = formatHostDisplayName(name, ip) || fallbackLabel
+
   const connect = String(
     raw?.connect ?? raw?.connection ?? raw?.organizationId ?? raw?.organization_id ?? raw?.orgId ?? raw?.org_id ?? raw?.type ?? ''
   )
@@ -1850,7 +1896,6 @@ const toHostOption = (raw: any): HostOption => {
   const organizationUuid = String(raw?.organizationUuid ?? raw?.organization_uuid ?? '')
   const organizationId = String(raw?.organizationId ?? raw?.organization_id ?? organizationUuid ?? '')
   const assetType = String(raw?.assetType ?? raw?.asset_type ?? '')
-  const ip = String(raw?.ip ?? raw?.asset_ip ?? raw?.host ?? '')
   const port = raw?.port ? Number(raw.port) : undefined
   const username = raw?.username ? String(raw.username) : undefined
 
@@ -1866,13 +1911,13 @@ const toHostOption = (raw: any): HostOption => {
     selectable,
     organizationUuid,
     organizationId,
-    title: String(raw?.title ?? label),
-    isLocalHost: label === '127.0.0.1' || label === 'localhost',
+    title: String(raw?.title ?? fallbackLabel),
+    isLocalHost: ip === '127.0.0.1' || ip === 'localhost',
     assetType,
     children,
     childrenCount: children.length,
     ip,
-    host: ip || label,
+    host: ip || rawIp || raw?.host || '',
     port,
     username
   }
@@ -1893,7 +1938,7 @@ const fetchHostOptions = async (search: string) => {
     // Local host option (only show when it matches search, same as your context popup)
     const localHostOption: HostOption = {
       key: 'localhost',
-      label: '127.0.0.1',
+      label: formatHostDisplayName(String(t('ai.localhost')), '127.0.0.1'),
       value: 'localhost',
       uuid: 'localhost',
       connect: 'localhost',
@@ -2074,11 +2119,12 @@ const onHostClick = async (item: HostOption) => {
     await refreshAfterSelect(localId)
     return
   }
-  // Convert to payload expected by connectSftpFromAssetNode
+  // Convert to payload expected by connectSftpFromAssetNode.
+  // Use the raw IP only; item.label may already be a formatted "name (ip)" string.
   const node = {
     uuid: item.uuid || item.value,
-    ip: item.ip || item.label,
-    host: item.host || item.label,
+    ip: item.ip || extractIpFromDisplayLabel(item.label) || '',
+    host: item.host || item.ip || extractIpFromDisplayLabel(item.label) || '',
     username: item.username,
     port: item.port,
     organizationId: item.organizationId || item.connect || item.organizationUuid,

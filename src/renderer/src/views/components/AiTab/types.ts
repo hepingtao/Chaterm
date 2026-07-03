@@ -118,6 +118,7 @@ export interface TreeHostOption {
   key: string
   label: string
   title?: string
+  ip?: string
   type: HostItemType
   selectable: boolean
   uuid: string
