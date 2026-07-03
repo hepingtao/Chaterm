@@ -39,7 +39,7 @@ export type SftpConnectResult = { status: string; message: string }
 
 const activeTasks = new Map<string, { read?: any; write?: any; localPath?: string; cancel?: () => void }>()
 // Tracks JumpServer connections created by SFTP itself, not by the SSH connect flow.
-const sftpOwnedJumpServerConnections = new Map<string, Client>()
+export const sftpOwnedJumpServerConnections = new Map<string, Client>()
 // Stores shell streams opened only to bootstrap SFTP-owned JumpServer sessions.
 const sftpOwnedJumpServerStreams = new Map<string, any>()
 
@@ -281,67 +281,15 @@ export const registerFileSystemHandlers = () => {
       let sftp = await ensureSftpReady(event, id)
 
       try {
-        const list = await sftpReaddirWithTimeout(sftp, reqPath, 10000)
-
-        // Debug: log raw readdir results to help diagnose hidden-file issues.
-        // If the SFTP server/proxy (e.g. JumpServer) strips dot files, they
-        // won't appear here — confirming the issue is server-side, not client-side.
-        const rawNames = (list || []).map((i: any) => i?.filename).filter(Boolean)
-        const dotFiles = rawNames.filter((n: string) => n.startsWith('.'))
-        homeDebug('[sftp:list] readdir result', {
-          path: reqPath,
-          total: rawNames.length,
-          dotFileCount: dotFiles.length,
-          dotFiles: dotFiles.slice(0, 20),
-          allNames: rawNames.slice(0, 50)
-        })
-
-        return (list || []).map((item) => {
-          const name = item.filename
-          const attrs = item.attrs
-          const prefix = reqPath === '/' ? '/' : reqPath + '/'
-
-          return {
-            name,
-            path: prefix + name,
-            isDir: attrs.isDirectory(),
-            isLink: attrs.isSymbolicLink(),
-            mode: '0' + (attrs.mode & 0o777).toString(8),
-            modTime: new Date(attrs.mtime * 1000).toISOString().replace('T', ' ').slice(0, 19),
-            size: attrs.size
-          }
-        })
+        const list = await readSftpDirWithFallback(sftp, reqPath, id, 'readdir result')
+        return formatSftpList(list, reqPath)
       } catch {
         // Retry once with a fresh SFTP session if the current handle fails mid-request.
         await closeSftpOnly(String(id))
         sftp = await ensureSftpReady(event, id)
 
-        const list = await sftpReaddirWithTimeout(sftp, reqPath, 10000)
-
-        const rawNames = (list || []).map((i: any) => i?.filename).filter(Boolean)
-        const dotFiles = rawNames.filter((n: string) => n.startsWith('.'))
-        homeDebug('[sftp:list] readdir result (retry)', {
-          path: reqPath,
-          total: rawNames.length,
-          dotFileCount: dotFiles.length,
-          dotFiles: dotFiles.slice(0, 20)
-        })
-
-        return (list || []).map((item) => {
-          const name = item.filename
-          const attrs = item.attrs
-          const prefix = reqPath === '/' ? '/' : reqPath + '/'
-
-          return {
-            name,
-            path: prefix + name,
-            isDir: attrs.isDirectory(),
-            isLink: attrs.isSymbolicLink(),
-            mode: '0' + (attrs.mode & 0o777).toString(8),
-            modTime: new Date(attrs.mtime * 1000).toISOString().replace('T', ' ').slice(0, 19),
-            size: attrs.size
-          }
-        })
+        const list = await readSftpDirWithFallback(sftp, reqPath, id, 'readdir result (retry)')
+        return formatSftpList(list, reqPath)
       }
     } catch (err: any) {
       const errorCode = err?.code
@@ -476,6 +424,182 @@ export const registerFileSystemHandlers = () => {
 
 const isLocalId = (id: string) => id.includes('localhost@127.0.0.1:local:')
 const toPosix = (p: string) => String(p || '').replace(/\\/g, '/')
+
+// ssh2 keeps socket state on the client instance, so this is the cheapest health signal we can read.
+const isClientSocketAlive = (conn?: Client) => {
+  const client = conn as any
+  if (!client) return false
+
+  const sock = client._sock
+  if (!sock) return true
+
+  return !sock.destroyed && !sock.closed
+}
+
+const isJumpServerId = (id: string) => id.includes(':local:') || id.includes('local-team')
+
+const shellSingleQuote = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`
+
+// Find the underlying SSH client for an SFTP session. JumpServer compound-username
+// SFTP connections are stored separately from normal SSH connections because they
+// connect directly to the target asset via the JumpServer SFTP port (2222).
+export const findSshConnForSftp = (id: string): Client | undefined => {
+  if (!id) return undefined
+
+  if (isJumpServerId(id)) {
+    const direct = sftpOwnedJumpServerConnections.get(id)
+    if (direct && isClientSocketAlive(direct)) return direct
+
+    const prefix = id.substring(0, id.lastIndexOf(':') + 1)
+    for (const [existingId, existingConn] of sftpOwnedJumpServerConnections.entries()) {
+      const sessionPart = existingId.substring(existingId.lastIndexOf(':') + 1)
+      if (existingId.startsWith(prefix) && sessionPart.startsWith('files-') && isClientSocketAlive(existingConn)) {
+        return existingConn
+      }
+    }
+    for (const [existingId, existingConn] of sftpOwnedJumpServerConnections.entries()) {
+      if (existingId.startsWith(prefix) && isClientSocketAlive(existingConn)) return existingConn
+    }
+  }
+
+  const direct = sshConnections.get(id)
+  if (direct && isClientSocketAlive(direct)) return direct
+
+  const prefix = id.substring(0, id.lastIndexOf(':') + 1)
+  for (const [existingId, existingConn] of sshConnections.entries()) {
+    const sessionPart = existingId.substring(existingId.lastIndexOf(':') + 1)
+    if (existingId.startsWith(prefix) && sessionPart.startsWith('files-') && isClientSocketAlive(existingConn)) {
+      return existingConn
+    }
+  }
+  for (const [existingId, existingConn] of sshConnections.entries()) {
+    if (existingId.startsWith(prefix) && isClientSocketAlive(existingConn)) return existingConn
+  }
+
+  return undefined
+}
+
+// Wrap raw ssh2 stat attrs so the rest of the code can call isDirectory()/isSymbolicLink().
+export const wrapSftpAttrs = (st: any): any => {
+  return {
+    ...st,
+    isDirectory: () => isRemoteDir(st),
+    isSymbolicLink: () => (st?.mode & 0o170000) === 0o120000,
+    isFile: () => (st?.mode & 0o170000) === 0o100000
+  }
+}
+
+export const execListDirViaSsh = async (conn: any, reqPath: string, timeout = 10000): Promise<string[]> => {
+  const cmd = `ls -a -1 -- ${shellSingleQuote(reqPath)}`
+  const promise = new Promise<string[]>((resolve) => {
+    let settled = false
+    const safeResolve = (names: string[]) => {
+      if (settled) return
+      settled = true
+      resolve(names)
+    }
+
+    try {
+      conn.exec(cmd, (err: any, stream: any) => {
+        if (err) {
+          homeDebug('[sftp:list] exec fallback error', { path: reqPath, error: err.message })
+          return safeResolve([])
+        }
+
+        const chunks: Buffer[] = []
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk))
+        stream.stderr?.on('data', (chunk: Buffer) => {
+          homeDebug('[sftp:list] exec fallback stderr', { path: reqPath, data: chunk.toString('utf8') })
+        })
+        stream.on('close', () => {
+          const stdout = Buffer.concat(chunks).toString('utf8')
+          const names = stdout
+            .split('\n')
+            .map((line) => line.trim())
+            .filter((name) => name && name !== '.' && name !== '..')
+          safeResolve(names)
+        })
+      })
+    } catch (e: any) {
+      homeDebug('[sftp:list] exec fallback exception', { path: reqPath, error: e.message })
+      safeResolve([])
+    }
+  })
+
+  return withTimeout(promise, timeout, `exec list timeout: ${reqPath}`).catch((e) => {
+    homeDebug('[sftp:list] exec fallback timeout', { path: reqPath, error: e.message })
+    return []
+  })
+}
+
+export const enrichReaddirWithExecFallback = async (conn: any, sftp: any, reqPath: string, list: any[]): Promise<any[]> => {
+  const execNames = await execListDirViaSsh(conn, reqPath)
+  if (!execNames.length) return list
+
+  const existing = new Set(list.map((i) => i?.filename).filter(Boolean))
+  const prefix = reqPath === '/' ? '/' : reqPath + '/'
+  let added = 0
+
+  for (const name of execNames) {
+    if (existing.has(name)) continue
+    try {
+      const itemPath = prefix + name
+      const st = await sftpStatWithTimeout(sftp, itemPath, 5000)
+      list.push({ filename: name, attrs: wrapSftpAttrs(st) })
+      added++
+    } catch (e: any) {
+      homeDebug('[sftp:list] exec fallback stat failed', { path: prefix + name, error: e?.message || String(e) })
+    }
+  }
+
+  homeDebug('[sftp:list] exec fallback merged', { path: reqPath, execTotal: execNames.length, added })
+  return list
+}
+
+export const readSftpDirWithFallback = async (sftp: any, reqPath: string, id: string, label = 'readdir result'): Promise<any[]> => {
+  const list = await sftpReaddirWithTimeout(sftp, reqPath, 10000)
+  const rawNames = (list || []).map((i: any) => i?.filename).filter(Boolean)
+  const dotFiles = rawNames.filter((n: string) => n.startsWith('.'))
+
+  homeDebug(`[sftp:list] ${label}`, {
+    path: reqPath,
+    total: rawNames.length,
+    dotFileCount: dotFiles.length,
+    dotFiles: dotFiles.slice(0, 20),
+    allNames: rawNames.slice(0, 50)
+  })
+
+  if (dotFiles.length === 0) {
+    const conn = findSshConnForSftp(id)
+    if (conn) {
+      try {
+        return await enrichReaddirWithExecFallback(conn, sftp, reqPath, list || [])
+      } catch (e: any) {
+        homeDebug('[sftp:list] exec fallback failed', { path: reqPath, error: e?.message || String(e) })
+      }
+    }
+  }
+
+  return list || []
+}
+
+const formatSftpList = (list: any[], reqPath: string) => {
+  return (list || []).map((item) => {
+    const name = item.filename
+    const attrs = item.attrs
+    const prefix = reqPath === '/' ? '/' : reqPath + '/'
+
+    return {
+      name,
+      path: prefix + name,
+      isDir: attrs.isDirectory(),
+      isLink: attrs.isSymbolicLink(),
+      mode: '0' + (attrs.mode & 0o777).toString(8),
+      modTime: new Date(attrs.mtime * 1000).toISOString().replace('T', ' ').slice(0, 19),
+      size: attrs.size
+    }
+  })
+}
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
 const fmtTime = (d: Date) =>
@@ -2957,17 +3081,6 @@ const findReusableSftpConn = (connectionInfo: any, skippedConn?: Client): Client
   }
 
   return undefined
-}
-
-// ssh2 keeps socket state on the client instance, so this is the cheapest health signal we can read.
-const isClientSocketAlive = (conn?: Client) => {
-  const client = conn as any
-  if (!client) return false
-
-  const sock = client._sock
-  if (!sock) return true
-
-  return !sock.destroyed && !sock.closed
 }
 
 // JumpServer reuse is read-only here: dead connect-side records are ignored, not deleted.
