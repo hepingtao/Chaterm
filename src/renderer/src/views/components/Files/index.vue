@@ -525,6 +525,7 @@ const logger = createRendererLogger('files')
 type PanelCache = {
   path: string
   ts: number
+  showHidden?: boolean
 }
 
 type TermFsExpose = { refresh?: () => void | Promise<void> }
@@ -732,11 +733,19 @@ const buildSftpConnDataForFiles = async (node: any, side: PanelSide) => {
     remoteHomePath: node?.assetTitlePath || ''
   }
 
-  // Build compound username for JumpServer SFTP: <jumpserver_user>@<asset_hostname>@<asset_ip>
+  // Build compound username for JumpServer SFTP: <user>@<system_name>@<asset_ip>
   // This tells JumpServer's SFTP service (port 2222) to route directly to the target asset,
   // giving access to the asset's real filesystem instead of the bastion's virtual FS.
-  if (connSshType === 'jumpserver' && connUsername && connHostname && connHost) {
-    connData.sftpCompoundUsername = `${connUsername}@${connHostname}@${connHost}`
+  // system_name is derived from the bastion domain (e.g., jump.itouchtv.cn -> itouchtv)
+  // If bastion is stored as IP, fall back to hardcoded 'itouchtv'.
+  if (connSshType === 'jumpserver' && connUsername && connConnectHost && connHost) {
+    const bastionHost = connConnectHost
+    const domainParts = bastionHost.split('.')
+    const isIP = domainParts.length === 4 && domainParts.every((p) => /^\d+$/.test(p))
+    const systemName = !isIP && domainParts.length >= 2 ? domainParts[domainParts.length - 2] : 'itouchtv'
+    if (systemName && connHost) {
+      connData.sftpCompoundUsername = `${connUsername}@${systemName}@${connHost}`
+    }
   }
 
   // Store JumpServer SFTP info for path resolution
@@ -754,7 +763,9 @@ const buildSftpConnDataForFiles = async (node: any, side: PanelSide) => {
     connSshType,
     connHostname,
     remoteHomePath: connData.remoteHomePath,
-    assetTitlePath: node?.assetTitlePath
+    assetTitlePath: node?.assetTitlePath,
+    sftpCompoundUsername: connData.sftpCompoundUsername,
+    realAssetUuid: connData.realAssetUuid
   })
   if (connSshType === 'jumpserver') {
     jumpserverSftpInfo.set(connId, {
@@ -993,6 +1004,11 @@ const resolveRawId = (id: string) => {
 }
 const isLocalTeam = (id: string) => String(id || '').includes('local-team')
 const isLocal = (id: string) => String(id || '').includes('localhost@127.0.0.1:local')
+// Detect JumpServer sessions: contains '@' and ':local:' or ':local-team:' but is NOT the local filesystem
+const isJumpServerSession = (id: string) => {
+  const sid = String(id || '')
+  return !isLocal(sid) && sid.includes('@') && (sid.includes(':local:') || sid.includes(':local-team:'))
+}
 
 const getConnDisplayName = (id: string) => {
   const sid = String(id || '')
@@ -1514,7 +1530,9 @@ const ensureHomeFor = async (id: string) => {
   if (!sid || isLocal(sid)) return
   const existing = remoteHomeMap.get(sid)
   api.sftpDebugLog('ensureHomeFor', { sid, existing })
-  if (existing && existing.includes('/home/')) return
+  // Only skip if HOME is a real asset path (starts with /home/),
+  // not a bastion virtual FS path like /A100/.../home/itouchtv
+  if (existing && existing.startsWith('/home/')) return
 
   // First fetch — may return bastion root while backend probes async.
   try {
@@ -1526,16 +1544,16 @@ const ensureHomeFor = async (id: string) => {
     remoteHomeMap.set(sid, '/')
   }
 
-  // If not yet resolved to asset HOME, retry — the backend async probe may
+  // If not yet resolved to real asset HOME, retry — the backend async probe may
   // have updated sftpHomeMap by then.
-  if (!remoteHomeMap.get(sid)?.includes('/home/')) {
+  if (!remoteHomeMap.get(sid)?.startsWith('/home/')) {
     for (let i = 0; i < 4; i++) {
       await new Promise((r) => setTimeout(r, 3000))
-      if (remoteHomeMap.get(sid)?.includes('/home/')) return
+      if (remoteHomeMap.get(sid)?.startsWith('/home/')) return
       try {
         const retryHome = await api.sftpGetHome(sid)
         api.sftpDebugLog('ensureHomeFor retry', { sid, attempt: i + 1, home: retryHome })
-        if (retryHome?.includes('/home/')) {
+        if (retryHome?.startsWith('/home/')) {
           remoteHomeMap.set(sid, retryHome)
           return
         }
@@ -1733,8 +1751,14 @@ const hoveredActive = ref<string | null>(null)
 
 const confirmPickActive = async (val) => {
   api.sftpDebugLog('confirmPickActive entry', { val, isLocal: isLocal(val) })
+  const rawId = resolveRawId(val)
   if (!isLocal(val)) {
-    clearCachedPath(resolveRawId(val))
+    clearCachedPath(rawId)
+    // For JumpServer sessions: clear cached HOME so get-home triggers probeAsync.
+    // Don't reset SFTP handle to avoid OTP prompt on reconnect.
+    if (isJumpServerSession(rawId)) {
+      remoteHomeMap.delete(rawId)
+    }
   }
   if (addConnTargetSide.value === 'left') {
     selectedLeftUuid.value = val
@@ -2222,7 +2246,8 @@ const stateChange = (s: any) => {
 
   entry.cache = {
     path: String(s.path || ''),
-    ts: Date.now()
+    ts: Date.now(),
+    showHidden: s.showHidden
   }
 
   FS_CACHE.set(key, entry)

@@ -791,19 +791,19 @@ describe('files.vue (enhanced)', () => {
       { name: 'docs', path: '/home/u/docs', isDir: true, mode: '0755', isLink: false, modTime: '', size: 0 }
     ]
 
-    it('defaults to showing hidden files (showHidden = true)', async () => {
+    it('defaults to hiding hidden files (showHidden = false)', async () => {
       api.sshSftpList.mockResolvedValueOnce(dotFilesListing as any)
       const wrapper = mountView({ currentDirectoryInput: '/home/u' })
       await flushPromises()
 
       const vm = wrapper.vm as any
-      expect(vm.showHidden).toBe(true)
+      expect(vm.showHidden).toBe(false)
 
       const names = vm.visibleFiles.map((f: any) => f.name)
-      // includes parent ("..") + dot entries + regular entries
+      // includes parent ("..") + regular entries, but NOT dot entries
       expect(names).toContain('..')
-      expect(names).toContain('.bashrc')
-      expect(names).toContain('.ssh')
+      expect(names).not.toContain('.bashrc')
+      expect(names).not.toContain('.ssh')
       expect(names).toContain('notes.txt')
       expect(names).toContain('docs')
 
@@ -817,30 +817,30 @@ describe('files.vue (enhanced)', () => {
 
       const vm = wrapper.vm as any
 
-      // hide hidden
+      // show hidden (toggle from default false to true)
       vm.toggleHidden()
       await flushPromises()
-      expect(vm.showHidden).toBe(false)
+      expect(vm.showHidden).toBe(true)
 
-      const hiddenOffNames = vm.visibleFiles.map((f: any) => f.name)
-      expect(hiddenOffNames).toContain('..')
-      expect(hiddenOffNames).toContain('docs')
-      expect(hiddenOffNames).toContain('notes.txt')
-      expect(hiddenOffNames).not.toContain('.bashrc')
-      expect(hiddenOffNames).not.toContain('.ssh')
+      const hiddenOnNames = vm.visibleFiles.map((f: any) => f.name)
+      expect(hiddenOnNames).toContain('..')
+      expect(hiddenOnNames).toContain('docs')
+      expect(hiddenOnNames).toContain('notes.txt')
+      expect(hiddenOnNames).toContain('.bashrc')
+      expect(hiddenOnNames).toContain('.ssh')
 
       // underlying files array is NOT mutated
       const rawNames = vm.files.map((f: any) => f.name)
       expect(rawNames).toContain('.bashrc')
       expect(rawNames).toContain('.ssh')
 
-      // toggle back on
+      // toggle back off
       vm.toggleHidden()
       await flushPromises()
-      expect(vm.showHidden).toBe(true)
+      expect(vm.showHidden).toBe(false)
       const restored = vm.visibleFiles.map((f: any) => f.name)
-      expect(restored).toContain('.bashrc')
-      expect(restored).toContain('.ssh')
+      expect(restored).not.toContain('.bashrc')
+      expect(restored).not.toContain('.ssh')
 
       wrapper.unmount()
     })

@@ -1815,6 +1815,7 @@ const connectSSH = async (_opts?: { isAutoReconnect?: boolean }) => {
         const connData: any = {
           id: connectionId.value, // Session ID (unique for each tab)
           assetUuid: jumpserverUuid, // JumpServer UUID (for connection pool reuse)
+          realAssetUuid: assetInfo?.realAssetUuid || props.connectData.uuid, // Actual asset UUID for SFTP compound username
           organizationUuid: fallbackOrgUuid,
           host: connConnectHost,
           port: connPort,
