@@ -1491,7 +1491,13 @@ export default {
     remainingTime: '剩余时间',
     confirm: '确认',
     cancel: '取消',
-    setupGlobalListeners: '设置全局 MFA 监听器'
+    setupGlobalListeners: '设置全局 MFA 监听器',
+    saveOtpForAutoFill: '保存密钥以自动填充验证码',
+    cancelSaveOtp: '取消保存',
+    otpSecretPlaceholder: '输入 OTP 密钥 (Base32)',
+    save: '保存',
+    saving: '保存中...',
+    otpSecretSavedHint: '密钥已保存，下次连接将自动填充验证码'
   },
   userSelection: {
     title: '选择用户账号',

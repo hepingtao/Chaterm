@@ -1506,7 +1506,13 @@ export default {
     remainingTime: 'Tempo restante',
     confirm: 'Confirmar',
     cancel: 'Cancelar',
-    setupGlobalListeners: 'Configurando ouvintes MFA globais'
+    setupGlobalListeners: 'Configurando ouvintes MFA globais',
+    saveOtpForAutoFill: 'Salvar segredo para preenchimento automático',
+    cancelSaveOtp: 'Cancelar',
+    otpSecretPlaceholder: 'Digite o segredo OTP (Base32)',
+    save: 'Salvar',
+    saving: 'Salvando...',
+    otpSecretSavedHint: 'Segredo salvo. Conexões futuras preencherão o código automaticamente.'
   },
   userSelection: {
     title: 'Selecionar conta de usuário',

@@ -83,6 +83,7 @@ import { setupInteractionIpcHandlers } from './agent/services/interaction-detect
 import type { WebviewMessage } from '@shared/WebviewMessage'
 import type { SkillMetadata } from '@shared/skills'
 import { registerFileSystemHandlers } from './ssh/sftpTransfer'
+import { addOtpSecret, removeOtpSecret, listOtpHosts, generateOtpForHost, hasOtpSecret } from './ssh/otp/otpStore'
 import { initLogging, logRendererCrash } from '@logging'
 import { parseXshellWakeupFromArgv, redactXshellWakeupForLog, type XshellWakeupPayload } from './integrations/xshellWakeup'
 
@@ -2741,6 +2742,58 @@ ipcMain.handle('key-chain-local-update', async (_, data) => {
   }
 })
 
+// ===== OTP secret management =====
+ipcMain.handle('otp:add-secret', async (_, data) => {
+  try {
+    const { host, secret } = data
+    await addOtpSecret(host, secret)
+    return { success: true }
+  } catch (error) {
+    logger.error('Failed to add OTP secret', { error: error })
+    return { success: false, message: error instanceof Error ? error.message : String(error) }
+  }
+})
+
+ipcMain.handle('otp:remove-secret', async (_, data) => {
+  try {
+    const { host } = data
+    const removed = removeOtpSecret(host)
+    return { success: removed }
+  } catch (error) {
+    logger.error('Failed to remove OTP secret', { error: error })
+    return { success: false }
+  }
+})
+
+ipcMain.handle('otp:list-hosts', async () => {
+  try {
+    return listOtpHosts()
+  } catch (error) {
+    logger.error('Failed to list OTP hosts', { error: error })
+    return []
+  }
+})
+
+ipcMain.handle('otp:get-code', async (_, data) => {
+  try {
+    const { host } = data
+    return await generateOtpForHost(host)
+  } catch (error) {
+    logger.error('Failed to generate OTP code', { error: error })
+    return null
+  }
+})
+
+ipcMain.handle('otp:has-secret', async (_, data) => {
+  try {
+    const { host } = data
+    return hasOtpSecret(host)
+  } catch (error) {
+    logger.error('Failed to check OTP secret', { error: error })
+    return false
+  }
+})
+
 ipcMain.handle('chaterm-connect-asset-info', async (_, data) => {
   try {
     const { uuid, organizationUuid, ip } = data
@@ -2888,11 +2941,36 @@ ipcMain.handle('refresh-organization-assets', async (event, data) => {
 
     // Create two-factor authentication handler for interaction with renderer process
     const keyboardInteractiveHandler = async (prompts: any[], finish: (responses: string[]) => void) => {
+      // Try to auto-fill OTP from the secret store before showing the dialog
+      const host = jumpServerConfig?.host
+      if (host) {
+        try {
+          const otpCode = await generateOtpForHost(host)
+          if (otpCode) {
+            logger.info('Auto-filling OTP from saved secret for refresh-organization-assets', {
+              event: 'ssh.keyboard-interactive.otp-autofill',
+              connectionId,
+              host
+            })
+            finish([otpCode])
+            return
+          }
+        } catch (otpError) {
+          logger.warn('Failed to auto-fill OTP, falling back to manual input', {
+            event: 'ssh.keyboard-interactive.otp-autofill.failed',
+            connectionId,
+            host,
+            error: otpError instanceof Error ? otpError.message : String(otpError)
+          })
+        }
+      }
+
       return new Promise<void>((resolve, reject) => {
         // Send two-factor authentication request to renderer process
         event.sender.send('ssh:keyboard-interactive-request', {
           id: connectionId,
-          prompts: prompts.map((p) => p.prompt)
+          prompts: prompts.map((p) => p.prompt),
+          host: host || null
         })
 
         // Set timeout

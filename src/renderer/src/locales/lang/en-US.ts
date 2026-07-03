@@ -1513,7 +1513,13 @@ export default {
     remainingTime: 'Remaining time',
     confirm: 'Confirm',
     cancel: 'Cancel',
-    setupGlobalListeners: 'Setting up global MFA listeners'
+    setupGlobalListeners: 'Setting up global MFA listeners',
+    saveOtpForAutoFill: 'Save secret for auto-fill',
+    cancelSaveOtp: 'Cancel',
+    otpSecretPlaceholder: 'Enter OTP secret (Base32)',
+    save: 'Save',
+    saving: 'Saving...',
+    otpSecretSavedHint: 'Secret saved. Future connections will auto-fill the code.'
   },
   userSelection: {
     title: 'Select User Account',

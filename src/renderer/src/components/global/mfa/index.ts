@@ -7,14 +7,21 @@ export {
   otpPrompt,
   otpCode,
   currentOtpId,
+  currentOtpHost,
   otpTimeRemaining,
   otpAttempts,
+  showSaveOtpSection,
+  otpSecretInput,
+  savingOtpSecret,
+  otpSecretSaved,
   handleOtpRequest,
   handleOtpTimeout,
   handleOtpError,
   submitOtpCode,
   cancelOtp,
-  resetOtpDialog
+  resetOtpDialog,
+  toggleSaveOtpSection,
+  saveOtpSecret
 } from './mfaState'
 
 const logger = createRendererLogger('mfa')

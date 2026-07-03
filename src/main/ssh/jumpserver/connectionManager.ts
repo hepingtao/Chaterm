@@ -273,7 +273,7 @@ const attemptJumpServerConnection = async (
           )
         }
 
-        await handleJumpServerKeyboardInteractive(event, connectionId, prompts, finish)
+        await handleJumpServerKeyboardInteractive(event, connectionId, prompts, finish, connectionInfo.host)
       } catch (err) {
         sendStatusUpdate('Two-factor authentication failed', 'error', 'ssh.jumpserver.mfaFailed')
         conn.end()

@@ -1514,7 +1514,13 @@ export default {
     remainingTime: 'Temps restant',
     confirm: 'Confirmer',
     cancel: 'Annuler',
-    setupGlobalListeners: 'Configuration des écouteurs MFA globaux'
+    setupGlobalListeners: 'Configuration des écouteurs MFA globaux',
+    saveOtpForAutoFill: 'Enregistrer le secret pour le remplissage automatique',
+    cancelSaveOtp: 'Annuler',
+    otpSecretPlaceholder: 'Saisir le secret OTP (Base32)',
+    save: 'Enregistrer',
+    saving: 'Enregistrement...',
+    otpSecretSavedHint: 'Secret enregistré. Les futures connexions rempliront automatiquement le code.'
   },
   userSelection: {
     title: 'Sélectionner le compte utilisateur',

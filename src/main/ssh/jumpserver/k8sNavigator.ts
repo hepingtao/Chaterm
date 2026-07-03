@@ -140,7 +140,7 @@ function connectBastion(config: BastionConnConfig, options?: BastionConnectOptio
 
       try {
         const requestId = options.mfaRequestId || `k8s-sync-${Date.now()}`
-        await handleJumpServerKeyboardInteractive(options.mfaEvent, requestId, prompts, finish)
+        await handleJumpServerKeyboardInteractive(options.mfaEvent, requestId, prompts, finish, config.host)
       } catch (err) {
         conn.end()
         reject(err as Error)

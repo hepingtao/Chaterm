@@ -1084,6 +1084,13 @@ const api = {
     return () => ipcRenderer.removeListener('ssh:keyboard-interactive-result', listener)
   },
 
+  // OTP secret management
+  otpAddSecret: (host: string, secret: string) => ipcRenderer.invoke('otp:add-secret', { host, secret }),
+  otpRemoveSecret: (host: string) => ipcRenderer.invoke('otp:remove-secret', { host }),
+  otpListHosts: () => ipcRenderer.invoke('otp:list-hosts'),
+  otpGetCode: (host: string) => ipcRenderer.invoke('otp:get-code', { host }),
+  otpHasSecret: (host: string) => ipcRenderer.invoke('otp:has-secret', { host }),
+
   // JumpServer user selection
   onUserSelectionRequest: (callback) => {
     const listener = (_event, data) => {

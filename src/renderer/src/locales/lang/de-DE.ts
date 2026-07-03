@@ -1511,7 +1511,13 @@ export default {
     remainingTime: 'Verbleibende Zeit',
     confirm: 'Bestätigen',
     cancel: 'Abbrechen',
-    setupGlobalListeners: 'Globale MFA-Listener einrichten'
+    setupGlobalListeners: 'Globale MFA-Listener einrichten',
+    saveOtpForAutoFill: 'Geheimnis für automatische Eingabe speichern',
+    cancelSaveOtp: 'Abbrechen',
+    otpSecretPlaceholder: 'OTP-Geheimnis eingeben (Base32)',
+    save: 'Speichern',
+    saving: 'Speichern...',
+    otpSecretSavedHint: 'Geheimnis gespeichert. Zukünftige Verbindungen füllen den Code automatisch aus.'
   },
   userSelection: {
     title: 'Benutzerkonto auswählen',

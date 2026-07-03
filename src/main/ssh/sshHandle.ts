@@ -56,6 +56,7 @@ import { getAlgorithmsByAssetType } from './algorithms'
 import { connectBastionByType, shellBastionSession, resizeBastionSession, writeBastionSession, disconnectBastionSession } from './bastionPlugin'
 import { shouldSkipPostConnectProbe } from './postConnectProbePolicy'
 import { sftpConnectionInfoMap } from './sftpTransfer'
+import { generateOtpForHost } from './otp/otpStore'
 
 // Maximum buffer size before forcing an immediate flush (prevents unbounded growth during bulk output)
 const MAX_BUFFER_SIZE = 64 * 1024 // 64KB
@@ -838,85 +839,135 @@ export const releaseReusableSshSession = (poolKey: string, sessionId: string) =>
   }
 }
 
-export const handleRequestKeyboardInteractive = (event, id, prompts, finish) => {
-  return new Promise((_resolve, reject) => {
-    // Get current retry count
-    const attemptCount = KeyboardInteractiveAttempts.get(id) || 0
+export const handleRequestKeyboardInteractive = (event, id, prompts, finish, host?: string) => {
+  return new Promise<void>((_resolve, reject) => {
+    ;(async () => {
+      // Get current retry count
+      const attemptCount = KeyboardInteractiveAttempts.get(id) || 0
 
-    // Check if maximum retry attempts exceeded
-    if (attemptCount >= MaxKeyboardInteractiveAttempts) {
-      KeyboardInteractiveAttempts.delete(id)
-      // Send final failure event
-      event.sender.send('ssh:keyboard-interactive-result', {
-        id,
-        attempts: attemptCount,
-        status: 'failed',
-        final: true
-      })
-      reject(new Error('Maximum authentication attempts reached'))
-      return
-    }
-
-    // Set retry count
-    KeyboardInteractiveAttempts.set(id, attemptCount + 1)
-
-    // Send MFA request to frontend
-    event.sender.send('ssh:keyboard-interactive-request', {
-      id,
-      prompts: prompts.map((p) => p.prompt)
-    })
-
-    // Set timeout
-    const timeoutId = setTimeout(() => {
-      // Remove listener
-      ipcMain.removeAllListeners(`ssh:keyboard-interactive-response:${id}`)
-      ipcMain.removeAllListeners(`ssh:keyboard-interactive-cancel:${id}`)
-
-      // Cancel authentication
-      finish([])
-      KeyboardInteractiveAttempts.delete(id)
-      event.sender.send('ssh:keyboard-interactive-timeout', { id })
-      reject(new Error('Authentication timed out, please try connecting again'))
-    }, KeyboardInteractiveTimeout)
-
-    // Listen for user response
-    ipcMain.once(`ssh:keyboard-interactive-response:${id}`, (_evt, responses) => {
-      clearTimeout(timeoutId) // Clear timeout timer
-      finish(responses)
-
-      // Listen for connection status changes to determine verification result
-      const statusHandler = (status) => {
-        if (status.isVerified) {
-          // Verification successful
-          keyboardInteractiveOpts.set(id, responses)
-          KeyboardInteractiveAttempts.delete(id)
-          event.sender.send('ssh:keyboard-interactive-result', {
-            id,
-            status: 'success'
-          })
-        } else {
-          // Verification failed
-          const currentAttempts = KeyboardInteractiveAttempts.get(id) || 0
-          event.sender.send('ssh:keyboard-interactive-result', {
-            id,
-            attempts: currentAttempts,
-            status: 'failed'
-          })
-          // SSH connection will automatically retrigger keyboard-interactive event for retry
-        }
-        connectionEvents.removeListener(`connection-status-changed:${id}`, statusHandler)
+      // Check if maximum retry attempts exceeded
+      if (attemptCount >= MaxKeyboardInteractiveAttempts) {
+        KeyboardInteractiveAttempts.delete(id)
+        // Send final failure event
+        event.sender.send('ssh:keyboard-interactive-result', {
+          id,
+          attempts: attemptCount,
+          status: 'failed',
+          final: true
+        })
+        reject(new Error('Maximum authentication attempts reached'))
+        return
       }
 
-      connectionEvents.once(`connection-status-changed:${id}`, statusHandler)
-    })
+      // Set retry count
+      KeyboardInteractiveAttempts.set(id, attemptCount + 1)
 
-    // Listen for user cancellation
-    ipcMain.once(`ssh:keyboard-interactive-cancel:${id}`, () => {
-      KeyboardInteractiveAttempts.delete(id)
-      clearTimeout(timeoutId)
-      finish([])
-      reject(new Error('Authentication cancelled'))
-    })
+      // Try to auto-fill OTP from the secret store before showing the dialog
+      if (host) {
+        try {
+          const otpCode = await generateOtpForHost(host)
+          if (otpCode) {
+            logger.info('Auto-filling OTP from saved secret', {
+              event: 'ssh.keyboard-interactive.otp-autofill',
+              connectionId: id,
+              host
+            })
+            // Submit the auto-generated code directly
+            finish([otpCode])
+
+            // Listen for connection status to determine result
+            const statusHandler = (status) => {
+              if (status.isVerified) {
+                keyboardInteractiveOpts.set(id, [otpCode])
+                KeyboardInteractiveAttempts.delete(id)
+                event.sender.send('ssh:keyboard-interactive-result', {
+                  id,
+                  status: 'success',
+                  autoFilled: true
+                })
+              } else {
+                const currentAttempts = KeyboardInteractiveAttempts.get(id) || 0
+                event.sender.send('ssh:keyboard-interactive-result', {
+                  id,
+                  attempts: currentAttempts,
+                  status: 'failed'
+                })
+              }
+              connectionEvents.removeListener(`connection-status-changed:${id}`, statusHandler)
+            }
+            connectionEvents.once(`connection-status-changed:${id}`, statusHandler)
+            _resolve()
+            return
+          }
+        } catch (otpError) {
+          logger.warn('Failed to auto-fill OTP, falling back to manual input', {
+            event: 'ssh.keyboard-interactive.otp-autofill.failed',
+            connectionId: id,
+            host,
+            error: otpError instanceof Error ? otpError.message : String(otpError)
+          })
+        }
+      }
+
+      // Send MFA request to frontend
+      event.sender.send('ssh:keyboard-interactive-request', {
+        id,
+        prompts: prompts.map((p) => p.prompt),
+        host: host || null
+      })
+
+      // Set timeout
+      const timeoutId = setTimeout(() => {
+        // Remove listener
+        ipcMain.removeAllListeners(`ssh:keyboard-interactive-response:${id}`)
+        ipcMain.removeAllListeners(`ssh:keyboard-interactive-cancel:${id}`)
+
+        // Cancel authentication
+        finish([])
+        KeyboardInteractiveAttempts.delete(id)
+        event.sender.send('ssh:keyboard-interactive-timeout', { id })
+        reject(new Error('Authentication timed out, please try connecting again'))
+      }, KeyboardInteractiveTimeout)
+
+      // Listen for user response
+      ipcMain.once(`ssh:keyboard-interactive-response:${id}`, (_evt, responses) => {
+        clearTimeout(timeoutId) // Clear timeout timer
+        finish(responses)
+
+        // Listen for connection status changes to determine verification result
+        const statusHandler = (status) => {
+          if (status.isVerified) {
+            // Verification successful
+            keyboardInteractiveOpts.set(id, responses)
+            KeyboardInteractiveAttempts.delete(id)
+            event.sender.send('ssh:keyboard-interactive-result', {
+              id,
+              status: 'success'
+            })
+          } else {
+            // Verification failed
+            const currentAttempts = KeyboardInteractiveAttempts.get(id) || 0
+            event.sender.send('ssh:keyboard-interactive-result', {
+              id,
+              attempts: currentAttempts,
+              status: 'failed'
+            })
+            // SSH connection will automatically retrigger keyboard-interactive event for retry
+          }
+          connectionEvents.removeListener(`connection-status-changed:${id}`, statusHandler)
+        }
+
+        connectionEvents.once(`connection-status-changed:${id}`, statusHandler)
+      })
+
+      // Listen for user cancellation
+      ipcMain.once(`ssh:keyboard-interactive-cancel:${id}`, () => {
+        KeyboardInteractiveAttempts.delete(id)
+        clearTimeout(timeoutId)
+        finish([])
+        reject(new Error('Authentication cancelled'))
+      })
+    })().catch(reject)
   })
 }
 
@@ -1322,7 +1373,7 @@ const handleAttemptConnection = async (event, connectionInfo, resolve, reject, r
   conn.on('keyboard-interactive', async (_name, _instructions, _instructionsLang, prompts, finish) => {
     try {
       // Wait for user response
-      await handleRequestKeyboardInteractive(event, id, prompts, finish)
+      await handleRequestKeyboardInteractive(event, id, prompts, finish, host)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
       logger.warn('SSH keyboard-interactive error', { event: 'ssh.keyboard-interactive.error', connectionId: id, error: errorMessage })

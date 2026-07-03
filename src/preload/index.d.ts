@@ -524,6 +524,12 @@ interface ApiType {
   onKeyboardInteractiveResult: (callback: (data: any) => void) => () => void
   submitKeyboardInteractiveResponse: (id: string, code: string) => void
   cancelKeyboardInteractive: (id: string) => void
+  // OTP secret management
+  otpAddSecret: (host: string, secret: string) => Promise<{ success: boolean; message?: string }>
+  otpRemoveSecret: (host: string) => Promise<{ success: boolean }>
+  otpListHosts: () => Promise<string[]>
+  otpGetCode: (host: string) => Promise<string | null>
+  otpHasSecret: (host: string) => Promise<boolean>
   // JumpServer user selection
   onUserSelectionRequest: (callback: (data: any) => void) => () => void
   onUserSelectionTimeout: (callback: (data: any) => void) => () => void

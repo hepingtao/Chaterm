@@ -1492,7 +1492,13 @@ export default {
     remainingTime: 'الوقت المتبقي',
     confirm: 'تأكيد',
     cancel: 'إلغاء',
-    setupGlobalListeners: 'تعيين المستمعات العامة لـ MFA'
+    setupGlobalListeners: 'تعيين المستمعات العامة لـ MFA',
+    saveOtpForAutoFill: 'حفظ السر للتعبئة التلقائية',
+    cancelSaveOtp: 'إلغاء',
+    otpSecretPlaceholder: 'أدخل سر OTP (Base32)',
+    save: 'حفظ',
+    saving: 'جارٍ الحفظ...',
+    otpSecretSavedHint: 'تم حفظ السر. ستعمل الاتصالات المستقبلية على تعبئة الرمز تلقائياً.'
   },
   userSelection: {
     title: 'اختيار الحساب المستخدم',

@@ -1508,7 +1508,13 @@ export default {
     remainingTime: 'Tempo restante',
     confirm: 'Conferma',
     cancel: 'Annulla',
-    setupGlobalListeners: 'Configurazione listener MFA globali'
+    setupGlobalListeners: 'Configurazione listener MFA globali',
+    saveOtpForAutoFill: 'Salva segreto per riempimento automatico',
+    cancelSaveOtp: 'Annulla',
+    otpSecretPlaceholder: 'Inserisci segreto OTP (Base32)',
+    save: 'Salva',
+    saving: 'Salvataggio...',
+    otpSecretSavedHint: 'Segreto salvato. Le connessioni future compileranno automaticamente il codice.'
   },
   userSelection: {
     title: 'Seleziona account utente',

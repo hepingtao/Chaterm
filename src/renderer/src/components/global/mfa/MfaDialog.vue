@@ -25,6 +25,46 @@
           @change="handleOtpChange"
         />
       </div>
+
+      <!-- Save OTP secret section -->
+      <div
+        v-if="currentOtpHost && !otpSecretSaved"
+        class="save-otp-toggle"
+      >
+        <a
+          href="javascript:void(0)"
+          class="save-otp-link"
+          @click="toggleSaveOtpSection"
+        >
+          {{ showSaveOtpSection ? $t('mfa.cancelSaveOtp') : $t('mfa.saveOtpForAutoFill') }}
+        </a>
+      </div>
+      <div
+        v-if="showSaveOtpSection && currentOtpHost"
+        class="save-otp-section"
+      >
+        <input
+          v-model="otpSecretInput"
+          type="text"
+          class="otp-secret-input"
+          :placeholder="$t('mfa.otpSecretPlaceholder')"
+          :disabled="savingOtpSecret"
+        />
+        <button
+          class="save-otp-btn"
+          :disabled="savingOtpSecret || !otpSecretInput.trim()"
+          @click="saveOtpSecret"
+        >
+          {{ savingOtpSecret ? $t('mfa.saving') : $t('mfa.save') }}
+        </button>
+      </div>
+      <div
+        v-if="otpSecretSaved"
+        class="otp-saved-hint"
+      >
+        {{ $t('mfa.otpSecretSavedHint') }}
+      </div>
+
       <div class="timer-section">
         <span class="timer-text"> {{ $t('mfa.remainingTime') }}: {{ Math.ceil(otpTimeRemaining / 1000) }}s </span>
       </div>
@@ -42,9 +82,16 @@ import {
   otpPrompt,
   otpCode,
   otpTimeRemaining,
+  currentOtpHost,
+  showSaveOtpSection,
+  otpSecretInput,
+  savingOtpSecret,
+  otpSecretSaved,
   cancelOtp,
   handleOtpChange,
-  handleOtpComplete
+  handleOtpComplete,
+  toggleSaveOtpSection,
+  saveOtpSecret
 } from './mfaState'
 
 const { t } = useI18n()
@@ -104,6 +151,70 @@ const getErrorMessage = () => {
   font-weight: normal;
 }
 
+.save-otp-toggle {
+  width: 100%;
+  text-align: center;
+}
+
+.save-otp-link {
+  color: #4096ff;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.save-otp-link:hover {
+  text-decoration: underline;
+}
+
+.save-otp-section {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.otp-secret-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color-light);
+  border-radius: 6px;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-size: 13px;
+  outline: none;
+}
+
+.otp-secret-input:focus {
+  border-color: #4096ff;
+  box-shadow: 0 0 0 2px rgba(5, 145, 255, 0.2);
+}
+
+.save-otp-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background-color: #4096ff;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.2s;
+}
+
+.save-otp-btn:hover:not(:disabled) {
+  background-color: #1677ff;
+}
+
+.save-otp-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.otp-saved-hint {
+  color: #52c41a;
+  font-size: 13px;
+  text-align: center;
+}
+
 /* Mobile responsive */
 @media (max-width: 480px) {
   .mfa-content {
@@ -117,6 +228,10 @@ const getErrorMessage = () => {
 
   .timer-text {
     font-size: 12px;
+  }
+
+  .save-otp-section {
+    flex-direction: column;
   }
 }
 </style>

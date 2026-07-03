@@ -1494,7 +1494,13 @@ export default {
     remainingTime: '残り時間',
     confirm: '確認',
     cancel: 'キャンセル',
-    setupGlobalListeners: 'グローバルMFAリスナーを設定'
+    setupGlobalListeners: 'グローバルMFAリスナーを設定',
+    saveOtpForAutoFill: '自動入力用にシークレットを保存',
+    cancelSaveOtp: 'キャンセル',
+    otpSecretPlaceholder: 'OTPシークレットを入力 (Base32)',
+    save: '保存',
+    saving: '保存中...',
+    otpSecretSavedHint: 'シークレットが保存されました。次回接続時に自動入力されます。'
   },
   userSelection: {
     title: 'ユーザーアカウントを選択',

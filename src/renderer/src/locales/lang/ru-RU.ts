@@ -1503,7 +1503,13 @@ export default {
     remainingTime: 'Осталось времени',
     confirm: 'Подтвердить',
     cancel: 'Отмена',
-    setupGlobalListeners: 'Настройка глобальных слушателей MFA'
+    setupGlobalListeners: 'Настройка глобальных слушателей MFA',
+    saveOtpForAutoFill: 'Сохранить секрет для автозаполнения',
+    cancelSaveOtp: 'Отмена',
+    otpSecretPlaceholder: 'Введите секрет OTP (Base32)',
+    save: 'Сохранить',
+    saving: 'Сохранение...',
+    otpSecretSavedHint: 'Секрет сохранен. Будущие подключения будут автозаполнять код.'
   },
   userSelection: {
     title: 'Выбор пользовательского учетного записи',

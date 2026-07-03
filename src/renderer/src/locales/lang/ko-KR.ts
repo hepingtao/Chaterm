@@ -1487,7 +1487,13 @@ export default {
     remainingTime: '남은 시간',
     confirm: '확인',
     cancel: '취소',
-    setupGlobalListeners: '전역 MFA 리스너 설정'
+    setupGlobalListeners: '전역 MFA 리스너 설정',
+    saveOtpForAutoFill: '자동 입력을 위해 시크릿 저장',
+    cancelSaveOtp: '취소',
+    otpSecretPlaceholder: 'OTP 시크릿 입력 (Base32)',
+    save: '저장',
+    saving: '저장 중...',
+    otpSecretSavedHint: '시크릿이 저장되었습니다. 다음 연결 시 자동으로 입력됩니다.'
   },
   userSelection: {
     title: '사용자 계정 선택',

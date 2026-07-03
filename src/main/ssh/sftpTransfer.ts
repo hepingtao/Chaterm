@@ -2938,7 +2938,7 @@ export const connectSftpNew = async (event: any, connectionInfo: any, options?: 
             conn.end()
             return resolve({ status: 'cancelled', message: 'cancelled' })
           }
-          await handleRequestKeyboardInteractive(event, id, prompts, finish)
+          await handleRequestKeyboardInteractive(event, id, prompts, finish, host)
         } catch (e: any) {
           conn.end()
           clearPending(id)
@@ -3114,7 +3114,7 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
               conn.end()
               return safeResolve({ status: 'cancelled', message: 'cancelled' })
             }
-            await handleRequestKeyboardInteractive(_event, id, prompts, finish)
+            await handleRequestKeyboardInteractive(_event, id, prompts, finish, host)
           } catch (e: any) {
             conn.end()
             clearPending(id)
@@ -3267,7 +3267,7 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
             conn.end()
             return safeResolve({ status: 'cancelled', message: 'cancelled' })
           }
-          await handleRequestKeyboardInteractive(_event, id, prompts, finish)
+          await handleRequestKeyboardInteractive(_event, id, prompts, finish, host)
         } catch (e: any) {
           conn.end()
           clearPending(id)

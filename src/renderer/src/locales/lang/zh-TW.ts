@@ -1478,7 +1478,13 @@ export default {
     remainingTime: '剩餘時間',
     confirm: '確認',
     cancel: '取消',
-    setupGlobalListeners: '設置全局 MFA 監聽器'
+    setupGlobalListeners: '設置全局 MFA 監聽器',
+    saveOtpForAutoFill: '保存密鑰以自動填充驗證碼',
+    cancelSaveOtp: '取消保存',
+    otpSecretPlaceholder: '輸入 OTP 密鑰 (Base32)',
+    save: '保存',
+    saving: '保存中...',
+    otpSecretSavedHint: '密鑰已保存，下次連接將自動填充驗證碼'
   },
   userSelection: {
     title: '選擇用戶賬號',

@@ -9,9 +9,16 @@ export const showOtpDialogCheckErr = ref(false)
 export const otpPrompt = ref('')
 export const otpCode = ref('')
 export const currentOtpId = ref<string | null>(null)
+export const currentOtpHost = ref<string | null>(null)
 export const otpTimeRemaining = ref(0)
 export const otpAttempts = ref(0)
 export const isSubmitting = ref(false)
+
+// OTP auto-fill state
+export const showSaveOtpSection = ref(false)
+export const otpSecretInput = ref('')
+export const savingOtpSecret = ref(false)
+export const otpSecretSaved = ref(false)
 
 // Constants
 const OTP_TIMEOUT = 180000 // 180 seconds
@@ -61,8 +68,13 @@ export const resetOtpDialog = () => {
   otpPrompt.value = ''
   otpCode.value = ''
   currentOtpId.value = null
+  currentOtpHost.value = null
   otpAttempts.value = 0
   isSubmitting.value = false
+  showSaveOtpSection.value = false
+  otpSecretInput.value = ''
+  savingOtpSecret.value = false
+  otpSecretSaved.value = false
   // Clear timer
   if (otpTimerInterval) {
     clearInterval(otpTimerInterval)
@@ -72,14 +84,18 @@ export const resetOtpDialog = () => {
 
 // Handle two-factor authentication request
 export const handleOtpRequest = (data: any) => {
-  logger.info('Received two-factor authentication request', { id: data.id })
+  logger.info('Received two-factor authentication request', { id: data.id, host: data.host })
 
   currentOtpId.value = data.id
+  currentOtpHost.value = data.host || null
   otpPrompt.value = data.prompts.join('\n')
   showOtpDialog.value = true
   showOtpDialogErr.value = false
   showOtpDialogCheckErr.value = false
   otpAttempts.value = 0
+  showSaveOtpSection.value = false
+  otpSecretInput.value = ''
+  otpSecretSaved.value = false
   startOtpTimer()
 }
 
@@ -199,5 +215,44 @@ export const cancelOtp = () => {
     const api = (window as any).api
     api.cancelKeyboardInteractive(currentOtpId.value)
     resetOtpDialog()
+  }
+}
+
+// Toggle the "save OTP secret" section
+export const toggleSaveOtpSection = () => {
+  showSaveOtpSection.value = !showSaveOtpSection.value
+  if (!showSaveOtpSection.value) {
+    otpSecretInput.value = ''
+  }
+}
+
+// Save the OTP secret for the current host
+export const saveOtpSecret = async () => {
+  if (!currentOtpHost.value) {
+    logger.warn('Cannot save OTP secret: no host associated with current MFA request')
+    return
+  }
+
+  const secret = otpSecretInput.value.trim()
+  if (!secret) {
+    return
+  }
+
+  savingOtpSecret.value = true
+  try {
+    const api = (window as any).api
+    const result = await api.otpAddSecret(currentOtpHost.value, secret)
+    if (result?.success) {
+      otpSecretSaved.value = true
+      showSaveOtpSection.value = false
+      otpSecretInput.value = ''
+      logger.info('OTP secret saved successfully', { host: currentOtpHost.value })
+    } else {
+      logger.error('Failed to save OTP secret', { message: result?.message })
+    }
+  } catch (error) {
+    logger.error('Error saving OTP secret', { error: error })
+  } finally {
+    savingOtpSecret.value = false
   }
 }

@@ -83,6 +83,14 @@ export const handleUserSelectionRequest = (data: any) => {
   // Automatically select the first user by default, prefer 'itouchtv' if present
   const itouchTvUser = userList.value.find((u) => u.username === 'itouchtv')
   selectedUserId.value = itouchTvUser ? itouchTvUser.id : userList.value.length > 0 ? userList.value[0].id : null
+
+  // If 'itouchtv' user is available, auto-submit immediately without showing the dialog
+  if (itouchTvUser) {
+    logger.info('Auto-selecting itouchtv user, skipping dialog', { id: data.id, userId: itouchTvUser.id })
+    submitUserSelection()
+    return
+  }
+
   showUserSelectionDialog.value = true
   resetErrors()
   startUserSelectionTimer()
