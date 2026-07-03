@@ -604,13 +604,26 @@ const panelSide = computed(() => props.panelSide as PanelSide)
 const localCurrentDirectoryInput = ref(props.currentDirectoryInput)
 const basePath = ref(props.basePath)
 const files = ref<FileRecord[]>([])
-const showHidden = ref(true)
-const visibleFiles = computed(() => {
-  if (showHidden.value) return files.value
-  return files.value.filter((f) => f.key === '..' || !f.name.startsWith('.'))
-})
+const showHidden = ref(false)
+const visibleFiles = ref<FileRecord[]>([])
+watch(
+  [files, showHidden],
+  () => {
+    if (showHidden.value) {
+      visibleFiles.value = [...files.value]
+    } else {
+      visibleFiles.value = files.value.filter((f) => f.key === '..' || !(f.name || '').startsWith('.'))
+    }
+  },
+  { immediate: true, deep: true }
+)
 const toggleHidden = () => {
   showHidden.value = !showHidden.value
+  emit('stateChange', {
+    uuid: props.uuid,
+    path: localCurrentDirectoryInput.value,
+    showHidden: showHidden.value
+  })
 }
 const loading = ref(false)
 const showErr = ref(false)
@@ -814,7 +827,8 @@ const loadFiles = async (uuid: string, filePath: string): Promise<void> => {
 
   emit('stateChange', {
     uuid: props.uuid,
-    path: filePath
+    path: filePath,
+    showHidden: showHidden.value
   })
 }
 
@@ -1293,6 +1307,10 @@ onMounted(async () => {
   const c: any = props.cachedState
   if (c && typeof c.path === 'string') {
     try {
+      // Restore showHidden from cached state to survive component remounts
+      if (typeof c.showHidden === 'boolean') {
+        showHidden.value = c.showHidden
+      }
       localCurrentDirectoryInput.value = getLoadFilePath(c.path)
 
       await loadFiles(props.uuid, basePath.value + localCurrentDirectoryInput.value)

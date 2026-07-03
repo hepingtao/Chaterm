@@ -50,6 +50,7 @@ export interface JumpServerExecResult {
 export interface JumpServerConnectionInfo {
   id: string
   assetUuid?: string
+  realAssetUuid?: string
   host: string
   port?: number
   sftpPort?: number

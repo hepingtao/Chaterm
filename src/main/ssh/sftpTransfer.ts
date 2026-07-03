@@ -173,6 +173,14 @@ export const registerFileSystemHandlers = () => {
     sftpHomeMap.delete(id)
     return res
   })
+  // Reset SFTP handle + HOME cache but preserve cached connection info so
+  // ensureSftpReady can reconnect (with enriched compound username).
+  ipcMain.handle('ssh:sftp:reset', async (_event, payload: { id: string }) => {
+    const id = String(payload?.id || '')
+    const res = await closeSftpOnly(id)
+    sftpHomeMap.delete(id)
+    return res
+  })
 
   ipcMain.handle('ssh:sftp:cancel', async (_event, payload: { id: string; requestId?: string }) => {
     const id = String(payload?.id || '')
@@ -208,9 +216,10 @@ export const registerFileSystemHandlers = () => {
     const current = sftpHomeMap.get(sid) || '/'
     homeDebug('[get-home] return', { sid, current })
 
-    // If not yet resolved to asset HOME and this is a JumpServer connection,
+    // If not yet resolved to real asset HOME and this is a JumpServer connection,
     // kick off an async probe (non-blocking). Frontend will re-fetch.
-    if (!current.includes('/home/') && sid.includes('local-team') && sid.includes('@')) {
+    // Use startsWith to avoid matching bastion virtual FS paths like /A100/.../home/itouchtv
+    if (!current.startsWith('/home/') && (sid.includes('local-team') || sid.includes(':local:')) && sid.includes('@')) {
       const username = sid.split('@')[0]
       // Decode hostname from connectionId for search prioritization.
       let hostHint: string | undefined
@@ -222,15 +231,26 @@ export const registerFileSystemHandlers = () => {
       }
       if (username) {
         try {
-          const sftp = getSftpConnection(sid)
+          let sftp = getSftpConnection(sid)
+          if (!sftp) {
+            // SFTP handle was reset (e.g., active connection selection).
+            // Reconnect with compound username via ensureSftpReady.
+            homeDebug('[get-home] no SFTP handle, reconnecting via ensureSftpReady', { sid })
+            sftp = await ensureSftpReady(_e, sid)
+            // After reconnect, check if HOME was resolved during init
+            const newHome = sftpHomeMap.get(sid)
+            if (newHome && newHome.startsWith('/home/')) {
+              homeDebug('[get-home] compound username reconnect resolved HOME', { sid, home: newHome })
+              return newHome
+            }
+          }
           if (sftp) {
-            // Use current as root (already '/' or bastion root).
             const root = current !== '/' ? current : '/'
             homeDebug('[get-home] kick async probe', { sid, root, username, hostHint })
             probeAssetHomeAsync(sftp, root, username, sid, hostHint)
           }
         } catch (e: any) {
-          homeDebug('[get-home] async probe kick failed', { sid, error: e?.message || String(e) })
+          homeDebug('[get-home] reconnect/probe failed', { sid, error: e?.message || String(e) })
         }
       }
     }
@@ -595,6 +615,52 @@ const getReusableSftpConnectionInfo = (id: string) => {
   return null
 }
 
+// Derive system name from bastion domain (e.g., jump.itouchtv.cn -> itouchtv)
+// If bastion is stored as IP, fall back to hardcoded 'itouchtv'.
+const deriveSystemNameFromHost = (host: string): string => {
+  if (!host) return 'itouchtv'
+  const parts = String(host).split('.')
+  // Check if it's an IP address (all numeric parts)
+  const isIP = parts.length === 4 && parts.every((p) => /^\d+$/.test(p))
+  if (isIP) return 'itouchtv'
+  if (parts.length < 2) return 'itouchtv'
+  // Take the second-level domain (e.g., itouchtv from jump.itouchtv.cn)
+  return parts[parts.length - 2]
+}
+
+// Enrich cached connection info with sftpCompoundUsername for JumpServer sessions
+// that were established via SSH terminal (not through the Files asset path).
+// Compound username format: <user>@<system_name>@<asset_ip>
+const enrichJumpServerConnInfo = (info: any, sid: string): any => {
+  if (!info) return info
+  // Only enrich JumpServer connections missing compound username
+  if (info.sftpCompoundUsername) return info
+  if (info.sshType !== 'jumpserver') return info
+  // Check if session ID looks like a JumpServer session (:local: or :local-team:)
+  if (!sid.includes(':local:') && !sid.includes(':local-team:')) return info
+
+  const bastionHost = info.host
+  const username = info.username
+  const targetIp = info.targetIp
+
+  if (bastionHost && username && targetIp) {
+    const systemName = deriveSystemNameFromHost(bastionHost)
+    if (systemName) {
+      const compound = `${username}@${systemName}@${targetIp}`
+      homeDebug('[enrichJumpServerConnInfo] constructed compound username', {
+        sid,
+        compound
+      })
+      return {
+        ...info,
+        sftpCompoundUsername: compound,
+        sftpPort: info.sftpPort || 2222
+      }
+    }
+  }
+  return info
+}
+
 const ensureSftpReady = async (event: any, id: string): Promise<any> => {
   const sid = String(id || '')
   if (!sid) {
@@ -613,10 +679,14 @@ const ensureSftpReady = async (event: any, id: string): Promise<any> => {
     }
   }
 
-  const cachedInfo = getReusableSftpConnectionInfo(sid)
-  if (!cachedInfo) {
+  const rawCachedInfo = getReusableSftpConnectionInfo(sid)
+  if (!rawCachedInfo) {
     throw new Error('missing reconnect connection info')
   }
+
+  // Enrich JumpServer sessions with compound username so SFTP reconnects
+  // directly to the target asset instead of the bastion virtual filesystem.
+  const cachedInfo = enrichJumpServerConnInfo(rawCachedInfo, sid)
 
   const result = await connectSftpReuseFirst(event, cachedInfo)
   if (result?.status !== 'connected') {
@@ -2519,14 +2589,25 @@ export const initSftpOnConnection = (
             // and use it as HOME. readdir is more reliable than realpath on
             // JumpServer's virtual SFTP filesystem.
             // directAssetMode: compound username connects to the target asset's real
-            // filesystem, so realpath('.') works reliably (like normal SSH).
+            // filesystem. realpath('.') returns the HOME of the JumpServer login user,
+            // which may differ from the desired HOME (e.g., /home/operation-alert vs
+            // /home/itouchtv). Prefer /home/itouchtv if it exists.
             if (homeHint?.directAssetMode) {
-              sftp.realpath('.', (rpErr, absPath) => {
-                const home = !rpErr && absPath ? absPath : '/'
-                sftpHomeMap.set(connectionId, home)
-                homeDebug('[initSftp] directAssetMode realpath', { connectionId, home })
-                resolve()
-              })
+              const preferredHome = '/home/itouchtv'
+              sftpReaddirWithTimeout(sftp, preferredHome, 5000)
+                .then(() => {
+                  sftpHomeMap.set(connectionId, preferredHome)
+                  homeDebug('[initSftp] directAssetMode preferred home', { connectionId, home: preferredHome })
+                  resolve()
+                })
+                .catch(() => {
+                  sftp.realpath('.', (rpErr, absPath) => {
+                    const home = !rpErr && absPath ? absPath : '/'
+                    sftpHomeMap.set(connectionId, home)
+                    homeDebug('[initSftp] directAssetMode realpath fallback', { connectionId, home })
+                    resolve()
+                  })
+                })
               return
             }
             const hintAssetPath = homeHint?.assetPath?.trim()
@@ -2558,20 +2639,33 @@ export const initSftpOnConnection = (
                       resolve()
                     })
                     .catch((e2: any) => {
-                      homeDebug('[initSftp] /home/<username> FAILED, fallback to / and async probe', {
+                      homeDebug('[initSftp] /home/<username> FAILED, trying /home/itouchtv', {
                         connectionId,
                         error: e2?.message || String(e2)
                       })
-                      // Fallback: use '/' and kick off async probe (realpath is
-                      // unreliable on JumpServer virtual FS and may never callback).
-                      sftpHomeMap.set(connectionId, '/')
-                      resolve()
-                      probeAssetHomeAsync(sftp, '/', hintUsername, connectionId)
+                      // Try hardcoded /home/itouchtv (standard account on all assets)
+                      // before falling back to root. This handles cases where the
+                      // JumpServer login user differs from the desired HOME user.
+                      const preferredHome = '/home/itouchtv'
+                      sftpReaddirWithTimeout(sftp, preferredHome, 5000)
+                        .then(() => {
+                          sftpHomeMap.set(connectionId, preferredHome)
+                          homeDebug('[initSftp] /home/itouchtv SUCCESS', { connectionId, home: preferredHome })
+                          resolve()
+                        })
+                        .catch(() => {
+                          // Fallback: use '/' and kick off async probe (realpath is
+                          // unreliable on JumpServer virtual FS and may never callback).
+                          sftpHomeMap.set(connectionId, '/')
+                          homeDebug('[initSftp] all HOME attempts FAILED, fallback to /', { connectionId })
+                          resolve()
+                          probeAssetHomeAsync(sftp, '/', hintUsername, connectionId)
+                        })
                     })
                 })
             } else {
               // No hint.
-              const isJumpServer = connectionId.includes('local-team') && connectionId.includes('@')
+              const isJumpServer = (connectionId.includes('local-team') || connectionId.includes(':local:')) && connectionId.includes('@')
               if (isJumpServer) {
                 // JumpServer virtual FS: realpath('.') may never callback, so set
                 // HOME to '/' immediately and async-probe for asset HOME.
@@ -2645,20 +2739,39 @@ const probeAssetHomeAsync = (sftp: any, root: string, username: string, connecti
   activeHomeProbes.add(connectionId)
 
   const joinPath = (base: string, name: string) => (base.endsWith('/') ? `${base}${name}` : `${base}/${name}`)
-
   const hint = hostHint?.toLowerCase().trim()
 
+  // Fast path: try common bastion virtual FS patterns directly.
+  // This avoids slow recursive search when we know the path structure.
+  const tryFastPaths = async (): Promise<string | null> => {
+    if (!hostHint) return null
+    const candidates = [
+      `/触电研发中心/生产环境/大数据/${hostHint}/home/itouchtv`,
+      `/触电研发中心/测试环境/大数据/${hostHint}/home/itouchtv`,
+      `/触电研发中心/生产环境/大数据/${hostHint}/测试linux普通-账号模版/home/itouchtv`,
+      `/触电研发中心/测试环境/大数据/${hostHint}/测试linux普通-账号模版/home/itouchtv`,
+      `/${hostHint}/home/itouchtv`,
+      `/${hostHint}/测试linux普通-账号模版/home/itouchtv`
+    ]
+    for (const p of candidates) {
+      try {
+        await sftpReaddirWithTimeout(sftp, p, 3000)
+        homeDebug('[probeAsync] fast path hit', { connectionId, path: p })
+        return p
+      } catch {}
+    }
+    return null
+  }
+
   const search = async (dir: string, depth: number, inHintSubtree: boolean): Promise<string | null> => {
-    if (depth > 8) return null
+    if (depth > 6) return null
     let entries: any[]
     try {
-      entries = await sftpReaddirWithTimeout(sftp, dir, 6000)
+      entries = await sftpReaddirWithTimeout(sftp, dir, 5000)
     } catch {
       return null
     }
 
-    // Only check for "home" when inside a hint-matching subtree (or when no
-    // hint is available). Prevents matching "home/<user>" on other assets.
     if (inHintSubtree || !hint) {
       const homeEntry = entries.find((e) => e.filename === 'home' && isDirEntry(e))
       if (homeEntry) {
@@ -2666,8 +2779,6 @@ const probeAssetHomeAsync = (sftp: any, root: string, username: string, connecti
         homeDebug('[probeAsync] found home dir', { connectionId, homePath, inHintSubtree, dir })
         try {
           const homeEntries = await sftpReaddirWithTimeout(sftp, homePath, 4000)
-          // Prefer matching username; fall back to first user dir (asset
-          // account may differ from bastion login user).
           const userEntry = homeEntries.find((e) => e.filename === username && e.filename !== '.' && e.filename !== '..')
           if (userEntry) return joinPath(homePath, userEntry.filename)
           const anyUser = homeEntries.find((e) => e.filename !== '.' && e.filename !== '..' && isDirEntry(e))
@@ -2678,15 +2789,15 @@ const probeAssetHomeAsync = (sftp: any, root: string, username: string, connecti
       }
     }
 
-    // Recurse into subdirectories. Prioritize hint-matching subdirs.
     const subdirs = entries.filter((e) => e.filename !== '.' && e.filename !== '..' && e.filename !== 'home' && isDirEntry(e))
-    if (hint) {
-      subdirs.sort((a, b) => {
-        const aM = a.filename.toLowerCase().includes(hint) ? 0 : 1
-        const bM = b.filename.toLowerCase().includes(hint) ? 0 : 1
-        return aM - bM
-      })
-    }
+    subdirs.sort((a, b) => {
+      const aM = hint ? (a.filename.toLowerCase().includes(hint) ? 0 : 1) : 0
+      const bM = hint ? (b.filename.toLowerCase().includes(hint) ? 0 : 1) : 0
+      if (aM !== bM) return aM - bM
+      const aAdmin = a.filename.includes('超管') ? 1 : 0
+      const bAdmin = b.filename.includes('超管') ? 1 : 0
+      return aAdmin - bAdmin
+    })
 
     for (const entry of subdirs) {
       const childPath = joinPath(dir, entry.filename)
@@ -2698,8 +2809,13 @@ const probeAssetHomeAsync = (sftp: any, root: string, username: string, connecti
   }
 
   homeDebug('[probeAsync] start', { connectionId, root, username, hostHint, hint })
-
-  search(root, 0, false)
+  ;(async () => {
+    // Try fast paths first
+    const fast = await tryFastPaths()
+    if (fast) return fast
+    // Fall back to recursive search
+    return await search(root, 0, false)
+  })()
     .then((result) => {
       if (result) {
         sftpHomeMap.set(connectionId, result)

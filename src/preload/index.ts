@@ -1217,6 +1217,7 @@ const api = {
   sftpConnList: () => ipcRenderer.invoke('ssh:sftp:conn:list') as Promise<SftpConnectionInfo[]>,
   sftpConnect: (connectionInfo) => ipcRenderer.invoke('ssh:sftp:connect', connectionInfo) as Promise<SftpConnectResult>,
   sftpClose: (payload: { id: string }) => ipcRenderer.invoke('ssh:sftp:close', payload),
+  sftpReset: (payload: { id: string }) => ipcRenderer.invoke('ssh:sftp:reset', payload),
   sftpGetHome: (id: string) => ipcRenderer.invoke('ssh:sftp:get-home', { id }) as Promise<string>,
   sftpDebugLog: (message: string, data?: any) => ipcRenderer.invoke('ssh:sftp:debug-log', { message, data }),
   sftpCancel: (payload: { id: string; requestId: string }) => ipcRenderer.invoke('ssh:sftp:cancel', payload),

@@ -183,6 +183,7 @@ export function connectAssetInfoLogic(db: Database.Database, uuid: string, fallb
     ;(result as any).jumpHostUuid = (result as any).jump_host_uuid || null
     const organizationUuid = (result as any).organization_uuid
     ;(result as any).assetUuid = organizationUuid || (result as any).uuid
+    ;(result as any).realAssetUuid = (result as any).uuid
     return result
   } catch (error) {
     logger.error('Chaterm database get asset error', { error: error })
