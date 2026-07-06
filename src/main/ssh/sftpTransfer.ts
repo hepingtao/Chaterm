@@ -345,6 +345,28 @@ export const registerFileSystemHandlers = () => {
     }
   })
 
+  ipcMain.handle('ssh:sftp:mkdir', async (_e, { id, path: dirPath }) => {
+    if (isLocalId(id)) {
+      try {
+        const abs = ensureAbsLocalPath(dirPath)
+        await nodeFs.mkdir(abs, { recursive: true })
+        return { status: 'success', path: toPosix(abs) }
+      } catch (err: any) {
+        return { status: 'error', message: String(err?.message || err) }
+      }
+    }
+
+    const sftp = getSftpConnection(id)
+    if (!sftp) return { status: 'error', message: 'Sftp Not connected' }
+
+    try {
+      await sftpMkdirSafe(sftp, toPosix(dirPath))
+      return { status: 'success', path: toPosix(dirPath) }
+    } catch (err: any) {
+      return { status: 'error', message: String(err?.message || err) }
+    }
+  })
+
   ipcMain.handle('ssh:sftp:chmod', async (_e, { id, remotePath, mode, recursive }) => {
     const sftp = getSftpConnection(id)
     if (!sftp) return { status: 'error', message: 'Sftp Not connected' }
@@ -4132,6 +4154,34 @@ async function resolveRemoteCopyMoveTarget(
 
 async function copyOrMoveBySftp(event: Electron.IpcMainInvokeEvent, args: CopyOrMoveBySftpArgs): Promise<SftpCopyOrMoveResult> {
   const { id, srcPath, targetPath, action } = args
+
+  // Handle local file system copy/move
+  if (isLocalId(id)) {
+    try {
+      const srcAbs = ensureAbsLocalPath(srcPath)
+      const targetAbs = ensureAbsLocalPath(targetPath)
+      const srcName = path.basename(srcAbs)
+      const destPath = path.join(targetAbs, srcName)
+
+      if (action === 'move') {
+        if (srcAbs === destPath) return { status: 'success', path: destPath }
+        await nodeFs.rename(srcAbs, destPath)
+        return { status: 'success', path: destPath }
+      }
+
+      // Copy: use recursive copy
+      const st = await nodeFs.stat(srcAbs)
+      if (st.isDirectory()) {
+        await nodeFs.cp(srcAbs, destPath, { recursive: true })
+      } else {
+        await nodeFs.copyFile(srcAbs, destPath)
+      }
+      return { status: 'success', path: destPath }
+    } catch (err: any) {
+      return { status: 'error', message: String(err?.message || err) }
+    }
+  }
+
   const sftp = getSftpConnection(id)
 
   if (!sftp) {

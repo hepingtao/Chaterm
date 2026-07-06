@@ -88,6 +88,22 @@
           </a-space>
           <a-space>
             <div class="fs-header-right-item">
+              <a-tooltip :title="$t('files.newFolder')">
+                <a-button
+                  type="primary"
+                  size="small"
+                  ghost
+                  @click="createNewFolder"
+                >
+                  <template #icon>
+                    <FolderAddOutlined />
+                  </template>
+                </a-button>
+              </a-tooltip>
+            </div>
+          </a-space>
+          <a-space>
+            <div class="fs-header-right-item">
               <a-tooltip :title="showHidden ? $t('files.hideHiddenFiles') : $t('files.showHiddenFiles')">
                 <a-button
                   type="primary"
@@ -544,6 +560,7 @@ import {
   EyeOutlined,
   EyeInvisibleOutlined,
   FileFilled,
+  FolderAddOutlined,
   FolderFilled,
   LinkOutlined,
   LockOutlined,
@@ -1015,6 +1032,63 @@ const openFile = (record: FileRecord): void => {
 
 const refresh = (): void => {
   loadFiles(props.uuid, basePath.value + localCurrentDirectoryInput.value)
+}
+
+const createNewFolder = async () => {
+  let folderName = ''
+  try {
+    const { Modal: AModal } = await import('ant-design-vue')
+    const result = await new Promise<string | null>((resolve) => {
+      let inputValue = ''
+      AModal.confirm({
+        title: t('files.newFolder'),
+        content: () =>
+          h('div', [
+            h('p', { style: 'margin-bottom: 8px' }, t('files.newFolderPrompt')),
+            h('input', {
+              class: 'ant-input',
+              style: 'width: 100%',
+              placeholder: 'folder_name',
+              autofocus: true,
+              onInput: (e: any) => {
+                inputValue = e.target.value
+              },
+              onKeyup: (e: any) => {
+                if (e.key === 'Enter') {
+                  AModal.destroyAll()
+                  resolve(inputValue || null)
+                }
+              }
+            })
+          ]),
+        okText: t('common.confirm'),
+        cancelText: t('common.cancel'),
+        onOk: () => resolve(inputValue || null),
+        onCancel: () => resolve(null)
+      })
+    })
+    folderName = result || ''
+  } catch {
+    return
+  }
+
+  if (!folderName || !folderName.trim()) return
+  folderName = folderName.trim()
+
+  const currentDir = basePath.value + localCurrentDirectoryInput.value
+  const newPath = joinPath(currentDir, folderName)
+
+  try {
+    const res = await api.sftpMkdir({ id: props.uuid, path: newPath })
+    if (res?.status === 'success') {
+      message.success(t('files.createDirSuccess'))
+      await loadFiles(props.uuid, currentDir)
+    } else {
+      message.error(`${t('files.createDirFailed')}: ${res?.message || ''}`)
+    }
+  } catch (err: any) {
+    message.error(`${t('files.createDirFailed')}: ${err?.message || String(err)}`)
+  }
 }
 
 // instead of path.dirname()
