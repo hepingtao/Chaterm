@@ -848,7 +848,7 @@ const formatSftpList = (list: any[], reqPath: string) => {
       isDir: attrs.isDirectory(),
       isLink: attrs.isSymbolicLink(),
       mode: '0' + (attrs.mode & 0o777).toString(8),
-      modTime: new Date(attrs.mtime * 1000).toISOString().replace('T', ' ').slice(0, 19),
+      modTime: fmtTime(new Date(attrs.mtime * 1000)),
       size: attrs.size
     }
   })
@@ -2144,6 +2144,11 @@ export async function handleStreamTransfer(
   let finalLocalPath = destPath
   let total = 0
 
+  // Preserve local file's atime/mtime so we can set them on the remote file
+  // after upload completes — SFTP createWriteStream sets mtime to upload time.
+  let localAtime: Date | null = null
+  let localMtime: Date | null = null
+
   if (type === 'download') {
     try {
       const st = await sftpStat(sftp, toPosix(srcPath))
@@ -2188,6 +2193,8 @@ export async function handleStreamTransfer(
     try {
       const st = await fs.promises.stat(srcPath)
       total = st?.size ?? 0
+      localAtime = st.atime
+      localMtime = st.mtime
     } catch (e: any) {
       const msg = errToMessage(e)
       sendProgress(
@@ -2491,6 +2498,19 @@ export async function handleStreamTransfer(
   try {
     await pipeline(readStream, writeStream)
     activeTasks.delete(progressTaskKey)
+
+    // Preserve local file's modification time on the remote file
+    if (type === 'upload' && localMtime && finalRemotePath) {
+      try {
+        const atimeSec = Math.floor((localAtime?.getTime() || localMtime.getTime()) / 1000)
+        const mtimeSec = Math.floor(localMtime.getTime() / 1000)
+        await new Promise<void>((res, rej) => {
+          sftp.utimes(finalRemotePath, atimeSec, mtimeSec, (err: Error | null) => (err ? rej(err) : res()))
+        })
+      } catch {
+        // utimes failure is non-fatal — file was uploaded successfully
+      }
+    }
 
     sendProgress(event, {
       id,
@@ -2984,6 +3004,17 @@ export async function handleDirectoryTransfer(event: any, id: string, localDir: 
 
       if (entry.isDirectory()) {
         await sftpMkdirpForTransfer(sftp, rPath)
+        // Preserve local directory mtime on the remote
+        try {
+          const dst = await fs.promises.stat(lPath)
+          const atimeSec = Math.floor(dst.atime.getTime() / 1000)
+          const mtimeSec = Math.floor(dst.mtime.getTime() / 1000)
+          await new Promise<void>((res, rej) => {
+            sftp.utimes(rPath, atimeSec, mtimeSec, (err: Error | null) => (err ? rej(err) : res()))
+          })
+        } catch {
+          // utimes failure is non-fatal
+        }
         await scan(lPath, rPath)
       } else if (entry.isFile()) {
         scannedFiles++
