@@ -228,7 +228,7 @@ export default defineConfig(({ mode }) => {
             }
           ],
           dts: resolve('src/renderer/auto-imports.d.ts'),
-          resolvers: [AntDesignVueResolver()]
+          resolvers: [AntDesignVueResolver({ importStyle: false })]
         })
       ],
       define: {
