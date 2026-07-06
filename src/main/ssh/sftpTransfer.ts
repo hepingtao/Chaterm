@@ -15,7 +15,7 @@ import {
   KeyboardInteractiveTimeout,
   handleRequestKeyboardInteractive
 } from './sshHandle'
-import { jumpserverConnections } from './jumpserverHandle'
+import { jumpserverConnections, createJumpServerExecStream, executeCommandOnJumpServerExec } from './jumpserverHandle'
 import { getConnectionPoolKey, createProxyCommandSocket } from './sshHandle'
 import { createProxySocket } from './proxy'
 import { getAlgorithmsByAssetType } from './algorithms'
@@ -580,16 +580,84 @@ export const readSftpDirWithFallback = async (
   // and the SFTP server/proxy (e.g. JumpServer) returned no dot files at all.
   // This avoids unnecessary SSH exec round-trips for normal listings.
   if (includeHidden && dotFiles.length === 0) {
+    // Strategy 1: Use the underlying SSH connection directly (standard SSH)
     const conn = findSshConnForSftp(id)
     if (conn) {
       try {
-        homeDebug('[sftp:list] exec fallback triggered', { path: reqPath, id })
-        return await enrichReaddirWithExecFallback(conn, sftp, reqPath, list || [])
+        homeDebug('[sftp:list] exec fallback via SSH conn', { path: reqPath, id })
+        const result = await enrichReaddirWithExecFallback(conn, sftp, reqPath, list || [])
+        if (result.length > (list || []).length) {
+          homeDebug('[sftp:list] exec fallback via SSH conn succeeded', {
+            path: reqPath,
+            before: (list || []).length,
+            after: result.length
+          })
+          return result
+        }
+        homeDebug('[sftp:list] exec fallback via SSH conn returned no extra entries', { path: reqPath })
       } catch (e: any) {
-        homeDebug('[sftp:list] exec fallback failed', { path: reqPath, error: e?.message || String(e) })
+        homeDebug('[sftp:list] exec fallback via SSH conn failed', { path: reqPath, error: e?.message || String(e) })
       }
     } else {
       homeDebug('[sftp:list] no underlying SSH connection for exec fallback', { path: reqPath, id })
+    }
+
+    // Strategy 2: For JumpServer connections, try creating a dedicated exec stream
+    // that navigates through the JumpServer to the target asset.
+    const isJumpServer = id.includes('local-team') || id.includes(':local:')
+    if (isJumpServer) {
+      try {
+        homeDebug('[sftp:list] trying JumpServer exec stream fallback', { path: reqPath, id })
+        // Strip :files-N suffix to get the terminal connection ID
+        const terminalId = id.replace(/:files-\d+$/, '')
+        const execStream = await createJumpServerExecStream(terminalId)
+        if (execStream) {
+          const cmd = `ls -a -1 -- ${shellSingleQuote(reqPath)}`
+          const execResult = await executeCommandOnJumpServerExec(execStream, cmd)
+          if (execResult?.success && execResult.stdout) {
+            const execNames = execResult.stdout
+              .split('\n')
+              .map((n: string) => n.trim())
+              .filter((n: string) => n && n !== '.' && n !== '..')
+
+            homeDebug('[sftp:list] JumpServer exec stream succeeded', {
+              path: reqPath,
+              execNames: execNames.slice(0, 50)
+            })
+
+            const existing = new Set(rawNames)
+            const missing = execNames.filter((n: string) => !existing.has(n))
+            if (missing.length > 0) {
+              const enriched = [...(list || [])]
+              for (const name of missing) {
+                const fullPath = reqPath === '/' ? `/${name}` : `${reqPath}/${name}`
+                try {
+                  const st = await new Promise<any>((res, rej) => {
+                    sftp.stat(fullPath, (err: Error | null, s?: any) => (err ? rej(err) : res(s)))
+                  })
+                  enriched.push({ filename: name, attrs: wrapSftpAttrs(st) })
+                } catch {
+                  // stat failed — skip this entry
+                  homeDebug('[sftp:list] JumpServer exec stat failed for entry', { path: fullPath })
+                }
+              }
+              if (enriched.length > (list || []).length) {
+                return enriched
+              }
+            }
+          } else {
+            homeDebug('[sftp:list] JumpServer exec stream returned no output', {
+              path: reqPath,
+              error: execResult?.error || 'no stdout'
+            })
+          }
+        }
+      } catch (e: any) {
+        homeDebug('[sftp:list] JumpServer exec stream fallback failed', {
+          path: reqPath,
+          error: e?.message || String(e)
+        })
+      }
     }
   }
 
@@ -690,7 +758,34 @@ async function listLocalDir(reqPath: string) {
   return items
 }
 
-// Delete file
+// Recursively delete a remote directory via SFTP
+const sftpRecursiveRmdir = async (sftp: any, dirPath: string): Promise<void> => {
+  const entries = await new Promise<any[]>((res, rej) => {
+    sftp.readdir(dirPath, (err: Error | null, list?: any[]) => {
+      if (err) return rej(err)
+      res(list || [])
+    })
+  })
+
+  for (const entry of entries) {
+    const name = entry.filename
+    const fullPath = dirPath === '/' ? `/${name}` : `${dirPath}/${name}`
+    const attrs = entry.attrs
+    if (attrs && attrs.isDirectory()) {
+      await sftpRecursiveRmdir(sftp, fullPath)
+    } else {
+      await new Promise<void>((res, rej) => {
+        sftp.unlink(fullPath, (err: Error | null) => (err ? rej(err) : res()))
+      })
+    }
+  }
+
+  await new Promise<void>((res, rej) => {
+    sftp.rmdir(dirPath, (err: Error | null) => (err ? rej(err) : res()))
+  })
+}
+
+// Delete file or directory
 const handleDeleteFile = (_event, id, remotePath, resolve, reject) => {
   const sftp = getSftpConnection(id)
   if (!sftp) {
@@ -701,6 +796,8 @@ const handleDeleteFile = (_event, id, remotePath, resolve, reject) => {
     return reject('Illegal path, cannot be deleted')
   }
 
+  // First try unlink (works for files). If it fails with a directory error,
+  // fall back to recursive rmdir.
   new Promise<void>((res, rej) => {
     sftp.unlink(remotePath, (err) => {
       if (err) return rej(err)
@@ -714,9 +811,32 @@ const handleDeleteFile = (_event, id, remotePath, resolve, reject) => {
         deletedPath: remotePath
       })
     })
-    .catch((err) => {
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      reject(`Delete failed: ${errorMessage}`)
+    .catch(() => {
+      // unlink failed — likely a directory. Try stat to confirm, then recursive rmdir.
+      sftp.stat(remotePath, (statErr: Error | null, stats: any) => {
+        if (statErr || !stats) {
+          const errorMessage = statErr instanceof Error ? statErr.message : String(statErr)
+          return reject(`Delete failed: ${errorMessage}`)
+        }
+
+        if (!stats.isDirectory()) {
+          const errorMessage = 'Not a directory and unlink failed'
+          return reject(`Delete failed: ${errorMessage}`)
+        }
+
+        sftpRecursiveRmdir(sftp, remotePath)
+          .then(() => {
+            resolve({
+              status: 'success',
+              message: 'Directory deleted successfully',
+              deletedPath: remotePath
+            })
+          })
+          .catch((rmdirErr) => {
+            const errorMessage = rmdirErr instanceof Error ? rmdirErr.message : String(rmdirErr)
+            reject(`Delete failed: ${errorMessage}`)
+          })
+      })
     })
 }
 

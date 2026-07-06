@@ -312,7 +312,7 @@
                 </template>
 
                 <div
-                  v-if="!editableData[record.key] && !record.isDir && !record.isLink"
+                  v-if="!editableData[record.key] && !record.isLink"
                   class="hover-actions"
                   :data-record="record.name"
                 >
@@ -325,6 +325,21 @@
                       size="small"
                       :title="t('files.download')"
                       @click.stop="downloadFile(record as FileRecord)"
+                    >
+                      <template #icon>
+                        <DownloadOutlined />
+                      </template>
+                    </a-button>
+                  </a-tooltip>
+                  <a-tooltip
+                    v-if="record.isDir && !record.isLink && !isLocal"
+                    :title="t('files.downloadDirectory')"
+                  >
+                    <a-button
+                      type="text"
+                      size="small"
+                      :title="t('files.downloadDirectory')"
+                      @click.stop="downloadDirectory(record as FileRecord)"
                     >
                       <template #icon>
                         <DownloadOutlined />
@@ -396,10 +411,7 @@
                           <ScissorOutlined />
                           {{ $t('files.move') }}
                         </a-menu-item>
-                        <a-menu-item
-                          v-if="!record.isDir && !record.isLink"
-                          @click="deleteFile(record as FileRecord)"
-                        >
+                        <a-menu-item @click="deleteFile(record as FileRecord)">
                           <DeleteOutlined />
                           {{ $t('files.delete') }}
                         </a-menu-item>
@@ -410,24 +422,6 @@
                       </a-menu>
                     </template>
                   </a-dropdown>
-                </div>
-                <div
-                  v-if="!editableData[record.key] && record.isDir && !record.isLink && !isLocal"
-                  class="hover-actions"
-                  :data-record="record.name"
-                >
-                  <a-tooltip :title="t('files.downloadDirectory')">
-                    <a-button
-                      type="text"
-                      size="small"
-                      :title="t('files.downloadDirectory')"
-                      @click.stop="downloadDirectory(record as FileRecord)"
-                    >
-                      <template #icon>
-                        <DownloadOutlined />
-                      </template>
-                    </a-button>
-                  </a-tooltip>
                 </div>
               </div>
             </template>

@@ -1538,9 +1538,9 @@ const ensureHomeFor = async (id: string) => {
   if (!sid || isLocal(sid)) return
   const existing = remoteHomeMap.get(sid)
   api.sftpDebugLog('ensureHomeFor', { sid, existing })
-  // Only skip if HOME is a real asset path (starts with /home/),
-  // not a bastion virtual FS path like /A100/.../home/itouchtv
-  if (existing && existing.startsWith('/home/')) return
+  // Only skip if HOME is a real path (not root or empty),
+  // accepting both /home/username and bastion virtual FS paths like /A100/.../home/username.
+  if (existing && existing !== '/' && existing !== '') return
 
   // First fetch — may return bastion root while backend probes async.
   try {
@@ -1552,16 +1552,18 @@ const ensureHomeFor = async (id: string) => {
     remoteHomeMap.set(sid, '/')
   }
 
-  // If not yet resolved to real asset HOME, retry — the backend async probe may
-  // have updated sftpHomeMap by then.
-  if (!remoteHomeMap.get(sid)?.startsWith('/home/')) {
+  // If not yet resolved to a real HOME path, retry — the backend async probe may
+  // have updated sftpHomeMap by then. Accept any non-root path as valid.
+  const currentHome = remoteHomeMap.get(sid)
+  if (!currentHome || currentHome === '/') {
     for (let i = 0; i < 4; i++) {
       await new Promise((r) => setTimeout(r, 3000))
-      if (remoteHomeMap.get(sid)?.startsWith('/home/')) return
+      const cached = remoteHomeMap.get(sid)
+      if (cached && cached !== '/') return
       try {
         const retryHome = await api.sftpGetHome(sid)
         api.sftpDebugLog('ensureHomeFor retry', { sid, attempt: i + 1, home: retryHome })
-        if (retryHome?.startsWith('/home/')) {
+        if (retryHome && retryHome !== '/') {
           remoteHomeMap.set(sid, retryHome)
           return
         }
