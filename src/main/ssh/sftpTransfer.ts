@@ -621,7 +621,6 @@ const COMMON_HIDDEN_NAMES = [
   '.oracle_jre_usage',
   '.java',
   '.ldapvrc',
-  '.wget-hsts',
   '.dbshell',
   '.mysql_history',
   '.psql_history',
@@ -637,15 +636,8 @@ const COMMON_HIDDEN_NAMES = [
   '.esd_auth',
   '.pulse',
   '.pulse-cookie',
-  '.esd_auth',
   '.recently-used',
   '.recently-used.xbel',
-  '.local/share',
-  '.local/bin',
-  '.local/lib',
-  '.local/include',
-  '.config/xfce4',
-  '.config/google-chrome',
   '.configCode',
   '.vscode',
   '.vscode-server',
@@ -679,7 +671,6 @@ const COMMON_HIDDEN_NAMES = [
   '.ansible',
   '.kube',
   '.helm',
-  '.docker',
   '.ovh',
   '.aws',
   '.gcloud',
@@ -690,7 +681,6 @@ const COMMON_HIDDEN_NAMES = [
   '.wgetrc',
   '.curlrc',
   '.git-credentials',
-  '.gitconfig',
   '.mailmap',
   '.ignore',
   '.fdignore',
@@ -705,7 +695,7 @@ const COMMON_HIDDEN_NAMES = [
 // Probe common hidden files/directories via sftp.stat().
 // Returns entries that exist but were missing from readdir.
 const probeCommonHiddenFiles = async (sftp: any, reqPath: string, existingNames: string[]): Promise<any[]> => {
-  const existing = new Set(existingNames)
+  const seen = new Set(existingNames)
   const found: any[] = []
 
   // Probe in parallel batches of 10 to avoid overwhelming the SFTP server
@@ -714,7 +704,9 @@ const probeCommonHiddenFiles = async (sftp: any, reqPath: string, existingNames:
     const batch = COMMON_HIDDEN_NAMES.slice(i, i + batchSize)
     const results = await Promise.allSettled(
       batch.map(async (name) => {
-        if (existing.has(name)) return null
+        if (seen.has(name)) return null
+        // Skip subdirectory paths — only direct children belong in the listing
+        if (name.includes('/')) return null
         const fullPath = reqPath === '/' ? `/${name}` : `${reqPath}/${name}`
         const st = await new Promise<any>((res, rej) => {
           sftp.stat(fullPath, (err: Error | null, s?: any) => (err ? rej(err) : res(s)))
@@ -724,6 +716,7 @@ const probeCommonHiddenFiles = async (sftp: any, reqPath: string, existingNames:
     )
     for (const r of results) {
       if (r.status === 'fulfilled' && r.value) {
+        seen.add(r.value.filename)
         found.push(r.value)
       }
     }
@@ -859,12 +852,15 @@ export const readSftpDirWithFallback = async (
 }
 
 const formatSftpList = (list: any[], reqPath: string) => {
-  return (list || []).map((item) => {
+  const seen = new Set<string>()
+  const result: any[] = []
+  for (const item of list || []) {
     const name = item.filename
+    if (seen.has(name)) continue // deduplicate
+    seen.add(name)
     const attrs = item.attrs
     const prefix = reqPath === '/' ? '/' : reqPath + '/'
-
-    return {
+    result.push({
       name,
       path: prefix + name,
       isDir: attrs.isDirectory(),
@@ -872,8 +868,9 @@ const formatSftpList = (list: any[], reqPath: string) => {
       mode: '0' + (attrs.mode & 0o777).toString(8),
       modTime: fmtTime(new Date(attrs.mtime * 1000)),
       size: attrs.size
-    }
-  })
+    })
+  }
+  return result
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
