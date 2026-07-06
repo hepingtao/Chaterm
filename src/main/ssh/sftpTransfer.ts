@@ -556,6 +556,160 @@ export const enrichReaddirWithExecFallback = async (conn: any, sftp: any, reqPat
   return list
 }
 
+// Common hidden files/directories found in Linux home directories.
+// Used as a last-resort probe when exec and JumpServer exec stream are
+// unavailable — the SFTP server may filter dot files from readdir but still
+// allow stat on individual paths.
+const COMMON_HIDDEN_NAMES = [
+  '.bashrc',
+  '.bash_profile',
+  '.bash_history',
+  '.bash_logout',
+  '.profile',
+  '.ssh',
+  '.config',
+  '.cache',
+  '.local',
+  '.gitconfig',
+  '.vimrc',
+  '.viminfo',
+  '.env',
+  '.npmrc',
+  '.nvmrc',
+  '.python_history',
+  '.wget-hsts',
+  '.lesshst',
+  '.docker',
+  '.gnupg',
+  '.pki',
+  '.conda',
+  '.ipython',
+  '.jupyter',
+  '.git',
+  '.svn',
+  '.npm',
+  '.yarn',
+  '.pnpm',
+  '.cargo',
+  '.rustup',
+  '.go',
+  '.m2',
+  '.gradle',
+  '.android',
+  '.oracle_jre_usage',
+  '.java',
+  '.ldapvrc',
+  '.wget-hsts',
+  '.dbshell',
+  '.mysql_history',
+  '.psql_history',
+  '.rediscli_history',
+  '.mongorc.js',
+  '.mongohistory',
+  '.mozilla',
+  '.thunderbird',
+  '.ICEauthority',
+  '.Xauthority',
+  '.xsession-errors',
+  '.dmrc',
+  '.esd_auth',
+  '.pulse',
+  '.pulse-cookie',
+  '.esd_auth',
+  '.recently-used',
+  '.recently-used.xbel',
+  '.local/share',
+  '.local/bin',
+  '.local/lib',
+  '.local/include',
+  '.config/xfce4',
+  '.config/google-chrome',
+  '.configCode',
+  '.vscode',
+  '.vscode-server',
+  '.claude',
+  '.cursor',
+  '.trae',
+  '.zshrc',
+  '.zsh_history',
+  '.zprofile',
+  '.zshenv',
+  '.oh-my-zsh',
+  '.p10k.zsh',
+  '.tmux.conf',
+  '.tmux',
+  '.screenrc',
+  '.inputrc',
+  '.dir_colors',
+  '.dircolors',
+  '.emacs',
+  '.emacs.d',
+  '.spacemacs',
+  '.ideavimrc',
+  '.ctags',
+  '.ackrc',
+  '.ripgreprc',
+  '.editorconfig',
+  '.prettierrc',
+  '.eslintrc',
+  '.babelrc',
+  '.terraform.d',
+  '.ansible',
+  '.kube',
+  '.helm',
+  '.docker',
+  '.ovh',
+  '.aws',
+  '.gcloud',
+  '.azure',
+  '.heroku',
+  '.netrc',
+  '.ssh_config',
+  '.wgetrc',
+  '.curlrc',
+  '.git-credentials',
+  '.gitconfig',
+  '.mailmap',
+  '.ignore',
+  '.fdignore',
+  '.rgignore',
+  '.npmignore',
+  '.dockerignore',
+  '.eslintignore',
+  '.prettierignore',
+  '.gitignore'
+]
+
+// Probe common hidden files/directories via sftp.stat().
+// Returns entries that exist but were missing from readdir.
+const probeCommonHiddenFiles = async (sftp: any, reqPath: string, existingNames: string[]): Promise<any[]> => {
+  const existing = new Set(existingNames)
+  const found: any[] = []
+
+  // Probe in parallel batches of 10 to avoid overwhelming the SFTP server
+  const batchSize = 10
+  for (let i = 0; i < COMMON_HIDDEN_NAMES.length; i += batchSize) {
+    const batch = COMMON_HIDDEN_NAMES.slice(i, i + batchSize)
+    const results = await Promise.allSettled(
+      batch.map(async (name) => {
+        if (existing.has(name)) return null
+        const fullPath = reqPath === '/' ? `/${name}` : `${reqPath}/${name}`
+        const st = await new Promise<any>((res, rej) => {
+          sftp.stat(fullPath, (err: Error | null, s?: any) => (err ? rej(err) : res(s)))
+        })
+        return { filename: name, attrs: wrapSftpAttrs(st) }
+      })
+    )
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value) {
+        found.push(r.value)
+      }
+    }
+  }
+
+  return found
+}
+
 export const readSftpDirWithFallback = async (
   sftp: any,
   reqPath: string,
@@ -657,6 +811,24 @@ export const readSftpDirWithFallback = async (
           path: reqPath,
           error: e?.message || String(e)
         })
+      }
+    }
+
+    // Strategy 3: Probe common hidden files via sftp.stat()
+    // Works even when exec is unavailable (e.g. JumpServer SFTP proxy on port
+    // 2222 intercepts the exec channel and returns menu text instead of ls
+    // output). The SFTP server may filter dot files from readdir but still
+    // allow stat on individual paths.
+    {
+      const probed = await probeCommonHiddenFiles(sftp, reqPath, rawNames)
+      if (probed.length > 0) {
+        const enriched = [...(list || []), ...probed]
+        homeDebug('[sftp:list] stat probe succeeded', {
+          path: reqPath,
+          probed: probed.length,
+          total: enriched.length
+        })
+        return enriched
       }
     }
   }
