@@ -920,6 +920,7 @@ const loadFiles = async (uuid: string, filePath: string): Promise<void> => {
   filePath = fixPath(filePath)
   loading.value = true
   showErr.value = false
+  clearSelection()
   errTips.value = ''
 
   await nextTick()
@@ -1115,6 +1116,33 @@ const joinPath = (...parts: string[]) => {
 // Transfer mode drag & drop (cross-panel)
 const DND_MIME = 'application/x-synchro-fs-item'
 
+// Multi-select state for drag-and-drop (Ctrl+click to select multiple)
+const selectedKeys = ref<Set<string>>(new Set())
+
+const toggleSelection = (record: FileRecord, ctrlKey: boolean) => {
+  const selKey = record.key || record.name
+  if (record.key === '..' || record.disabled) return
+  if (uiMode.value !== 'transfer') return
+
+  if (ctrlKey) {
+    const next = new Set(selectedKeys.value)
+    if (next.has(selKey)) {
+      next.delete(selKey)
+    } else {
+      next.add(selKey)
+    }
+    selectedKeys.value = next
+  } else {
+    // Single click without Ctrl clears selection (unless clicking a directory
+    // name cell which handles navigation separately)
+    selectedKeys.value = new Set()
+  }
+}
+
+const clearSelection = () => {
+  selectedKeys.value = new Set()
+}
+
 // Fallback channel for cross-component drag context (dragover may not expose custom MIME on some browsers)
 const GLOBAL_DND_FROM_SIDE_KEY = '__synchro_fs_dnd_from_side__'
 const setGlobalDragFromSide = (side: string | null) => {
@@ -1226,13 +1254,35 @@ const onRowDragStart = (e: DragEvent, record: FileRecord) => {
   if (record.key === '..' || record.disabled || record.isLink) return
 
   e.dataTransfer.effectAllowed = 'copy'
+
+  // Build items array: if the dragged record is in the selection, drag all
+  // selected records; otherwise drag only this record.
+  const selKey = record.key || record.name
+  const isSelected = selectedKeys.value.has(selKey)
+  const allSelected = isSelected && selectedKeys.value.size > 1
+
+  let items: Array<{ srcPath: string; name: string; isDir: boolean }>
+  if (allSelected) {
+    items = files.value
+      .filter((f) => {
+        const k = f.key || f.name
+        return selectedKeys.value.has(k) && !f.disabled && !f.isLink
+      })
+      .map((f) => ({ srcPath: f.path, name: f.name, isDir: !!f.isDir }))
+  } else {
+    items = [{ srcPath: record.path, name: record.name, isDir: !!record.isDir }]
+  }
+
   const data = {
     kind: 'fs-item',
     fromUuid: props.uuid,
     fromSide: panelSide.value,
+    // Primary item (backward compat for single-item drops)
     srcPath: record.path,
     name: record.name,
-    isDir: !!record.isDir
+    isDir: !!record.isDir,
+    // All selected items (for multi-item drops)
+    items
   }
 
   e.dataTransfer.setData(DND_MIME, JSON.stringify(data))
@@ -1604,7 +1654,21 @@ const customRow = (record: FileRecord) => {
   const row: any = {
     class: getRowClass(record.name),
     onMouseenter: () => handleRowMouseEnter(record.name),
-    onMouseleave: () => handleRowMouseLeave(record.name)
+    onMouseleave: () => handleRowMouseLeave(record.name),
+    onClick: (e: MouseEvent) => {
+      // Ctrl+click toggles multi-select for drag-and-drop
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault()
+        e.stopPropagation()
+        toggleSelection(record, true)
+      } else {
+        // Plain click clears selection (navigation is handled by the
+        // directory name cell's @click handler)
+        if (selectedKeys.value.size > 0) {
+          clearSelection()
+        }
+      }
+    }
   }
 
   if (uiMode.value === 'transfer' && panelSide.value) {
@@ -1624,6 +1688,11 @@ const getRowClass = (recordName) => {
   // Hover (mouse) actions
   if (currentHoverRow.value === recordName || dropdownVisible[recordName] || mouseInDropdown[recordName]) {
     classes.push('file-table-row-hover')
+  }
+
+  // Multi-select highlight
+  if (recordName && selectedKeys.value.has(recordName)) {
+    classes.push('file-table-row-selected')
   }
 
   // Hover (drag) folder target
@@ -2375,6 +2444,14 @@ defineExpose({
 .files-table :deep(.ant-table-tbody > tr.file-table-row-drag-hover) > td {
   background-color: var(--hover-bg-color) !important;
   outline-offset: -1px;
+}
+
+.files-table :deep(.ant-table-tbody > tr.file-table-row-selected) > td {
+  background-color: rgba(24, 144, 255, 0.12) !important;
+}
+
+.files-table :deep(.ant-table-tbody > tr.file-table-row-selected:hover) > td {
+  background-color: rgba(24, 144, 255, 0.18) !important;
 }
 
 .transfer-drop-zone.drop-not-allowed {

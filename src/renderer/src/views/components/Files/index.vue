@@ -2279,6 +2279,8 @@ interface CrossTransferPayload {
   toUuid: string
   toSide: PanelSide
   targetDir: string
+  // Multiple items (for multi-select drag-and-drop)
+  items?: Array<{ srcPath: string; name: string; isDir: boolean }>
 }
 
 // simple POSIX-like join (backend side usually normalizes)
@@ -2371,50 +2373,56 @@ const handleCrossTransfer = async (p: CrossTransferPayload) => {
   if (!p || p.kind !== 'fs-item') return
   if (p.fromSide === p.toSide) return
   if (p.fromUuid === p.toUuid) return
+
+  // Build the list of items to transfer (supports multi-select DnD)
+  const items = p.items && p.items.length > 0 ? p.items : [{ srcPath: p.srcPath, name: p.name, isDir: p.isDir }]
+
   try {
-    // local -> remote
-    if (isLocalId(p.fromUuid) && !isLocalId(p.toUuid)) {
-      const res = p.isDir
-        ? await api.uploadDirectory({ id: p.toUuid, localPath: p.srcPath, remotePath: p.targetDir })
-        : await api.uploadFile({ id: p.toUuid, localPath: p.srcPath, remotePath: p.targetDir })
-      notifyByStatus(res, 'upload', p.toUuid)
-      return
-    }
-
-    // remote -> local
-    if (!isLocalId(p.fromUuid) && isLocalId(p.toUuid)) {
-      if (p.isDir) {
-        const res = await api.downloadDirectory({ id: p.fromUuid, remoteDir: p.srcPath, localDir: p.targetDir })
-        notifyByStatus(res, 'download', p.toUuid)
-      } else {
-        const localPath = joinPath(p.targetDir, p.name)
-        const res = await api.downloadFile({ id: p.fromUuid, remotePath: p.srcPath, localPath })
-        notifyByStatus(res, 'download', p.toUuid)
+    for (const item of items) {
+      // local -> remote
+      if (isLocalId(p.fromUuid) && !isLocalId(p.toUuid)) {
+        const res = item.isDir
+          ? await api.uploadDirectory({ id: p.toUuid, localPath: item.srcPath, remotePath: p.targetDir })
+          : await api.uploadFile({ id: p.toUuid, localPath: item.srcPath, remotePath: p.targetDir })
+        notifyByStatus(res, 'upload', p.toUuid)
+        continue
       }
-      return
-    }
 
-    // remote -> remote
-    if (!isLocalId(p.fromUuid) && !isLocalId(p.toUuid)) {
-      const res = p.isDir
-        ? await api.transferDirectoryRemoteToRemote({
-            fromId: p.fromUuid,
-            toId: p.toUuid,
-            fromDir: p.srcPath,
-            toDir: p.targetDir,
-            autoRename: true,
-            concurrency: 3
-          })
-        : await api.transferFileRemoteToRemote({
-            fromId: p.fromUuid,
-            toId: p.toUuid,
-            fromPath: p.srcPath,
-            toPath: joinPath(p.targetDir, p.name),
-            autoRename: true
-          })
+      // remote -> local
+      if (!isLocalId(p.fromUuid) && isLocalId(p.toUuid)) {
+        if (item.isDir) {
+          const res = await api.downloadDirectory({ id: p.fromUuid, remoteDir: item.srcPath, localDir: p.targetDir })
+          notifyByStatus(res, 'download', p.toUuid)
+        } else {
+          const localPath = joinPath(p.targetDir, item.name)
+          const res = await api.downloadFile({ id: p.fromUuid, remotePath: item.srcPath, localPath })
+          notifyByStatus(res, 'download', p.toUuid)
+        }
+        continue
+      }
 
-      notifyByStatus(res, 'transfer', p.toUuid, { fromUuid: p.fromUuid, toUuid: p.toUuid })
-      return
+      // remote -> remote
+      if (!isLocalId(p.fromUuid) && !isLocalId(p.toUuid)) {
+        const res = item.isDir
+          ? await api.transferDirectoryRemoteToRemote({
+              fromId: p.fromUuid,
+              toId: p.toUuid,
+              fromDir: item.srcPath,
+              toDir: p.targetDir,
+              autoRename: true,
+              concurrency: 3
+            })
+          : await api.transferFileRemoteToRemote({
+              fromId: p.fromUuid,
+              toId: p.toUuid,
+              fromPath: item.srcPath,
+              toPath: joinPath(p.targetDir, item.name),
+              autoRename: true
+            })
+
+        notifyByStatus(res, 'transfer', p.toUuid, { fromUuid: p.fromUuid, toUuid: p.toUuid })
+        continue
+      }
     }
   } catch (err: any) {
     message.error(`${t('transferFailed')}：${(err as Error)?.message || String(err)}`)
