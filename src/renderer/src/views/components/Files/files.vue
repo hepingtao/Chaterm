@@ -216,7 +216,11 @@
                 class="file-name-cell"
                 :class="{ 'dir-name-cell-clickable': !editableData[record.key] && record.isDir }"
                 style="position: relative"
-                @click="!editableData[record.key] && record.isDir && rowClick(record as FileRecord)"
+                @click="
+                  (e) => {
+                    if (!(e.ctrlKey || e.metaKey) && !editableData[record.key] && record.isDir) rowClick(record as FileRecord)
+                  }
+                "
               >
                 <template v-if="editableData[record.key]">
                   <span style="position: absolute; top: 0; left: 0; display: flex; align-items: center; padding-right: 8px">
@@ -1048,7 +1052,7 @@ const createNewFolder = async () => {
             h('p', { style: 'margin-bottom: 8px' }, t('files.newFolderPrompt')),
             h('input', {
               class: 'ant-input',
-              style: 'width: 100%',
+              style: 'width: 100%; background: transparent; color: inherit;',
               placeholder: 'folder_name',
               autofocus: true,
               onInput: (e: any) => {
@@ -1120,9 +1124,8 @@ const DND_MIME = 'application/x-synchro-fs-item'
 const selectedKeys = ref<Set<string>>(new Set())
 
 const toggleSelection = (record: FileRecord, ctrlKey: boolean) => {
-  const selKey = record.key || record.name
+  const selKey = record.name
   if (record.key === '..' || record.disabled) return
-  if (uiMode.value !== 'transfer') return
 
   if (ctrlKey) {
     const next = new Set(selectedKeys.value)
@@ -1257,7 +1260,7 @@ const onRowDragStart = (e: DragEvent, record: FileRecord) => {
 
   // Build items array: if the dragged record is in the selection, drag all
   // selected records; otherwise drag only this record.
-  const selKey = record.key || record.name
+  const selKey = record.name
   const isSelected = selectedKeys.value.has(selKey)
   const allSelected = isSelected && selectedKeys.value.size > 1
 
@@ -1265,8 +1268,7 @@ const onRowDragStart = (e: DragEvent, record: FileRecord) => {
   if (allSelected) {
     items = files.value
       .filter((f) => {
-        const k = f.key || f.name
-        return selectedKeys.value.has(k) && !f.disabled && !f.isLink
+        return selectedKeys.value.has(f.name) && !f.disabled && !f.isLink
       })
       .map((f) => ({ srcPath: f.path, name: f.name, isDir: !!f.isDir }))
   } else {

@@ -55,7 +55,7 @@ import { randomUUID } from 'crypto'
 import { getAlgorithmsByAssetType } from './algorithms'
 import { connectBastionByType, shellBastionSession, resizeBastionSession, writeBastionSession, disconnectBastionSession } from './bastionPlugin'
 import { shouldSkipPostConnectProbe } from './postConnectProbePolicy'
-import { sftpConnectionInfoMap } from './sftpTransfer'
+import { sftpConnectionInfoMap, formatBackupSuffix } from './sftpTransfer'
 import { generateOtpForHost } from './otp/otpStore'
 
 // Maximum buffer size before forcing an immediate flush (prevents unbounded growth during bulk output)
@@ -1518,12 +1518,17 @@ export const getUniqueRemoteName = async (sftp: SFTPWrapper, remoteDir: string, 
     existing = new Set(list.filter((f) => f.attrs.isDirectory()).map((f) => f.filename))
   }
 
-  let finalName = originalName
-  const { name, ext } = path.parse(originalName)
-  let count = 1
+  // No conflict: keep original name
+  if (!existing.has(originalName)) return originalName
 
+  // Conflict: append timestamp suffix originalName.YYYYmmdd-HH24MISS
+  const suffix = formatBackupSuffix(new Date())
+  let finalName = `${originalName}.${suffix}`
+
+  // Rare same-second collision: append incrementing counter
+  let count = 1
   while (existing.has(finalName)) {
-    finalName = `${name}${ext}.${count}`
+    finalName = `${originalName}.${suffix}.${count}`
     count++
   }
 
