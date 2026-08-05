@@ -260,10 +260,34 @@ export const liteLlmModelInfoSaneDefaults: LiteLLMModelInfo = {
 }
 
 // DeepSeek
-// https://api-docs.deepseek.com/quick_start/pricing
+// https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+// V4 系列已上线，旧模型名 deepseek-chat / deepseek-reasoner 已于 2026/07/24 23:59 弃用，
+// 官方说明二者分别对应 deepseek-v4-flash 的非思考与思考模式。保留旧 ID 仅作向后兼容。
 export type DeepSeekModelId = keyof typeof deepSeekModels
-export const deepSeekDefaultModelId: DeepSeekModelId = 'deepseek-chat'
+export const deepSeekDefaultModelId: DeepSeekModelId = 'deepseek-v4-flash'
 export const deepSeekModels = {
+  // V4 系列（官方现行模型）
+  'deepseek-v4-flash': {
+    maxTokens: 384_000, // 官方最大输出长度 384K
+    contextWindow: 1_000_000, // 官方上下文长度 1M
+    supportsImages: false,
+    supportsPromptCache: true, // 支持 KV Cache（缓存命中 0.02 元/百万，未命中 1 元/百万）
+    inputPrice: 0, // 没有独立的输入价，输入按缓存命中/未命中分别计费
+    outputPrice: 2, // 元/百万 tokens
+    cacheWritesPrice: 1, // 缓存未命中输入价
+    cacheReadsPrice: 0.02 // 缓存命中输入价
+  },
+  'deepseek-v4-pro': {
+    maxTokens: 384_000,
+    contextWindow: 1_000_000,
+    supportsImages: false,
+    supportsPromptCache: true,
+    inputPrice: 0,
+    outputPrice: 6, // 元/百万 tokens
+    cacheWritesPrice: 3, // 缓存未命中输入价
+    cacheReadsPrice: 0.025 // 缓存命中输入价
+  },
+  // 旧模型 ID（官方已弃用，保留以兼容存量配置；分别映射到 v4-flash 的非思考/思考模式）
   'deepseek-chat': {
     maxTokens: 8_000,
     contextWindow: 64_000,

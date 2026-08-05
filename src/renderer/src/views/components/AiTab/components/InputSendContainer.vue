@@ -1140,9 +1140,6 @@ onBeforeUnmount(() => {
     line-height: 20px !important;
     padding-top: 2px !important;
     padding-bottom: 2px !important;
-    max-width: 150px;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
 
     .tag-delete-btn {

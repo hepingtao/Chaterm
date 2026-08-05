@@ -412,7 +412,6 @@ defineExpose({
   border-right: 1px solid var(--border-color);
   background-color: var(--bg-color);
   min-width: 120px;
-  max-width: 320px;
   color: var(--text-color);
 }
 
@@ -425,8 +424,6 @@ defineExpose({
   flex: 1;
   font-size: 12px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   cursor: pointer;
   color: var(--text-color);
 }

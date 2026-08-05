@@ -503,7 +503,7 @@ interface MainMenuItem {
   svgSrc?: string
 }
 
-const showHostsMenuItem = computed(() => props.workspace !== 'database' && chatTypeValue.value === 'agent')
+const showHostsMenuItem = computed(() => props.workspace !== 'database' && chatTypeValue.value !== 'chat')
 
 const mainMenuItems = computed<MainMenuItem[]>(() => {
   const items: MainMenuItem[] = []
@@ -540,7 +540,9 @@ void searchInputRef
 .context-select-popup {
   --popup-bg-color: var(--bg-color);
 
-  width: 260px;
+  width: max-content;
+  min-width: 260px;
+  max-width: 480px;
   border-radius: 6px;
   box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
   border: 1px solid var(--border-color);
@@ -655,8 +657,6 @@ void searchInputRef
 
   .menu-label {
     flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
@@ -685,8 +685,6 @@ void searchInputRef
   .menu-sublabel {
     font-size: 10px;
     color: var(--text-color-tertiary);
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
@@ -768,8 +766,6 @@ void searchInputRef
 
   .item-label {
     flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
 

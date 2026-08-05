@@ -69,7 +69,7 @@ export const useContext = (options: UseContextOptions = {}) => {
 
   const mainMenuItems = computed<ContextMenuLevel[]>(() => {
     const items: ContextMenuLevel[] = []
-    if (chatTypeValue.value !== 'chat') {
+    if (workspace !== 'database' && chatTypeValue.value !== 'chat') {
       items.push('hosts')
     }
     items.push('docs', 'skills', 'chats')
