@@ -209,8 +209,15 @@ export class LiteLlmHandler implements ApiHandler {
     const stream = await this.client.chat.completions.create(params)
 
     let usageInfo: OpenAI.CompletionUsage | undefined | null = undefined
-    // GLM models with -Thinking suffix output <thinking>...</thinking> tags when thinking mode is enabled
-    const glmThinkingParser = isGlmModel && reasoningOn ? createGlmThinkingParser() : null
+    // GLM models emit inline thinking tags in the content stream:
+    // - -Thinking suffix models: <thinking>...</thinking>
+    // - hybrid models without the suffix: <think>...</think> when server-side
+    //   thinking is enabled
+    // Without the parser, thinking streams as plain text and every chunk hits
+    // the full-message re-parse in handleTextChunk (O(n^2) in the main
+    // process), freezing the app on long thinking. Non-thinking responses
+    // pass through the parser unchanged.
+    const glmThinkingParser = isGlmModel ? createGlmThinkingParser() : null
 
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta
@@ -335,14 +342,39 @@ type LiteLlmStreamEvent =
       reasoning: string
     }
 
-// Streaming helper that splits GLM's inline <thinking> blocks into incremental reasoning/text events
+// Streaming helper that splits GLM's inline thinking blocks into incremental reasoning/text events.
+// Handles both tag formats GLM emits:
+// - <think>...</think> (hybrid models without the -Thinking suffix)
+// - <thinking>...</thinking> (-Thinking suffix models)
 function createGlmThinkingParser() {
-  const START_TAG = '<thinking>'
-  const END_TAG = '</thinking>'
-  const START_TAG_LENGTH = START_TAG.length
-  const END_TAG_LENGTH = END_TAG.length
+  // Common prefix of both opening tags; a candidate found via indexOf is
+  // classified by the characters that follow it.
+  const OPEN_PREFIX = '<think'
+  const OPEN_LONG = '<thinking>'
   let buffer = ''
-  let insideThinking = false
+  // null = outside thinking; otherwise we are inside that tag's block
+  let activeTag: 'think' | 'thinking' | null = null
+
+  const closeTagFor = (tag: 'think' | 'thinking'): string => `</${tag}>`
+
+  // Emits [from, to) as text (skipping empty segments)
+  const pushText = (events: LiteLlmStreamEvent[], from: number, to: number) => {
+    if (to > from) {
+      events.push({ type: 'text', text: buffer.slice(from, to) })
+    }
+  }
+
+  // Emits the remainder of the buffer as text, holding back a trailing
+  // partial open-tag suffix (prefixes of '<thinking>' cover '<think>' too)
+  const flushTextWithHoldback = (events: LiteLlmStreamEvent[], from: number): number => {
+    const remaining = buffer.slice(from)
+    const partialTagLength = getPartialTagSuffixLength(remaining, OPEN_LONG)
+    const safeEnd = Math.max(from, buffer.length - partialTagLength)
+    if (safeEnd > from) {
+      events.push({ type: 'text', text: buffer.slice(from, safeEnd) })
+    }
+    return safeEnd
+  }
 
   const process = (content: string): LiteLlmStreamEvent[] => {
     buffer += content
@@ -350,35 +382,65 @@ function createGlmThinkingParser() {
     let cursor = 0
 
     while (cursor < buffer.length) {
-      if (!insideThinking) {
-        const startIdx = buffer.indexOf(START_TAG, cursor)
+      if (activeTag === null) {
+        const startIdx = buffer.indexOf(OPEN_PREFIX, cursor)
         if (startIdx === -1) {
-          const remaining = buffer.slice(cursor)
-          const partialTagLength = getPartialTagSuffixLength(remaining, START_TAG)
-          const safeEnd = Math.max(cursor, buffer.length - partialTagLength)
+          // No tag candidate: emit text, holding back a partial-tag suffix
+          const safeEnd = flushTextWithHoldback(events, cursor)
           if (safeEnd <= cursor) {
             break
           }
-          const textSegment = buffer.slice(cursor, safeEnd)
-          if (textSegment) {
-            events.push({ type: 'text', text: textSegment })
+          cursor = safeEnd
+          continue
+        }
+
+        const after = startIdx + OPEN_PREFIX.length // char right after '<think'
+        if (after >= buffer.length) {
+          // Buffer ends mid-candidate ('...<think'): emit text before it and
+          // hold the candidate back until more data arrives
+          pushText(events, cursor, startIdx)
+          cursor = startIdx
+          break
+        }
+        if (buffer[after] === '>') {
+          // <think>
+          pushText(events, cursor, startIdx)
+          activeTag = 'think'
+          cursor = after + 1
+          continue
+        }
+        if (buffer.startsWith(OPEN_LONG, startIdx)) {
+          // <thinking>
+          pushText(events, cursor, startIdx)
+          activeTag = 'thinking'
+          cursor = startIdx + OPEN_LONG.length
+          continue
+        }
+        if (buffer[after] === 'i' && startIdx + OPEN_LONG.length > buffer.length) {
+          // '<thinki…' can still become '<thinking>': hold it back
+          pushText(events, cursor, startIdx)
+          cursor = startIdx
+          break
+        }
+        // False candidate (e.g. '<thought', '<thinker', '<thinking about'):
+        // plain text — resume scanning at the next '<' after it
+        const nextLt = buffer.indexOf('<', startIdx + 1)
+        if (nextLt === -1) {
+          const safeEnd = flushTextWithHoldback(events, cursor)
+          if (safeEnd <= cursor) {
+            break
           }
           cursor = safeEnd
         } else {
-          if (startIdx > cursor) {
-            const textSegment = buffer.slice(cursor, startIdx)
-            if (textSegment) {
-              events.push({ type: 'text', text: textSegment })
-            }
-          }
-          cursor = startIdx + START_TAG_LENGTH
-          insideThinking = true
+          pushText(events, cursor, nextLt)
+          cursor = nextLt
         }
       } else {
-        const endIdx = buffer.indexOf(END_TAG, cursor)
+        const endTag = closeTagFor(activeTag)
+        const endIdx = buffer.indexOf(endTag, cursor)
         if (endIdx === -1) {
           const remaining = buffer.slice(cursor)
-          const partialTagLength = getPartialTagSuffixLength(remaining, END_TAG)
+          const partialTagLength = getPartialTagSuffixLength(remaining, endTag)
           const safeEnd = Math.max(cursor, buffer.length - partialTagLength)
           if (safeEnd <= cursor) {
             break
@@ -393,8 +455,8 @@ function createGlmThinkingParser() {
           if (reasoningSegment) {
             events.push({ type: 'reasoning', reasoning: reasoningSegment })
           }
-          cursor = endIdx + END_TAG_LENGTH
-          insideThinking = false
+          cursor = endIdx + endTag.length
+          activeTag = null
         }
       }
     }
@@ -408,12 +470,13 @@ function createGlmThinkingParser() {
       return []
     }
     const events: LiteLlmStreamEvent[] = []
-    if (insideThinking) {
+    if (activeTag !== null) {
       events.push({ type: 'reasoning', reasoning: buffer })
     } else {
       events.push({ type: 'text', text: buffer })
     }
     buffer = ''
+    activeTag = null
     return events
   }
 

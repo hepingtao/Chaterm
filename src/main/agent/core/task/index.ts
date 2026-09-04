@@ -297,6 +297,12 @@ export class Task {
   // streaming
   isWaitingForFirstChunk = false
   isStreaming = false
+  // Reasoning 流式节流:思考内容按 chunk 累积后是全量文本,若每个 chunk 都
+  // 通过 IPC 发送完整累积结果,总传输量为 O(n²),长思考会拖垮主进程和渲染
+  // 进程。这里按固定间隔只发送最新快照,结束时兜底补发。
+  private lastReasoningSentAt = 0
+  private lastReasoningSentLength = 0
+  private readonly reasoningStreamThrottleMs = 100
 
   private currentStreamingContentIndex = 0
   private assistantMessageContent: AssistantMessageContent[] = []
@@ -2054,7 +2060,10 @@ export class Task {
       await new Promise((resolve) => setTimeout(resolve, 100))
 
       const lastMessage = this.chatermMessages.at(-1)
-      if (lastMessage?.say === 'command_output') {
+      // Same guard as executeCommandTool: never finalize a command_output
+      // that belongs to a previous command/host (no-output commands never
+      // emitted their own partial).
+      if (lastMessage?.say === 'command_output' && lastMessage.partial && this.isSameHost(lastMessage, hostInfo)) {
         await this.say('command_output', lastMessage.text, false, hostInfo)
       }
 
@@ -2203,7 +2212,12 @@ export class Task {
       await new Promise((resolve) => setTimeout(resolve, 100))
 
       const lastMessage = this.chatermMessages.at(-1)
-      if (lastMessage?.say === 'command_output') {
+      // Only finalize when the last message is THIS execution's own partial
+      // output. When the command produced no output (e.g. grep with no match
+      // on this host), no partial was ever sent and at(-1) belongs to a
+      // previous host/command — re-sending its text here would duplicate that
+      // output misattributed to the current host.
+      if (lastMessage?.say === 'command_output' && lastMessage.partial && this.isSameHost(lastMessage, hostInfo)) {
         await this.say('command_output', lastMessage.text, false, hostInfo)
       }
       result = result.trim()
@@ -2718,6 +2732,8 @@ export class Task {
     let assistantMessage = ''
     let reasoningMessage = ''
     this.isStreaming = true
+    this.lastReasoningSentAt = 0
+    this.lastReasoningSentLength = 0
 
     const abortStream = async (cancelReason: ChatermApiReqCancelReason, streamingFailedMessage?: string) => {
       await this.handleStreamAbort(assistantMessage, cancelReason, streamingFailedMessage, messageUpdater)
@@ -2749,6 +2765,19 @@ export class Task {
       }
     } finally {
       this.isStreaming = false
+      // 兜底:流结束时若还有未发送的思考内容(节流窗口内被跳过,且没有
+      // 后续 text chunk 触发 finalize),补发最终快照,避免内容缺失
+      if (!this.abort && reasoningMessage && assistantMessage.length === 0 && reasoningMessage.length !== this.lastReasoningSentLength) {
+        this.lastReasoningSentLength = reasoningMessage.length
+        try {
+          await this.say('reasoning', reasoningMessage, true)
+        } catch (error) {
+          logger.debug('Failed to flush final reasoning snapshot', {
+            event: 'agent.task.reasoning.flush_failed',
+            error: error instanceof Error ? error.message : String(error)
+          })
+        }
+      }
     }
 
     return assistantMessage
@@ -2766,7 +2795,14 @@ export class Task {
   private async handleReasoningChunk(chunk: ApiStreamReasoningChunk, reasoningMessage: string): Promise<string> {
     reasoningMessage += chunk.reasoning
     if (!this.abort) {
-      await this.say('reasoning', reasoningMessage, true)
+      // 节流:思考文本是全量累积的,每个 chunk 都发送会产生 IPC 洪泛,
+      // 只按固定间隔发送最新快照;完整内容由首个 text chunk 或流结束时补发
+      const now = Date.now()
+      if (now - this.lastReasoningSentAt >= this.reasoningStreamThrottleMs) {
+        this.lastReasoningSentAt = now
+        this.lastReasoningSentLength = reasoningMessage.length
+        await this.say('reasoning', reasoningMessage, true)
+      }
     }
     return reasoningMessage
   }

@@ -10,6 +10,7 @@ import { hasNoAssetsPrompt, createNoAssetsError } from '../../../ssh/jumpserver/
 import { handleJumpServerUserSelectionWithWindow } from '../../../ssh/jumpserver/userSelection'
 import { jumpserverConnections as globalJumpserverConnections } from '../../../ssh/jumpserverHandle'
 import { jumpserverPendingData } from '../../../ssh/jumpserver/state'
+import { generateOtpForHost } from '../../../ssh/otp/otpStore'
 const logger = createLogger('remote-terminal')
 
 // Store JumpServer connections
@@ -36,9 +37,16 @@ const findReusableConnection = (jumpserverUuid?: string) => {
     return null
   }
 
+  // Reuse agent-side sessions for the same JumpServer. Both 'shared' (agent
+  // session reusing a foreign connection) and 'agent' (connection created by
+  // the agent itself) entries expose an authenticated conn — a new shell()
+  // channel on it starts a fresh JumpServer menu session, so a second host
+  // behind the same JumpServer must NOT trigger a new MFA prompt.
+  // Previously only 'shared' matched, so every additional host created a new
+  // connection and re-prompted OTP for each host.
   for (const [id, status] of jumpserverConnectionStatus.entries()) {
     const context = status as { source?: string; jumpserverUuid?: string } | undefined
-    if (context?.jumpserverUuid === jumpserverUuid && context.source === 'shared') {
+    if (context?.jumpserverUuid === jumpserverUuid && (context.source === 'shared' || context.source === 'agent')) {
       const existingConn = jumpserverConnections.get(id)
       if (existingConn) {
         return { conn: existingConn as Client }
@@ -520,17 +528,45 @@ export const handleJumpServerConnection = async (connectionInfo: {
         // Use simplified MFA handling directly
         const promptTexts = prompts.map((p: any) => p.prompt)
 
-        // Send MFA request to frontend
+        // Try to auto-fill OTP from the saved secret store before showing the
+        // dialog — same behavior as sshHandle.ts and jumpserver/mfa.ts. Without
+        // this, the agent path always popped the manual OTP dialog even when
+        // the user had saved the OTP secret for this bastion host.
+        if (connectionInfo.host) {
+          try {
+            const otpCode = await generateOtpForHost(connectionInfo.host)
+            if (otpCode) {
+              logger.info('Auto-filling OTP from saved secret', {
+                event: 'remote-terminal.jumpserver.otp-autofill',
+                connectionId,
+                host: connectionInfo.host
+              })
+              finish([otpCode])
+              return
+            }
+          } catch (otpError) {
+            logger.warn('Failed to auto-fill OTP, falling back to manual input', {
+              event: 'remote-terminal.jumpserver.otp-autofill.failed',
+              connectionId,
+              host: connectionInfo.host,
+              error: otpError instanceof Error ? otpError.message : String(otpError)
+            })
+          }
+        }
+
+        // Send MFA request to frontend (host enables the "save OTP secret"
+        // section in the dialog)
         const { BrowserWindow } = require('electron')
         const mainWindow = BrowserWindow.getAllWindows()[0]
         if (mainWindow) {
           mainWindow.webContents.send('ssh:keyboard-interactive-request', {
             id: connectionId,
-            prompts: promptTexts
+            prompts: promptTexts,
+            host: connectionInfo.host || null
           })
         }
 
-        // Set timeout
+        // Set timeout (aligned with the 180s OTP timeout used elsewhere)
         const timeoutId = setTimeout(() => {
           ipcMain.removeAllListeners(`ssh:keyboard-interactive-response:${connectionId}`)
           ipcMain.removeAllListeners(`ssh:keyboard-interactive-cancel:${connectionId}`)
@@ -539,7 +575,7 @@ export const handleJumpServerConnection = async (connectionInfo: {
             mainWindow.webContents.send('ssh:keyboard-interactive-timeout', { id: connectionId })
           }
           reject(new Error('Two-factor authentication timeout'))
-        }, 30000) // 30 second timeout
+        }, 180000) // 180 second timeout
 
         // Listen for user response
         ipcMain.once(`ssh:keyboard-interactive-response:${connectionId}`, (_evt: any, responses: string[]) => {
@@ -685,10 +721,36 @@ export const jumpServerDisconnect = async (sessionId: string): Promise<{ status:
   }
 
   const conn = jumpserverConnections.get(sessionId)
-  if (conn && status?.source !== 'shared') {
-    conn.end()
+  if (conn) {
+    // The same underlying conn may now back multiple agent sessions (each
+    // host behind the JumpServer opens its own shell channel on it). Only
+    // end the conn when this is the last agent session using it AND it is
+    // not owned by a terminal/global connection (source === 'shared' means
+    // the conn came from the global pool and must be left to its owner).
+    let inUseByOtherAgentSession = false
+    for (const [otherId, otherConn] of jumpserverConnections.entries()) {
+      if (otherId !== sessionId && otherConn === conn) {
+        inUseByOtherAgentSession = true
+        break
+      }
+    }
+
+    let ownedByGlobalSession = false
+    if (status?.source === 'shared') {
+      for (const data of globalJumpserverConnections.values()) {
+        if ((data as { conn?: Client } | undefined)?.conn === conn) {
+          ownedByGlobalSession = true
+          break
+        }
+      }
+    }
+
+    if (!inUseByOtherAgentSession && !ownedByGlobalSession) {
+      conn.end()
+    }
   }
 
+  jumpserverConnections.delete(sessionId)
   jumpserverConnectionStatus.delete(sessionId)
 
   if (stream || conn) {

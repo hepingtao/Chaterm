@@ -284,6 +284,27 @@ export function parseAssistantMessageV2(assistantMessage: string): AssistantMess
   for (let i = 0; i < len; i++) {
     const currentCharIndex = i
 
+    // Fast path: every tag this parser recognizes (tool open/close, param
+    // open/close) ends with '>', so a position whose character is not '>'
+    // can never complete a tag match. Checking one character avoids running
+    // dozens of startsWith calls per character — critical because this
+    // parser re-runs over the full accumulated message on every stream chunk,
+    // and long thinking/text content made that O(n^2) scan freeze the main
+    // process.
+    if (assistantMessage[currentCharIndex] !== '>') {
+      // Text-state bookkeeping (starting a text block) must still run for
+      // non-'>' characters; the tag loops below are what get skipped.
+      if (!currentToolUse && !currentTextContent) {
+        currentTextContentStart = currentCharIndex
+        currentTextContent = {
+          type: 'text',
+          content: '', // Will be determined by slicing at the end or when a tool starts
+          partial: true
+        }
+      }
+      continue
+    }
+
     // --- State: Parsing a Tool Parameter ---
     if (currentToolUse && currentParamName) {
       const closeTag = `</${currentParamName}>`

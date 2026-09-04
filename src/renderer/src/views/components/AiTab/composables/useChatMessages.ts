@@ -599,7 +599,18 @@ export function useChatMessages(
         !previousMainMessage ||
         previousPartialMessage?.partialMessage?.ts !== partial.ts
 
-      if (previousPartialMessage && JSON.stringify(previousPartialMessage) === JSON.stringify(message)) {
+      // 流式期间消息文本是全量累积的,避免对每条 partialMessage 做两次
+      // JSON.stringify(各为 O(n));改用轻量字段比较做去重,contentParts/
+      // mcpToolCall 等复杂字段的消息不在此去重,直接走后续处理
+      const prevPartial = previousPartialMessage?.partialMessage
+      if (
+        prevPartial &&
+        !partial.contentParts &&
+        !partial.mcpToolCall &&
+        prevPartial.ts === partial.ts &&
+        prevPartial.partial === partial.partial &&
+        prevPartial.text === partial.text
+      ) {
         return
       }
 

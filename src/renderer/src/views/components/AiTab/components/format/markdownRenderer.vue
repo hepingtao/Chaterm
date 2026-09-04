@@ -227,8 +227,9 @@
       </div>
 
       <template v-else-if="thinkingContent">
+        <!-- 测量节点仅在流式结束后短暂挂载用于测高,流式期间不渲染,避免每个 chunk 全量重建 DOM -->
         <div
-          v-if="showThinkingMeasurement"
+          v-if="showThinkingMeasurement && !thinkingLoading"
           ref="contentRef"
           class="thinking-measurement"
         >
@@ -268,7 +269,10 @@
                 </a-typography-text>
               </a-space>
             </template>
+            <!-- 内容仅在面板展开时渲染:流式期间默认折叠,避免每个 chunk 全量重建 HTML;
+                 完成后保持折叠的长思考也不占用 DOM,展开时才渲染 -->
             <div
+              v-if="activeKey.includes('1')"
               class="thinking-content markdown-content"
               v-html="thinkingBodyHtml"
             ></div>
@@ -462,8 +466,17 @@ const isMarkdownSecretRedactionEnabled = async (): Promise<boolean> => {
   }
 }
 
+const HTML_ESCAPE_MAP: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}
+
 const escapeHtml = (text: string): string => {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+  // 单遍正则替换,避免流式期间对不断增长的全量文本做 5 遍链式扫描
+  return text.replace(/[&<>"']/g, (ch) => HTML_ESCAPE_MAP[ch])
 }
 
 const renderPlainTextToHtml = (content: string): string => {
@@ -473,8 +486,13 @@ const renderPlainTextToHtml = (content: string): string => {
 
 const renderMarkdownToHtml = (content: string, lightweight: boolean = false): string => {
   if (!content) return ''
-  const html = lightweight ? renderPlainTextToHtml(content) : marked(content, null)
-  return sanitizeHtml(html)
+  if (lightweight) {
+    // 流式轻量路径:纯文本已全量转义,不包含任何来自模型的标签,
+    // 无需再对全量 HTML 做 DOMPurify sanitize(流式期间最重的 CPU 操作);
+    // 完成后的正式渲染仍走 marked + sanitizeHtml
+    return renderPlainTextToHtml(content)
+  }
+  return sanitizeHtml(marked(content, null))
 }
 
 if (monaco.editor) {
@@ -526,6 +544,9 @@ if (monaco.editor) {
 
 const thinkingContent = ref('')
 const normalContent = ref('')
+// 超过该长度的思考内容完成时跳过测高:内容必然超过一行、测量后同样会
+// 折叠,跳过可避免 marked+sanitize+全量 DOM 挂载的一次性卡顿
+const THINKING_MEASURE_MAX_CHARS = 2000
 const thinkingLoading = ref(false)
 const showThinkingMeasurement = ref(false)
 let thinkingMeasurementToken = 0
@@ -959,8 +980,11 @@ const processContent = async (content: string) => {
     return
   }
 
-  // Apply sensitive data de-identification
-  let processedContent = applySecretRedactionToMarkdown(content, secretRedactionEnabled.value)
+  // Apply sensitive data de-identification.
+  // 流式期间跳过脱敏:20+ 个正则对全量累积文本逐条扫描是 O(20n)/更新,
+  // 长思考时直接打满渲染进程主线程导致卡死;且流式渲染走纯文本轻量路径,
+  // 脱敏标记 ~~ 也只会原样显示。完成态(partial=false)统一脱敏一次。
+  let processedContent = props.partial ? content : applySecretRedactionToMarkdown(content, secretRedactionEnabled.value)
 
   if (props.say === 'reasoning') {
     processReasoningContent(processedContent)
@@ -974,17 +998,25 @@ const processContent = async (content: string) => {
   const extracted = extractThinking(processedContent)
   if (extracted.thinking !== undefined) {
     thinkingContent.value = extracted.thinking
-    showThinkingMeasurement.value = true
     processedContent = extracted.rest
     if (extracted.isComplete) {
       thinkingLoading.value = false
-      if (activeKey.value.length !== 0) {
+      // 长内容跳过测高,与 processReasoningContent 的完成分支保持一致
+      if (extracted.thinking.length <= THINKING_MEASURE_MAX_CHARS) {
+        showThinkingMeasurement.value = true
         checkContentHeight()
+      } else {
+        showThinkingMeasurement.value = false
+        activeKey.value = []
       }
-    } else {
-      if (!isCancelled.value) {
-        thinkingLoading.value = true
+    } else if (!isCancelled.value) {
+      // 流式期间:折叠面板并隐藏测量节点,思考文本是全量累积的,
+      // 展开渲染会导致每个 chunk 都全量重建 HTML/DOM(两份)
+      if (!thinkingLoading.value) {
+        activeKey.value = []
       }
+      showThinkingMeasurement.value = false
+      thinkingLoading.value = true
     }
   } else {
     thinkingContent.value = ''
@@ -1110,13 +1142,24 @@ const processReasoningContent = (content: string) => {
     return
   }
   thinkingContent.value = content.trim()
-  showThinkingMeasurement.value = true
   if (props.partial && !isCancelled.value) {
+    // 流式期间:折叠面板并隐藏测量节点,思考文本是全量累积的,
+    // 展开渲染会导致每个 chunk 都全量重建 HTML/DOM(两份)
+    if (!thinkingLoading.value) {
+      activeKey.value = []
+    }
+    showThinkingMeasurement.value = false
     thinkingLoading.value = true
   } else {
     thinkingLoading.value = false
-    if (activeKey.value.length !== 0) {
+    // 长内容无需测高:必定超过一行、测量后同样会折叠,直接保持折叠,
+    // 展开时才渲染(marked+sanitize 延迟到用户操作)
+    if (thinkingContent.value.length <= THINKING_MEASURE_MAX_CHARS) {
+      showThinkingMeasurement.value = true
       checkContentHeight()
+    } else {
+      showThinkingMeasurement.value = false
+      activeKey.value = []
     }
   }
 }
@@ -1146,9 +1189,11 @@ const checkContentHeight = async () => {
 watch(
   () => thinkingContent.value,
   async (newVal) => {
-    if (newVal && !isCancelled.value) {
+    // 仅在流式期间维护 loading 状态;完成态由 processContent/
+    // processReasoningContent 的完成分支处理,避免覆盖其结果
+    if (newVal && props.partial && !isCancelled.value) {
       thinkingLoading.value = true
-    } else {
+    } else if (!newVal) {
       activeKey.value = ['1']
     }
   },
