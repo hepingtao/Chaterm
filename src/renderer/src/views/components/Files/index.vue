@@ -1693,6 +1693,12 @@ const onLeftSelectChange = async (v: any) => {
 
   if (!isLocal(val)) {
     clearCachedPath(resolveRawId(val))
+    // For JumpServer sessions: clear cached HOME so get-home can upgrade the
+    // bastion virtual-FS handle to a compound-username direct connection.
+    if (isJumpServerSession(resolveRawId(val))) {
+      remoteHomeMap.delete(resolveRawId(val))
+      remoteHomeMap.delete(val)
+    }
   }
   selectedLeftUuid.value = val
   ensureSessionState(val)
@@ -2186,6 +2192,12 @@ const onRightSelectChange = async (v: any) => {
   }
   if (!isLocal(val)) {
     clearCachedPath(resolveRawId(val))
+    // For JumpServer sessions: clear cached HOME so get-home can upgrade the
+    // bastion virtual-FS handle to a compound-username direct connection.
+    if (isJumpServerSession(resolveRawId(val))) {
+      remoteHomeMap.delete(resolveRawId(val))
+      remoteHomeMap.delete(val)
+    }
   }
   ensureSessionState(val)
   openSession(val)

@@ -49,6 +49,11 @@ export const sftpConnectionInfoMap = new Map<string, any>()
 // Falls back to '/' when the HOME path cannot be resolved.
 export const sftpHomeMap = new Map<string, string>()
 
+// Connection ids whose current SFTP handle browses the JumpServer bastion
+// virtual filesystem (created on the bastion SSH connection), as opposed to
+// a compound-username connection that reaches the target asset directly.
+export const virtualFsSftpIds = new Set<string>()
+
 // Skip Python bytecode artifacts and cache directories during directory uploads.
 export const shouldSkipUploadEntry = (name: string, isDirectory: boolean): boolean => {
   if (isDirectory) {
@@ -221,14 +226,47 @@ export const registerFileSystemHandlers = () => {
 
   ipcMain.handle('ssh:sftp:get-home', async (_e, { id }: { id: string }) => {
     const sid = String(id || '')
-    const current = sftpHomeMap.get(sid) || '/'
+    const isJumpServerSid = (sid.includes('local-team') || sid.includes(':local:')) && sid.includes('@')
+
+    // Upgrade path: when the current SFTP handle browses the JumpServer bastion
+    // virtual filesystem but cached connection info lets us build a compound
+    // username (user@system@target_ip), swap it for a direct connection to the
+    // target asset so HOME resolves to the asset's real path (e.g. /home/itouchtv)
+    // instead of the bastion tree path (/org/env/.../home/itouchtv).
+    if (isJumpServerSid && virtualFsSftpIds.has(sid)) {
+      const rawCachedInfo = getReusableSftpConnectionInfo(sid)
+      const enriched = enrichJumpServerConnInfo(rawCachedInfo, sid)
+      if (enriched?.sftpCompoundUsername) {
+        homeDebug('[get-home] upgrading virtual FS handle to compound direct connection', {
+          sid,
+          compound: enriched.sftpCompoundUsername
+        })
+        await closeSftpOnly(sid)
+        sftpHomeMap.delete(sid)
+        try {
+          await ensureSftpReady(_e, sid)
+          const upgradedHome = sftpHomeMap.get(sid)
+          if (upgradedHome && upgradedHome !== '/') {
+            homeDebug('[get-home] compound upgrade resolved HOME', { sid, home: upgradedHome })
+            return upgradedHome
+          }
+        } catch (e: any) {
+          // Compound direct connection failed — restore the bastion virtual FS
+          // handle so the file manager keeps working with bastion-rooted paths.
+          homeDebug('[get-home] compound upgrade failed, restoring virtual FS handle', { sid, error: e?.message || String(e) })
+          await restoreVirtualFsSftp(sid, rawCachedInfo)
+        }
+      }
+    }
+
+    let current = sftpHomeMap.get(sid) || '/'
     homeDebug('[get-home] return', { sid, current })
 
     // If not yet resolved to a valid HOME (root or empty) and this is a JumpServer
     // connection, kick off an async probe (non-blocking). Frontend will re-fetch.
     // Accepts both real asset paths (/home/itouchtv) and bastion virtual FS paths
     // (/A100/.../home/itouchtv) as valid — only probe when stuck at root.
-    if ((!current || current === '/') && (sid.includes('local-team') || sid.includes(':local:')) && sid.includes('@')) {
+    if ((!current || current === '/') && isJumpServerSid) {
       const username = sid.split('@')[0]
       // Decode hostname from connectionId for search prioritization.
       let hostHint: string | undefined
@@ -1140,6 +1178,10 @@ const enrichJumpServerConnInfo = (info: any, sid: string): any => {
   return info
 }
 
+// In-flight ensureSftpReady reconnects per session id, to deduplicate
+// concurrent reconnect attempts for the same connection.
+const inflightSftpReady = new Map<string, Promise<any>>()
+
 const ensureSftpReady = async (event: any, id: string): Promise<any> => {
   const sid = String(id || '')
   if (!sid) {
@@ -1158,6 +1200,17 @@ const ensureSftpReady = async (event: any, id: string): Promise<any> => {
     }
   }
 
+  // Deduplicate concurrent reconnects for the same session (e.g. get-home and
+  // a parallel directory listing) so only one compound connection is created.
+  const inflight = inflightSftpReady.get(sid)
+  if (inflight) {
+    homeDebug('[ensureSftpReady] joining in-flight reconnect', { sid })
+    await inflight
+    sftp = getSftpConnection(sid)
+    if (sftp) return sftp
+    throw new Error('SFTP reconnect failed')
+  }
+
   const rawCachedInfo = getReusableSftpConnectionInfo(sid)
   if (!rawCachedInfo) {
     throw new Error('missing reconnect connection info')
@@ -1167,7 +1220,15 @@ const ensureSftpReady = async (event: any, id: string): Promise<any> => {
   // directly to the target asset instead of the bastion virtual filesystem.
   const cachedInfo = enrichJumpServerConnInfo(rawCachedInfo, sid)
 
-  const result = await connectSftpReuseFirst(event, cachedInfo)
+  const connectPromise = connectSftpReuseFirst(event, cachedInfo)
+  inflightSftpReady.set(sid, connectPromise)
+  let result
+  try {
+    result = await connectPromise
+  } finally {
+    inflightSftpReady.delete(sid)
+  }
+
   if (result?.status !== 'connected') {
     throw new Error(result?.message || 'SFTP reconnect failed')
   }
@@ -3390,6 +3451,14 @@ const probeAssetHomeAsync = (sftp: any, root: string, username: string, connecti
   })()
     .then((result) => {
       if (result) {
+        // The SFTP handle may have been swapped (e.g. upgraded from the bastion
+        // virtual FS to a compound-username direct connection) while this probe
+        // was running — discard the stale result in that case.
+        const currentSftp = (sftpConnections.get(connectionId) as any)?.sftp
+        if (currentSftp && currentSftp !== sftp) {
+          homeDebug('[probeAsync] handle replaced during probe, discarding result', { connectionId, result })
+          return
+        }
         sftpHomeMap.set(connectionId, result)
         homeDebug('[probeAsync] SUCCESS', { connectionId, home: result })
       } else {
@@ -3454,6 +3523,22 @@ const findReusableJumpServerConn = (connectionInfo: any, skippedConn?: Client): 
   return undefined
 }
 
+// Re-initialize the bastion virtual-FS SFTP handle on the still-alive terminal
+// JumpServer connection. Used as a fallback when the compound-username direct
+// connection to the target asset cannot be established.
+const restoreVirtualFsSftp = async (sid: string, info: any) => {
+  const reusable = info ? findReusableJumpServerConn(info) : undefined
+  if (reusable) {
+    await initSftpOnConnection(reusable, sid, buildHomeHint(info))
+    if (getSftpConnection(sid)) {
+      virtualFsSftpIds.add(sid)
+      homeDebug('[restoreVirtualFsSftp] restored bastion virtual FS handle', { sid })
+      return
+    }
+  }
+  homeDebug('[restoreVirtualFsSftp] no reusable bastion connection', { sid })
+}
+
 // Reuse priority: active SFTP/SSH session first, then JumpServer/shared pooled SSH connection.
 const findReusableConn = (connectionInfo: any, skippedConn?: Client): Client | undefined => {
   const { sshType, host, port, username } = connectionInfo
@@ -3507,6 +3592,7 @@ export const connectSftpReuseFirst = async (event: any, connectionInfo: any, opt
       const st = connectionStatus.get(id) as any
       if (st?.sftpAvailable) {
         clearPending(id)
+        if (connectionInfo?.sshType === 'jumpserver') virtualFsSftpIds.add(id)
         return { status: 'connected', message: 'SFTP ready (reused existing SSH connection)' }
       }
 
@@ -3545,6 +3631,7 @@ const markSftpDead = async (id: string, reason = 'SFTP connection lost') => {
   } catch {}
 
   sftpConnections.delete(sid)
+  virtualFsSftpIds.delete(sid)
   connectionStatus.set(sid, {
     sftpAvailable: false,
     sftpError: reason
@@ -3815,6 +3902,7 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
           clearPending(id)
           const st = connectionStatus.get(id) as any
           if (st?.sftpAvailable) {
+            virtualFsSftpIds.delete(id)
             safeResolve({ status: 'connected', message: 'SFTP ready (JumpServer compound username - target asset)' })
           } else {
             cleanup()
@@ -3861,6 +3949,7 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
     clearPending(id)
     const st = connectionStatus.get(id) as any
     if (st?.sftpAvailable) {
+      virtualFsSftpIds.add(id)
       homeDebug('[connectJumpServerSftpNew] reusable JumpServer conn SUCCESS', { id })
       return { status: 'connected', message: 'SFTP ready (reused JumpServer connection - bastion filesystem)' }
     }
@@ -3966,6 +4055,7 @@ const connectJumpServerSftpNew = async (_event: any, connectionInfo: any, option
         clearPending(id)
 
         const st = connectionStatus.get(id)
+        if (st?.sftpAvailable) virtualFsSftpIds.add(id)
         safeResolve(
           st?.sftpAvailable
             ? { status: 'connected', message: 'SFTP ready (new JumpServer connection)' }
@@ -4061,6 +4151,7 @@ export const closeSftpOnly = async (connectionId: string): Promise<{ status: str
     }
 
     sftpConnections.delete(actualId)
+    virtualFsSftpIds.delete(actualId)
     connectionStatus.set(actualId, { sftpAvailable: false, sftpError: 'SFTP closed by user' })
 
     // Only tear down JumpServer resources that were created by SFTP itself.

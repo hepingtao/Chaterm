@@ -5,7 +5,7 @@ import tls from 'tls'
 import type { Readable } from 'stream'
 import { createProxySocket } from '../proxy'
 import { keyboardInteractiveOpts, sftpConnections, connectionStatus, pickReconnectConnectionInfo } from '../sshHandle'
-import { sftpConnectionInfoMap } from '../sftpTransfer'
+import { sftpConnectionInfoMap, virtualFsSftpIds } from '../sftpTransfer'
 import { LEGACY_ALGORITHMS } from '../algorithms'
 import { jumpserverConnections, jumpserverShellStreams, jumpserverMarkedCommands, jumpserverInputBuffer } from './state'
 import type { JumpServerConnectionInfo } from './constants'
@@ -71,6 +71,10 @@ const sftpAsync = (conn, connectionId, connectionInfo?: JumpServerConnectionInfo
             logger.debug('SFTP check success', { event: 'jumpserver.sftp.success', connectionId })
             sftpConnections.set(connectionId, { isSuccess: true, sftp: sftp })
             connectionStatus.set(connectionId, { sftpAvailable: true })
+            // This handle browses the bastion virtual filesystem — the file
+            // manager may later swap it for a compound-username direct
+            // connection to the target asset.
+            virtualFsSftpIds.add(connectionId)
             // Cache connection info for future reconnects
             if (connectionInfo) {
               const picked = pickReconnectConnectionInfo(connectionInfo)
