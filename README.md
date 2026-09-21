@@ -155,6 +155,44 @@ npm run build:mac
 npm run build:linux
 ```
 
+### SFTP File CLI
+
+A standalone command-line file-transfer tool that shares the same SFTP core as the desktop app (`src/shared/sftp`).
+
+```bash
+npm run build:cli          # Node.js CLI (requires Node.js)
+npm run build:cli:bin      # Standalone binaries (win/linux/mac, no Node.js needed)
+
+# List a remote directory
+node dist-cli/cli/index.js ls user@host:/path --password xxx
+# ...or use the standalone binary (dist-cli-bin/)
+./dist-cli-bin/chaterm-files-win-x64.exe ls user@host:/path --password xxx
+
+# Download / upload (files or directories)
+node dist-cli/cli/index.js get user@host:/remote/file ./local
+node dist-cli/cli/index.js put ./local user@host:/remote/dir
+
+# Other operations
+node dist-cli/cli/index.js mkdir user@host:/path
+node dist-cli/cli/index.js rm user@host:/path
+node dist-cli/cli/index.js mv user@host:/src user@host:/dst
+node dist-cli/cli/index.js cp user@host:/src user@host:/dst
+node dist-cli/cli/index.js chmod 755 user@host:/path -r
+
+# JumpServer bastion (compound username; credentials reused from desktop assets,
+# default port 2222). MFA is answered automatically when the desktop has an OTP
+# secret for the bastion (otp-secrets.json or ~/.otpvault/vault.bin), otherwise cfm prompts.
+cfm ls hepingtao@itouchtv@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
+# short form — system name derived from the bastion domain (jump.itouchtv.cn -> itouchtv)
+cfm ls hepingtao@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
+
+# Auth: --password / CFM_PASSWORD env, or --identity <keyfile> (--passphrase / CFM_PASSPHRASE)
+
+Credentials are resolved in this order: explicit flags/env first; without them the CLI
+reuses the matching asset credential stored by the Chaterm desktop app (read-only lookup
+in the local asset database, password or key-based auth).
+```
+
 ## Gold Sponsors
 
 ![Preview image](resources/aws.webp) ![Preview image](resources/aliyun.webp)

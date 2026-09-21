@@ -169,6 +169,43 @@ npm run build:mac
 npm run build:linux
 ```
 
+### SFTP 文件传输 CLI
+
+独立的命令行文件传输工具,与桌面端共用同一套 SFTP 核心(`src/shared/sftp`)。
+
+```bash
+npm run build:cli          # Node.js 版 CLI(需要 Node.js)
+npm run build:cli:bin      # 单体二进制(覆盖 win/linux/mac,无需安装 Node.js)
+
+# 列出远程目录
+node dist-cli/cli/index.js ls user@host:/path --password xxx
+# ...或使用单体二进制(dist-cli-bin/)
+./dist-cli-bin/chaterm-files-win-x64.exe ls user@host:/path --password xxx
+
+# 下载 / 上传(文件或目录)
+node dist-cli/cli/index.js get user@host:/remote/file ./local
+node dist-cli/cli/index.js put ./local user@host:/remote/dir
+
+# 其他操作
+node dist-cli/cli/index.js mkdir user@host:/path
+node dist-cli/cli/index.js rm user@host:/path
+node dist-cli/cli/index.js mv user@host:/src user@host:/dst
+node dist-cli/cli/index.js cp user@host:/src user@host:/dst
+node dist-cli/cli/index.js chmod 755 user@host:/path -r
+
+# JumpServer 堡垒机(复合用户名;自动复用桌面端已存凭证,默认端口 2222)。
+# MFA 自动应答:桌面端存过该堡垒机的 OTP 密钥(otp-secrets.json 或 ~/.otpvault/vault.bin)时
+# 自动生成动态验证码;否则在终端里提示输入。
+cfm ls hepingtao@itouchtv@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
+# 简写形式 —— 系统名从堡垒机域名自动推导(jump.itouchtv.cn -> itouchtv)
+cfm ls hepingtao@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
+
+# 认证:--password / 环境变量 CFM_PASSWORD,或 --identity <私钥文件>(--passphrase / CFM_PASSPHRASE)
+
+凭证优先级:显式参数/环境变量优先;未提供时自动复用桌面版 Chaterm 已保存的同主机资产凭证
+(对本地资产库只读查询,支持密码与密钥两种认证)。
+```
+
 ## Gold Sponsors
 
 ![Preview image](resources/aws.webp) ![Preview image](resources/aliyun.webp)
