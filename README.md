@@ -155,9 +155,9 @@ npm run build:mac
 npm run build:linux
 ```
 
-### SFTP File CLI
+### Chaterm Remote CLI (cfm)
 
-A standalone command-line file-transfer tool that shares the same SFTP core as the desktop app (`src/shared/sftp`).
+A standalone command-line tool for SFTP file management and remote command execution, sharing the same connection core as the desktop app (`src/shared/sftp`).
 
 ```bash
 npm run build:cli          # Node.js CLI (requires Node.js)
@@ -166,7 +166,7 @@ npm run build:cli:bin      # Standalone binaries (win/linux/mac, no Node.js need
 # List a remote directory
 node dist-cli/cli/index.js ls user@host:/path --password xxx
 # ...or use the standalone binary (dist-cli-bin/)
-./dist-cli-bin/chaterm-files-win-x64.exe ls user@host:/path --password xxx
+./dist-cli-bin/cfm-win-x64.exe ls user@host:/path --password xxx
 
 # Download / upload (files or directories)
 node dist-cli/cli/index.js get user@host:/remote/file ./local
@@ -179,9 +179,21 @@ node dist-cli/cli/index.js mv user@host:/src user@host:/dst
 node dist-cli/cli/index.js cp user@host:/src user@host:/dst
 node dist-cli/cli/index.js chmod 755 user@host:/path -r
 
+# Run a command on a remote host (like ssh user@host cmd; the remote exit code is passed through)
+node dist-cli/cli/index.js exec user@host 'uptime'
+node dist-cli/cli/index.js exec user@host df -h
+# With a path in the target, the command runs after cd'ing there
+node dist-cli/cli/index.js exec user@host:/var/log -- tail -n 100 syslog
+
 # JumpServer bastion (compound username; credentials reused from desktop assets,
 # default port 2222). MFA is answered automatically when the desktop has an OTP
 # secret for the bastion (otp-secrets.json or ~/.otpvault/vault.bin), otherwise cfm prompts.
+# On Linux, when the desktop's encrypted entries are unreadable (e.g. ss1:/DPAPI
+# ciphers carried over from Windows), store the secret once via a hidden prompt;
+# it is persisted only as lk1 ciphertext (AES-256-GCM, desktop-compatible), never
+# in plaintext and never in shell history:
+#   cfm otp --set jump.itouchtv.cn
+# Verify: cfm otp jump.itouchtv.cn
 cfm ls hepingtao@itouchtv@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
 # short form — system name derived from the bastion domain (jump.itouchtv.cn -> itouchtv)
 cfm ls hepingtao@192.168.31.23@jump.itouchtv.cn:/home/itouchtv

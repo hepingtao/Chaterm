@@ -27,6 +27,32 @@ export interface CliConnection {
   close: () => void
 }
 
+export interface ExecResult {
+  code: number | null
+  signal: string | null
+}
+
+export interface ExecWriters {
+  out: NodeJS.WritableStream
+  err: NodeJS.WritableStream
+}
+
+// Run a command over the ssh2 exec channel, streaming output like ssh(1).
+// Resolves with the remote exit status; the caller maps it to process.exitCode.
+export const execCommand = (
+  conn: Client,
+  command: string,
+  writers: ExecWriters = { out: process.stdout, err: process.stderr }
+): Promise<ExecResult> =>
+  new Promise((resolve, reject) => {
+    conn.exec(command, (err, stream: any) => {
+      if (err || !stream) return reject(err || new Error('Failed to open exec channel'))
+      stream.on('data', (chunk: Buffer) => writers.out.write(chunk))
+      stream.stderr?.on('data', (chunk: Buffer) => writers.err.write(chunk))
+      stream.on('close', (code: number | null, signal: string | null) => resolve({ code, signal }))
+    })
+  })
+
 const readIdentity = (identityPath?: string): { privateKey?: string; passphrase?: string } => {
   if (!identityPath) return {}
   const resolved = identityPath.replace(/^~(?=$|\/|\\)/, os.homedir())

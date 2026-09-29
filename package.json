@@ -51,7 +51,7 @@
     "test:e2e:ui": "playwright test --config playwright.config.ts --ui",
     "test:e2e:headed": "playwright test --config playwright.config.ts --headed",
     "bundle:cli": "esbuild src/cli/index.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist-cli/cli/bundle.cjs --alias:cpu-features=./scripts/stubs/cpu-features-stub.cjs --loader:.wasm=dataurl",
-    "build:cli:bin": "npm run bundle:cli && pkg dist-cli/cli/bundle.cjs --targets node20-win-x64,node20-linux-x64,node20-macos-x64,node20-macos-arm64 --output dist-cli-bin/chaterm-files"
+    "build:cli:bin": "npm run bundle:cli && pkg dist-cli/cli/bundle.cjs --targets node20-win-x64,node20-linux-x64,node20-macos-x64,node20-macos-arm64 --output dist-cli-bin/cfm"
   },
   "lint-staged": {
     "*.{js,jsx,.cjs,mjs,ts,tsx,cts,mts,vue}": [

@@ -169,9 +169,9 @@ npm run build:mac
 npm run build:linux
 ```
 
-### SFTP 文件传输 CLI
+### Chaterm 远程操作 CLI(cfm)
 
-独立的命令行文件传输工具,与桌面端共用同一套 SFTP 核心(`src/shared/sftp`)。
+独立的命令行工具,提供 SFTP 文件管理与远程命令执行,与桌面端共用同一套连接核心(`src/shared/sftp`)。
 
 ```bash
 npm run build:cli          # Node.js 版 CLI(需要 Node.js)
@@ -180,7 +180,7 @@ npm run build:cli:bin      # 单体二进制(覆盖 win/linux/mac,无需安装 N
 # 列出远程目录
 node dist-cli/cli/index.js ls user@host:/path --password xxx
 # ...或使用单体二进制(dist-cli-bin/)
-./dist-cli-bin/chaterm-files-win-x64.exe ls user@host:/path --password xxx
+./dist-cli-bin/cfm-win-x64.exe ls user@host:/path --password xxx
 
 # 下载 / 上传(文件或目录)
 node dist-cli/cli/index.js get user@host:/remote/file ./local
@@ -193,9 +193,19 @@ node dist-cli/cli/index.js mv user@host:/src user@host:/dst
 node dist-cli/cli/index.js cp user@host:/src user@host:/dst
 node dist-cli/cli/index.js chmod 755 user@host:/path -r
 
+# 远程执行命令(类似 ssh user@host cmd,透传远端退出码;目标之后的参数都属于远程命令)
+node dist-cli/cli/index.js exec user@host 'uptime'
+node dist-cli/cli/index.js exec user@host df -h
+# 目标带路径时先 cd 到该目录再执行
+node dist-cli/cli/index.js exec user@host:/var/log -- tail -n 100 syslog
+
 # JumpServer 堡垒机(复合用户名;自动复用桌面端已存凭证,默认端口 2222)。
 # MFA 自动应答:桌面端存过该堡垒机的 OTP 密钥(otp-secrets.json 或 ~/.otpvault/vault.bin)时
 # 自动生成动态验证码;否则在终端里提示输入。
+# Linux 上桌面端加密密文不可解时(如从 Windows 拷贝的 ss1:/DPAPI 条目),用隐藏输入一次性存入,
+# 密钥仅以 lk1(AES-256-GCM)密文落盘,格式与桌面端本地密钥回退互通,无明文、不进 shell 历史:
+#   cfm otp --set jump.itouchtv.cn
+# 验证: cfm otp jump.itouchtv.cn
 cfm ls hepingtao@itouchtv@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
 # 简写形式 —— 系统名从堡垒机域名自动推导(jump.itouchtv.cn -> itouchtv)
 cfm ls hepingtao@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
