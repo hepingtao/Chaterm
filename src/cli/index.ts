@@ -28,6 +28,7 @@ import {
   streamTransfer
 } from '../shared/sftp'
 import { connectTarget, execCommand, type AuthOptions } from './connect'
+import { loadCfmConfig } from './config'
 import { findStoredCredential } from './assets-store'
 import { generateOtpForHost, saveOtpSecret } from './otp'
 import { createProgressRenderer } from './progress'
@@ -76,7 +77,16 @@ const fail: (msg: string) => never = (msg) => {
   process.exit(1)
 }
 
-const asTarget = (spec: string, opts: any): CliTarget => parseTarget(spec, opts.port ? parseInt(opts.port, 10) : undefined)
+// Default bastion/user for bastion-less shorthand targets (config file/env).
+const cfmConfig = loadCfmConfig()
+
+const asTarget = (spec: string, opts: any): CliTarget =>
+  parseTarget(
+    spec,
+    opts.port ? parseInt(opts.port, 10) : undefined,
+    '1',
+    cfmConfig.defaultBastion || cfmConfig.defaultUser ? { bastion: cfmConfig.defaultBastion, user: cfmConfig.defaultUser } : undefined
+  )
 
 const statRemote = async (sftp: any, p: string): Promise<any | null> => {
   try {

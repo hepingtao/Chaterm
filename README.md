@@ -194,6 +194,15 @@ node dist-cli/cli/index.js exec user@host:/var/log -- tail -n 100 syslog
 # in plaintext and never in shell history:
 #   cfm otp --set jump.itouchtv.cn
 # Verify: cfm otp jump.itouchtv.cn
+# Shorthand targets: with a default bastion configured in ~/.config/cfm/config.json,
+# three forms without the bastion resolve to its assets (env CFM_BASTION / CFM_USER win):
+#   { "defaultBastion": "jump.example.cn", "defaultUser": "yourname" }
+cfm ls 192.168.31.23:/home/itouchtv                    # bare asset IP (login user from defaultUser)
+cfm ls itouchtv@192.168.31.23:/home/itouchtv           # system@assetIp (login user from defaultUser)
+cfm ls hepingtao@itouchtv@192.168.31.23:/home/itouchtv # user@system@assetIp
+# Note: user@IP parses as a shorthand only when the user segment equals the system
+# name derived from the default bastion; otherwise it stays a direct target. The
+# full/short bastion forms below are unaffected.
 cfm ls hepingtao@itouchtv@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
 # short form — system name derived from the bastion domain (jump.itouchtv.cn -> itouchtv)
 cfm ls hepingtao@192.168.31.23@jump.itouchtv.cn:/home/itouchtv

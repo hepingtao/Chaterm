@@ -206,6 +206,14 @@ node dist-cli/cli/index.js exec user@host:/var/log -- tail -n 100 syslog
 # 密钥仅以 lk1(AES-256-GCM)密文落盘,格式与桌面端本地密钥回退互通,无明文、不进 shell 历史:
 #   cfm otp --set jump.itouchtv.cn
 # 验证: cfm otp jump.itouchtv.cn
+# 简写目标:在 ~/.config/cfm/config.json 配置默认堡垒机后,三种不含堡垒机的写法也指向其资产
+#   (环境变量 CFM_BASTION / CFM_USER 优先):
+#   { "defaultBastion": "jump.example.cn", "defaultUser": "yourname" }
+cfm ls 192.168.31.23:/home/itouchtv                    # 仅资产IP(登录用户取 defaultUser)
+cfm ls itouchtv@192.168.31.23:/home/itouchtv           # 系统名@资产IP(登录用户取 defaultUser)
+cfm ls hepingtao@itouchtv@192.168.31.23:/home/itouchtv # 用户@系统名@资产IP
+# 注意:用户@IP 写法仅在"用户段等于默认堡垒机推导的系统名"时按简写解析,否则仍为直连目标;
+# 完整/短堡垒机形式(user@系统名@IP@堡垒机、user@IP@堡垒机)不受影响。
 cfm ls hepingtao@itouchtv@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
 # 简写形式 —— 系统名从堡垒机域名自动推导(jump.itouchtv.cn -> itouchtv)
 cfm ls hepingtao@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
