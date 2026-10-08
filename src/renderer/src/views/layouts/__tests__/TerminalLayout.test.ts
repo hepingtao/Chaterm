@@ -450,6 +450,25 @@ describe('TerminalLayout - Dockview Tabs Overflow', () => {
   })
 })
 
+describe('TerminalLayout - Config Load Failure Fallback', () => {
+  const readSource = () => readFileSync(join(process.cwd(), 'src/renderer/src/views/layouts/TerminalLayout.vue'), 'utf8')
+
+  it('should still set configLoaded when user config init fails, so the dock mounts', () => {
+    const source = readSource()
+    const catchBlock = source.slice(source.indexOf("mark('chaterm/renderer/didFailLoadTerminalUserConfig')"))
+    expect(catchBlock).toContain('configLoaded.value = true')
+  })
+
+  it('should not let a failing first-run saveConfig abort layout init', () => {
+    const source = readSource()
+    const featureBlock = source.indexOf('if (!config.feature || config.feature < 1.0) {')
+    expect(featureBlock).toBeGreaterThan(-1)
+    const guardedCall = source.slice(featureBlock, source.indexOf('store.setUserConfig(config)', featureBlock))
+    expect(guardedCall).toContain('try')
+    expect(guardedCall).toContain('catch')
+  })
+})
+
 describe('TerminalLayout - Preview Actions Layout', () => {
   it('should reserve right padding for preview actions overlay', () => {
     const sourcePath = join(process.cwd(), 'src/renderer/src/views/layouts/TerminalLayout.vue')

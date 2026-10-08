@@ -871,7 +871,11 @@ onMounted(async () => {
     if (!config.feature || config.feature < 1.0) {
       config.autoCompleteStatus = 1
       config.feature = 1.0
-      await userConfigStore.saveConfig(config)
+      try {
+        await userConfigStore.saveConfig(config)
+      } catch (persistError) {
+        logger.error('Failed to persist upgraded user config, continuing with in-memory config', { error: persistError })
+      }
     }
     store.setUserConfig(config)
     configLoaded.value = true
@@ -899,6 +903,9 @@ onMounted(async () => {
     })
   } catch (e) {
     mark('chaterm/renderer/didFailLoadTerminalUserConfig')
+    // Mount the dock with defaults anyway: if configLoaded stays false,
+    // DockviewVue never renders, dockApi stays null and no tab can open.
+    configLoaded.value = true
     currentTheme.value = getActualTheme('dark')
     nextTick(() => {
       showWatermark.value = true
