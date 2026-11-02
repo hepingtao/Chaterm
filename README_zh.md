@@ -198,6 +198,8 @@ node dist-cli/cli/index.js exec user@host 'uptime'
 node dist-cli/cli/index.js exec user@host df -h
 # 目标带路径时先 cd 到该目录再执行
 node dist-cli/cli/index.js exec user@host:/var/log -- tail -n 100 syslog
+# 登录 shell 模式:先加载 /etc/profile 与 ~/.bash_profile(完整用户 PATH/环境),再执行
+node dist-cli/cli/index.js exec -l user@host conda env list
 
 # JumpServer 堡垒机(复合用户名;自动复用桌面端已存凭证,默认端口 2222)。
 # MFA 自动应答:桌面端存过该堡垒机的 OTP 密钥(otp-secrets.json 或 ~/.otpvault/vault.bin)时

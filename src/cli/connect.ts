@@ -6,7 +6,7 @@ import { Client } from 'ssh2'
 import fs from 'node:fs'
 import os from 'node:os'
 import readline from 'node:readline/promises'
-import { stdin as input, stdout as output } from 'node:process'
+import { stdin as input, stdout as output, stderr as errout } from 'node:process'
 import type { SftpOpsDeps } from '../shared/sftp'
 import type { CliTarget } from './target'
 import { generateOtpForHost } from './otp'
@@ -60,7 +60,12 @@ const readIdentity = (identityPath?: string): { privateKey?: string; passphrase?
   return { privateKey: fs.readFileSync(resolved, 'utf8') }
 }
 
-export const connectTarget = async (target: CliTarget, auth: AuthOptions, emit: (p: Record<string, any>) => void): Promise<CliConnection> => {
+export const connectTarget = async (
+  target: CliTarget,
+  auth: AuthOptions,
+  emit: (p: Record<string, any>) => void,
+  opts: { skipSftp?: boolean } = {}
+): Promise<CliConnection> => {
   const conn = new Client()
   const connectConfig: any = {
     host: target.host,
@@ -121,7 +126,7 @@ export const connectTarget = async (target: CliTarget, auth: AuthOptions, emit: 
             otpTried = true
             const otpCode = generateOtpForHost(target.host)
             if (otpCode) {
-              output.write('auto-filling OTP from Chaterm secret store\n')
+              errout.write('auto-filling OTP from Chaterm secret store\n')
               finish([otpCode])
               return
             }
@@ -166,13 +171,19 @@ export const connectTarget = async (target: CliTarget, auth: AuthOptions, emit: 
   conn.connect(connectConfig)
   await connected
 
-  const sftp = await new Promise<any>((resolve, reject) => {
-    conn.sftp((err, s) => (err || !s ? reject(err || new Error('SFTP unavailable')) : resolve(s)))
-  })
+  // Interactive-navigation sessions (cfm2) drive a shell on the bastion and
+  // never touch SFTP; requesting the sftp subsystem there can fail outright.
+  let sftp: any = null
+  let home = '/'
+  if (!opts.skipSftp) {
+    sftp = await new Promise<any>((resolve, reject) => {
+      conn.sftp((err, s) => (err || !s ? reject(err || new Error('SFTP unavailable')) : resolve(s)))
+    })
 
-  const home = await new Promise<string>((resolve) => {
-    sftp.realpath('.', (err: Error | null, abs?: string) => resolve(!err && abs ? abs : '/'))
-  })
+    home = await new Promise<string>((resolve) => {
+      sftp.realpath('.', (err: Error | null, abs?: string) => resolve(!err && abs ? abs : '/'))
+    })
+  }
 
   const ctx: SftpOpsDeps = {
     getSftp: () => sftp,

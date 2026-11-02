@@ -184,6 +184,8 @@ node dist-cli/cli/index.js exec user@host 'uptime'
 node dist-cli/cli/index.js exec user@host df -h
 # With a path in the target, the command runs after cd'ing there
 node dist-cli/cli/index.js exec user@host:/var/log -- tail -n 100 syslog
+# Login-shell mode: load /etc/profile and ~/.bash_profile (full user PATH/env) before running
+node dist-cli/cli/index.js exec -l user@host conda env list
 
 # JumpServer bastion (compound username; credentials reused from desktop assets,
 # default port 2222). MFA is answered automatically when the desktop has an OTP
