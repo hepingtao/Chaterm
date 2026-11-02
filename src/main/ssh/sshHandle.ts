@@ -1738,8 +1738,25 @@ export const registerSSHHandlers = () => {
               logger.error('Failed to send quit command to JumpServer', { event: 'jumpserver.quit.error', connectionId: id, error: err.message })
             else logger.debug('Sent quit command to JumpServer session', { event: 'jumpserver.quit', connectionId: id })
             stream.end()
-            const connData = jumpserverConnections.get(id)
-            connData?.conn?.end()
+            const connToClose = jumpserverConnections.get(id)?.conn
+            if (!connToClose) return
+
+            // Check if other sessions are using the same connection
+            let isConnStillInUse = false
+            for (const [otherId, otherData] of jumpserverConnections.entries()) {
+              if (otherId !== id && otherData.conn === connToClose) {
+                isConnStillInUse = true
+                break
+              }
+            }
+
+            // Only close underlying connection when no other sessions are using it
+            if (!isConnStillInUse) {
+              logger.info('All sessions closed, releasing underlying connection', { event: 'jumpserver.disconnect', connectionId: id })
+              connToClose.end()
+            } else {
+              logger.debug('Session quit, underlying connection still in use', { event: 'jumpserver.disconnect.partial', connectionId: id })
+            }
           })
           return
         }

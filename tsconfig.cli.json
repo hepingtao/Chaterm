@@ -1,0 +1,19 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
+  "include": ["src/cli/**/*.ts", "src/shared/sftp/**/*.ts"],
+  "exclude": ["node_modules", "dist", "dist-cli"],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "outDir": "dist-cli",
+    "rootDir": "src",
+    "sourceMap": false,
+    "declaration": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "types": ["node"]
+  }
+}

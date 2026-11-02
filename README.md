@@ -155,6 +155,67 @@ npm run build:mac
 npm run build:linux
 ```
 
+### Chaterm Remote CLI (cfm)
+
+A standalone command-line tool for SFTP file management and remote command execution, sharing the same connection core as the desktop app (`src/shared/sftp`).
+
+```bash
+npm run build:cli          # Node.js CLI (requires Node.js)
+npm run build:cli:bin      # Standalone binaries (win/linux/mac, no Node.js needed)
+
+# List a remote directory
+node dist-cli/cli/index.js ls user@host:/path --password xxx
+# ...or use the standalone binary (dist-cli-bin/)
+./dist-cli-bin/cfm-win-x64.exe ls user@host:/path --password xxx
+
+# Download / upload (files or directories)
+node dist-cli/cli/index.js get user@host:/remote/file ./local
+node dist-cli/cli/index.js put ./local user@host:/remote/dir
+
+# Other operations
+node dist-cli/cli/index.js mkdir user@host:/path
+node dist-cli/cli/index.js rm user@host:/path
+node dist-cli/cli/index.js mv user@host:/src user@host:/dst
+node dist-cli/cli/index.js cp user@host:/src user@host:/dst
+node dist-cli/cli/index.js chmod 755 user@host:/path -r
+
+# Run a command on a remote host (like ssh user@host cmd; the remote exit code is passed through)
+node dist-cli/cli/index.js exec user@host 'uptime'
+node dist-cli/cli/index.js exec user@host df -h
+# With a path in the target, the command runs after cd'ing there
+node dist-cli/cli/index.js exec user@host:/var/log -- tail -n 100 syslog
+# Login-shell mode: load /etc/profile and ~/.bash_profile (full user PATH/env) before running
+node dist-cli/cli/index.js exec -l user@host conda env list
+
+# JumpServer bastion (compound username; credentials reused from desktop assets,
+# default port 2222). MFA is answered automatically when the desktop has an OTP
+# secret for the bastion (otp-secrets.json or ~/.otpvault/vault.bin), otherwise cfm prompts.
+# On Linux, when the desktop's encrypted entries are unreadable (e.g. ss1:/DPAPI
+# ciphers carried over from Windows), store the secret once via a hidden prompt;
+# it is persisted only as lk1 ciphertext (AES-256-GCM, desktop-compatible), never
+# in plaintext and never in shell history:
+#   cfm otp --set jump.itouchtv.cn
+# Verify: cfm otp jump.itouchtv.cn
+# Shorthand targets: with a default bastion configured in ~/.config/cfm/config.json,
+# three forms without the bastion resolve to its assets (env CFM_BASTION / CFM_USER win):
+#   { "defaultBastion": "jump.example.cn", "defaultUser": "yourname" }
+cfm ls 192.168.31.23:/home/itouchtv                    # bare asset IP (login user from defaultUser)
+cfm ls itouchtv@192.168.31.23:/home/itouchtv           # system@assetIp (login user from defaultUser)
+cfm ls hepingtao@itouchtv@192.168.31.23:/home/itouchtv # user@system@assetIp
+# Note: user@IP parses as a shorthand only when the user segment equals the system
+# name derived from the default bastion; otherwise it stays a direct target. The
+# full/short bastion forms below are unaffected.
+cfm ls hepingtao@itouchtv@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
+# short form — system name derived from the bastion domain (jump.itouchtv.cn -> itouchtv)
+cfm ls hepingtao@192.168.31.23@jump.itouchtv.cn:/home/itouchtv
+
+# Auth: --password / CFM_PASSWORD env, or --identity <keyfile> (--passphrase / CFM_PASSPHRASE)
+
+Credentials are resolved in this order: explicit flags/env first; without them the CLI
+reuses the matching asset credential stored by the Chaterm desktop app (read-only lookup
+in the local asset database, password or key-based auth).
+```
+
 ## Gold Sponsors
 
 ![Preview image](resources/aws.webp) ![Preview image](resources/aliyun.webp)

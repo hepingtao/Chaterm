@@ -94,7 +94,14 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'main-process',
-          include: ['src/main/**/*.test.ts', 'src/main/**/*.spec.ts', 'src/shared/**/*.test.ts', 'src/shared/**/*.spec.ts'],
+          include: [
+            'src/main/**/*.test.ts',
+            'src/main/**/*.spec.ts',
+            'src/shared/**/*.test.ts',
+            'src/shared/**/*.spec.ts',
+            'src/cli/**/*.test.ts',
+            'src/cli/**/*.spec.ts'
+          ],
           // db-assets.test.ts loads better-sqlite3, which is rebuilt against
           // the Electron ABI by `postinstall` (electron-builder install-app-deps).
           // Running it under the system Node fails with NODE_MODULE_VERSION

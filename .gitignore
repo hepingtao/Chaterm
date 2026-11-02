@@ -4,6 +4,8 @@
 .cursor/
 .spec-workflow
 /dist
+/dist-cli
+/dist-cli-bin
 /docs
 /node_modules
 /out
