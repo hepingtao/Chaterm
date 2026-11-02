@@ -5,7 +5,7 @@ import path from 'node:path'
 import { createCipheriv, randomBytes } from 'crypto'
 import { execFileSync } from 'child_process'
 import { generateTOTP } from '../../main/ssh/otp/totp'
-import { generateOtpForHost } from '../otp'
+import { generateOtpForHost, saveOtpSecret } from '../otp'
 
 const SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP' // valid base32, >= 16 chars
 let tmpBase: string
@@ -69,6 +69,13 @@ describe('generateOtpForHost', () => {
     expect(generateOtpForHost('case.example.cn', { baseDirs: [userDataDir], forTime, vault: false })).toBe(generateTOTP(SECRET, 6, 30, forTime))
   })
 
+  it('accepts a raw base32 secret stored without an encryption prefix', () => {
+    const userDataDir = makeUserDataDir('raw-test')
+    fs.writeFileSync(path.join(userDataDir, 'otp-secrets.json'), JSON.stringify({ 'raw.example.cn': SECRET }))
+    const forTime = Date.now()
+    expect(generateOtpForHost('raw.example.cn', { baseDirs: [userDataDir], forTime, vault: false })).toBe(generateTOTP(SECRET, 6, 30, forTime))
+  })
+
   it('falls back to the otp-ts vault.bin via DPAPI (windows only)', (ctx) => {
     if (process.platform !== 'win32') ctx.skip()
     const vaultDir = path.join(os.homedir(), '.otpvault')
@@ -103,5 +110,32 @@ describe('generateOtpForHost', () => {
   it('returns null when nothing matches', () => {
     const empty = makeUserDataDir('empty')
     expect(generateOtpForHost('no-such-host-xyz', { baseDirs: [empty], vault: false })).toBeNull()
+  })
+})
+
+describe('saveOtpSecret', () => {
+  it('stores the secret as lk1 ciphertext only and keeps it readable', () => {
+    const userDataDir = makeUserDataDir('save-test')
+    const { dir, code } = saveOtpSecret('Save.Example.CN', SECRET, { baseDir: userDataDir, forTime: Date.now() })
+    expect(dir).toBe(userDataDir)
+    expect(code).toMatch(/^\d{6}$/)
+
+    const raw = fs.readFileSync(path.join(userDataDir, 'otp-secrets.json'), 'utf-8')
+    expect(raw).not.toContain(SECRET)
+    expect(JSON.parse(raw)['save.example.cn']).toMatch(/^lk1:/)
+    expect(fs.statSync(path.join(userDataDir, 'otp-secrets.json')).mode & 0o777).toBe(0o600)
+
+    expect(generateOtpForHost('save.example.cn', { baseDirs: [userDataDir], vault: false })).toMatch(/^\d{6}$/)
+  })
+
+  it('creates the local master key file with 0600 when absent', () => {
+    const freshDir = path.join(tmpBase, 'fresh-key')
+    saveOtpSecret('fresh.example.cn', SECRET, { baseDir: freshDir })
+    expect(fs.statSync(path.join(freshDir, 'chaterm-db-credential.key')).mode & 0o777).toBe(0o600)
+  })
+
+  it('rejects an invalid base32 secret', () => {
+    const userDataDir = makeUserDataDir('save-invalid')
+    expect(() => saveOtpSecret('bad.example.cn', 'not-base32!!', { baseDir: userDataDir })).toThrow()
   })
 })

@@ -67,3 +67,58 @@ describe('deriveSystemName', () => {
     expect(deriveSystemName('localhost')).toBeNull()
   })
 })
+
+describe('parseTarget bastion-less shorthand (default bastion configured)', () => {
+  const defaults = { bastion: 'jump.example.cn', user: 'bob' }
+
+  it('resolves a bare asset IP to the compound username', () => {
+    const t = parseTarget('10.0.0.5:/var/log', undefined, '1', defaults)
+    expect(t.user).toBe('bob@example@10.0.0.5')
+    expect(t.host).toBe('jump.example.cn')
+    expect(t.port).toBe(2222)
+    expect(t.path).toBe('/var/log')
+    expect(t.bastion).toEqual({ loginuser: 'bob', systemName: 'example', targetIp: '10.0.0.5', host: 'jump.example.cn' })
+    expect(t.credUser).toBe('bob')
+    expect(t.credHost).toBe('jump.example.cn')
+  })
+
+  it('resolves system@assetIp when the segment matches the derived system name', () => {
+    const t = parseTarget('example@10.0.0.5', undefined, '1', defaults)
+    expect(t.user).toBe('bob@example@10.0.0.5')
+    expect(t.host).toBe('jump.example.cn')
+  })
+
+  it('keeps user@host direct when the segment is not the system name', () => {
+    const t = parseTarget('deploy@10.1.1.5', undefined, '1', defaults)
+    expect(t.user).toBe('deploy')
+    expect(t.host).toBe('10.1.1.5')
+    expect(t.port).toBe(22)
+    expect(t.bastion).toBeUndefined()
+  })
+
+  it('resolves user@system@assetIp with only the bastion defaulted', () => {
+    const t = parseTarget('alice@example@10.0.0.5', 2233, '1', defaults)
+    expect(t.user).toBe('alice@example@10.0.0.5')
+    expect(t.host).toBe('jump.example.cn')
+    expect(t.port).toBe(2233)
+  })
+
+  it('keeps the short bastion form (user@ip@bastion) working', () => {
+    const t = parseTarget('bob@10.0.0.9@jump.example.cn', undefined, '1', defaults)
+    expect(t.user).toBe('bob@example@10.0.0.9')
+    expect(t.host).toBe('jump.example.cn')
+  })
+
+  it('requires defaultUser for bare IP and system@ip shorthands', () => {
+    expect(() => parseTarget('10.0.0.5', undefined, '1', { bastion: 'jump.example.cn' })).toThrow(/defaultUser/)
+    expect(() => parseTarget('example@10.0.0.5', undefined, '1', { bastion: 'jump.example.cn' })).toThrow(/defaultUser/)
+  })
+
+  it('falls back to legacy behavior without defaults', () => {
+    expect(() => parseTarget('10.0.0.5')).toThrow(/Invalid target/)
+    expect(() => parseTarget('a@b@10.0.0.5')).toThrow(/system name/)
+    const direct = parseTarget('deploy@10.1.1.5')
+    expect(direct.user).toBe('deploy')
+    expect(direct.host).toBe('10.1.1.5')
+  })
+})

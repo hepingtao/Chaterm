@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Chaterm file-management CLI.
-// Reuses the Electron-free SFTP core in src/shared/sftp so the CLI and the
-// desktop app share identical transfer logic.
+// Chaterm remote-operation CLI (cfm).
+// File management over SFTP plus one-shot remote command execution, reusing the
+// Electron-free SFTP core in src/shared/sftp so the CLI and the desktop app
+// share identical transfer logic.
 //
 // Build: npm run build:cli
 // Run:   node dist-cli/cli/index.js --help
@@ -9,6 +10,9 @@
 import { Command } from 'commander'
 import fs from 'node:fs'
 import path from 'node:path'
+import readline from 'node:readline/promises'
+import { Writable } from 'node:stream'
+import { stdin, stderr } from 'node:process'
 import {
   chmodRemote,
   copyOrMoveBySftp,
@@ -20,18 +24,21 @@ import {
   renameRemote,
   sftpMkdirSafe,
   sftpStat,
+  shellSingleQuote,
   streamTransfer
 } from '../shared/sftp'
-import { connectTarget, type AuthOptions } from './connect'
-import { findStoredCredential } from './assets-store'
+import { connectTarget, execCommand, type AuthOptions } from './connect'
+import { loadCfmConfig } from './config'
+import { resolveAuth } from './auth'
+import { generateOtpForHost, saveOtpSecret } from './otp'
 import { createProgressRenderer } from './progress'
 import { parseTarget, resolveRemotePath, type CliTarget } from './target'
 
 const program = new Command()
 
 program
-  .name('chaterm-files')
-  .description('File transfer over SFTP, powered by the Chaterm file-management core')
+  .name('cfm')
+  .description('File transfer (SFTP) and remote command execution over SSH, powered by the Chaterm connection core')
   .version('0.1.0')
   .option('-p, --password <password>', 'SSH password (falls back to CFM_PASSWORD env)')
   .option('-i, --identity <path>', 'Private key file path')
@@ -40,37 +47,21 @@ program
   .option('--include-hidden', 'Include hidden (dot) files when listing', false)
   .option('-q, --quiet', 'Suppress progress output', false)
 
-const authFrom = (opts: any): AuthOptions => ({
-  password: opts.password ?? process.env.CFM_PASSWORD,
-  identity: opts.identity,
-  passphrase: opts.passphrase ?? process.env.CFM_PASSPHRASE
-})
-
-// Explicit flags/env always win; otherwise reuse the credential stored by the
-// Chaterm desktop app for user@host:port when available.
-const resolveAuth = async (opts: any, target: { credUser: string; credHost: string; port: number }): Promise<AuthOptions> => {
-  const explicit = authFrom(opts)
-  if (explicit.password || explicit.identity || explicit.privateKeyData) return explicit
-
-  const stored = await findStoredCredential({ username: target.credUser, host: target.credHost, port: target.port })
-  if (!stored) return explicit
-
-  const kind = stored.authType === 'keyBased' ? 'key' : 'password'
-  process.stderr.write(`using stored credentials from Chaterm desktop (${kind} auth)
-`)
-  return {
-    password: stored.password ?? undefined,
-    privateKeyData: stored.privateKey ?? undefined,
-    passphrase: stored.passphrase ?? undefined
-  }
-}
-
 const fail: (msg: string) => never = (msg) => {
   process.stderr.write(`error: ${msg}\n`)
   process.exit(1)
 }
 
-const asTarget = (spec: string, opts: any): CliTarget => parseTarget(spec, opts.port ? parseInt(opts.port, 10) : undefined)
+// Default bastion/user for bastion-less shorthand targets (config file/env).
+const cfmConfig = loadCfmConfig()
+
+const asTarget = (spec: string, opts: any): CliTarget =>
+  parseTarget(
+    spec,
+    opts.port ? parseInt(opts.port, 10) : undefined,
+    '1',
+    cfmConfig.defaultBastion || cfmConfig.defaultUser ? { bastion: cfmConfig.defaultBastion, user: cfmConfig.defaultUser } : undefined
+  )
 
 const statRemote = async (sftp: any, p: string): Promise<any | null> => {
   try {
@@ -275,5 +266,123 @@ program
       c.close()
     }
   })
+
+program
+  .command('exec')
+  .description('Run a command on a remote host, like ssh user@host cmd. Usage: exec user@host[:/cwd] [--] <command...>')
+  // ssh(1)-style parsing: arguments after the target belong to the remote
+  // command (e.g. `exec host ls -ltr`), so unknown options are allowed through.
+  // Help keeps only the long `--help` form so a remote `df -h` is not eaten;
+  // auth/quiet flags are redeclared here so they can be used like on ssh
+  // (`exec -i key host cmd`), while program-level flags keep working too.
+  .helpOption('--help', 'display help for command')
+  .allowUnknownOption()
+  .addHelpText(
+    'after',
+    `
+Target formats (full list: cfm --help):
+  user@host[:/cwd]                     direct SSH (port 22, override with -P)
+  user@system@assetIp@bastion[:/cwd]   JumpServer bastion (port 2222)
+  user@assetIp@bastion[:/cwd]          short bastion form; system name derived
+                                       from the bastion domain
+  assetIp[:/cwd]                       bastion-less shorthand; needs defaults in
+  system@assetIp[:/cwd]                  ~/.config/cfm/config.json
+  user@system@assetIp[:/cwd]             (defaultBastion/defaultUser) or the
+                                         CFM_BASTION / CFM_USER env; port 2222`
+  )
+  .option('-p, --password <password>', 'SSH password (falls back to CFM_PASSWORD env)')
+  .option('-i, --identity <path>', 'Private key file path')
+  .option('--passphrase <passphrase>', 'Passphrase for the private key (falls back to CFM_PASSPHRASE env)')
+  .option('-q, --quiet', 'Suppress progress output', false)
+  .option('-l, --login', 'Run via a login shell (bash -lc) so /etc/profile and ~/.bash_profile load — full user PATH and environment', false)
+  .argument('<target>', 'user@host[:/working-directory]')
+  .argument('[command...]', 'Remote command; a leading -- can be used as an explicit separator')
+  .action(async (spec: string, command: string[], cmdOpts: AuthOptions & { quiet?: boolean; login?: boolean }) => {
+    const opts = { ...program.opts(), ...cmdOpts }
+    const cmdline = command.join(' ').trim()
+    if (!cmdline) fail('No command given, e.g. cfm exec user@host df -h')
+    const target = asTarget(spec, opts)
+    const c = await connectTarget(target, await resolveAuth(opts, target), createProgressRenderer(Boolean(opts.quiet))).catch((e) => fail(e.message))
+    try {
+      let remote = cmdline
+      if (target.path) {
+        const cwd = resolveRemotePath(c.home, target.path)
+        remote = `cd ${shellSingleQuote(cwd)} && (${cmdline})`
+      }
+      if (cmdOpts.login) remote = `bash -lc ${shellSingleQuote(remote)}`
+      const { code, signal } = await execCommand(c.conn, remote)
+      // Mirror ssh(1): exit with the remote status; 128 when it died by signal.
+      process.exitCode = signal ? 128 : (code ?? 1)
+    } finally {
+      c.close()
+    }
+  })
+
+// Hidden-input prompt for secrets: typed characters are swallowed by a
+// discarded output stream, so they never reach the terminal or shell history.
+const promptHidden = async (text: string): Promise<string> => {
+  const mute = new Writable({
+    write(_chunk, _enc, cb) {
+      cb()
+    }
+  })
+  stderr.write(text)
+  const rl = readline.createInterface({ input: stdin, output: mute, terminal: stdin.isTTY === true })
+  try {
+    return (await rl.question('')).trim()
+  } finally {
+    rl.close()
+    stderr.write('\n')
+  }
+}
+
+program
+  .command('otp')
+  .description('Print the current TOTP code for a host, or store its secret with --set. Usage: otp <host> [--set]')
+  .argument('<host>', 'Host key in otp-secrets.json, e.g. jump.itouchtv.cn')
+  .option('--set', 'Store or replace the OTP secret via a hidden prompt; it is written only as lk1-encrypted ciphertext', false)
+  .action(async (host: string, cmdOpts: { set: boolean }) => {
+    const hostKey = host.trim()
+    if (!cmdOpts.set) {
+      const code = generateOtpForHost(hostKey)
+      if (!code) fail(`No usable OTP secret for ${host} (checked ~/.config/chaterm*/otp-secrets.json and ~/.otpvault/vault.bin)`)
+      process.stdout.write(code + '\n')
+      return
+    }
+    const secret = await promptHidden('OTP base32 secret (input hidden): ')
+    if (!secret) fail('No secret entered')
+    let stored: { dir: string; code: string | null }
+    try {
+      stored = saveOtpSecret(hostKey, secret)
+    } catch (e: any) {
+      fail(`Invalid OTP secret: ${e?.message || e}`)
+    }
+    stderr.write(`OTP secret stored for ${hostKey} in ${path.join(stored.dir, 'otp-secrets.json')} (lk1-encrypted)\n`)
+    if (stored.code) stderr.write(`Current code: ${stored.code}\n`)
+  })
+
+// Target syntax shared by every command, shown at the bottom of `cfm --help`.
+program.addHelpText(
+  'after',
+  `
+Target formats:
+  user@host[:/path]                        direct SSH (port 22, override with -P)
+  user@system@assetIp@bastion[:/path]      JumpServer bastion (port 2222)
+  user@assetIp@bastion[:/path]             short bastion form; system name derived
+                                           from the bastion domain (jump.x.cn -> x)
+  assetIp[:/path]                          bastion-less shorthand; needs defaults in
+  system@assetIp[:/path]                     ~/.config/cfm/config.json
+  user@system@assetIp[:/path]                (defaultBastion/defaultUser) or the
+                                             CFM_BASTION / CFM_USER env; port 2222
+
+  user@host:port/path is not supported: everything after the first ':' is the
+  remote path; use -P for a custom port.
+
+Examples (default bastion jump.example.cn, defaultUser bob):
+  cfm exec 10.0.0.5:/var/log df -h         # bare asset IP
+  cfm exec example@10.0.0.5 df -h          # system@assetIp
+  cfm exec alice@example@10.0.0.5 df -h    # user@system@assetIp
+  cfm ls alice@example@10.0.0.5@jump.example.cn:/var/log   # full bastion form`
+)
 
 program.parseAsync(process.argv).catch((e) => fail(e?.message || String(e)))

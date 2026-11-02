@@ -6,6 +6,5 @@
 // biome-ignore lint: disable
 export {}
 declare global {
-  const AModal: typeof import('ant-design-vue/es').Modal
   const createRendererLogger: typeof import('@/utils/logger').createRendererLogger
 }

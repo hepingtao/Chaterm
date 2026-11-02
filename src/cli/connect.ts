@@ -6,7 +6,7 @@ import { Client } from 'ssh2'
 import fs from 'node:fs'
 import os from 'node:os'
 import readline from 'node:readline/promises'
-import { stdin as input, stdout as output } from 'node:process'
+import { stdin as input, stdout as output, stderr as errout } from 'node:process'
 import type { SftpOpsDeps } from '../shared/sftp'
 import type { CliTarget } from './target'
 import { generateOtpForHost } from './otp'
@@ -27,6 +27,32 @@ export interface CliConnection {
   close: () => void
 }
 
+export interface ExecResult {
+  code: number | null
+  signal: string | null
+}
+
+export interface ExecWriters {
+  out: NodeJS.WritableStream
+  err: NodeJS.WritableStream
+}
+
+// Run a command over the ssh2 exec channel, streaming output like ssh(1).
+// Resolves with the remote exit status; the caller maps it to process.exitCode.
+export const execCommand = (
+  conn: Client,
+  command: string,
+  writers: ExecWriters = { out: process.stdout, err: process.stderr }
+): Promise<ExecResult> =>
+  new Promise((resolve, reject) => {
+    conn.exec(command, (err, stream: any) => {
+      if (err || !stream) return reject(err || new Error('Failed to open exec channel'))
+      stream.on('data', (chunk: Buffer) => writers.out.write(chunk))
+      stream.stderr?.on('data', (chunk: Buffer) => writers.err.write(chunk))
+      stream.on('close', (code: number | null, signal: string | null) => resolve({ code, signal }))
+    })
+  })
+
 const readIdentity = (identityPath?: string): { privateKey?: string; passphrase?: string } => {
   if (!identityPath) return {}
   const resolved = identityPath.replace(/^~(?=$|\/|\\)/, os.homedir())
@@ -34,7 +60,12 @@ const readIdentity = (identityPath?: string): { privateKey?: string; passphrase?
   return { privateKey: fs.readFileSync(resolved, 'utf8') }
 }
 
-export const connectTarget = async (target: CliTarget, auth: AuthOptions, emit: (p: Record<string, any>) => void): Promise<CliConnection> => {
+export const connectTarget = async (
+  target: CliTarget,
+  auth: AuthOptions,
+  emit: (p: Record<string, any>) => void,
+  opts: { skipSftp?: boolean } = {}
+): Promise<CliConnection> => {
   const conn = new Client()
   const connectConfig: any = {
     host: target.host,
@@ -95,7 +126,7 @@ export const connectTarget = async (target: CliTarget, auth: AuthOptions, emit: 
             otpTried = true
             const otpCode = generateOtpForHost(target.host)
             if (otpCode) {
-              output.write('auto-filling OTP from Chaterm secret store\n')
+              errout.write('auto-filling OTP from Chaterm secret store\n')
               finish([otpCode])
               return
             }
@@ -140,13 +171,19 @@ export const connectTarget = async (target: CliTarget, auth: AuthOptions, emit: 
   conn.connect(connectConfig)
   await connected
 
-  const sftp = await new Promise<any>((resolve, reject) => {
-    conn.sftp((err, s) => (err || !s ? reject(err || new Error('SFTP unavailable')) : resolve(s)))
-  })
+  // Interactive-navigation sessions (cfm2) drive a shell on the bastion and
+  // never touch SFTP; requesting the sftp subsystem there can fail outright.
+  let sftp: any = null
+  let home = '/'
+  if (!opts.skipSftp) {
+    sftp = await new Promise<any>((resolve, reject) => {
+      conn.sftp((err, s) => (err || !s ? reject(err || new Error('SFTP unavailable')) : resolve(s)))
+    })
 
-  const home = await new Promise<string>((resolve) => {
-    sftp.realpath('.', (err: Error | null, abs?: string) => resolve(!err && abs ? abs : '/'))
-  })
+    home = await new Promise<string>((resolve) => {
+      sftp.realpath('.', (err: Error | null, abs?: string) => resolve(!err && abs ? abs : '/'))
+    })
+  }
 
   const ctx: SftpOpsDeps = {
     getSftp: () => sftp,

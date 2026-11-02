@@ -5,18 +5,21 @@
 //   1. <userData>/otp-secrets.json  — secrets encrypted by the desktop
 //      CredentialStore: `ss1:` (Electron safeStorage; on Windows a DPAPI
 //      CurrentUser blob) or `lk1:` (AES-256-GCM, master key in
-//      <userData>/chaterm-db-credential.key)
+//      <userData>/chaterm-db-credential.key). Entries with no prefix are
+//      treated as raw base32 secrets so the file can be hand-maintained on
+//      machines where the desktop's encrypted stores are unreadable (e.g.
+//      ss1:/DPAPI ciphers carried over from a Windows host).
 //   2. ~/.otpvault/vault.bin — the otp-ts vault (DPAPI-encrypted JSON)
 //
 // DPAPI blobs are decrypted by shelling out to PowerShell, the same technique
 // the desktop uses for vault.bin. No secret material is ever logged.
 
-import { createDecipheriv } from 'crypto'
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
 import { execFileSync } from 'child_process'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import { generateTOTP } from '../main/ssh/otp/totp'
+import { base32Decode, generateTOTP } from '../main/ssh/otp/totp'
 import { resolveChatermBaseDirs } from './assets-store'
 
 const OTP_SECRETS_FILE = 'otp-secrets.json'
@@ -65,6 +68,14 @@ const decryptLocalKeyCipher = (cipher: string, userDataDir: string): string => {
   return Buffer.concat([decipher.update(Buffer.from(ctB64, 'base64')), decipher.final()]).toString('utf8')
 }
 
+// Encrypt to the desktop's `lk1:` format (AES-256-GCM), the inverse of decryptLocalKeyCipher.
+const encryptWithLocalKey = (key: Buffer, plain: string): string => {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  const ct = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()])
+  return `${LK1_PREFIX}${iv.toString('base64')}.${ct.toString('base64')}.${cipher.getAuthTag().toString('base64')}`
+}
+
 // Decrypt an `ss1:` ciphertext. On Windows Electron safeStorage output is a
 // DPAPI CurrentUser blob, decryptable via PowerShell. Other platforms are not
 // supported here and surface as a decryption failure.
@@ -88,6 +99,8 @@ const readChatermOtpSecret = (hostKey: string, baseDirs: string[]): string | nul
       if (!encrypted) continue
       if (encrypted.startsWith(SS1_PREFIX)) return decryptSafeStorageCipher(encrypted)
       if (encrypted.startsWith(LK1_PREFIX)) return decryptLocalKeyCipher(encrypted, base)
+      // Raw base32 secret (desktop never writes this form; hand-maintained files do)
+      return encrypted.replace(/\s/g, '')
     } catch {
       // unreadable / undecryptable entry — try the next store
     }
@@ -152,4 +165,46 @@ export const generateOtpForHost = (host: string, opts: GenerateOtpOptions = {}):
   } catch {
     return null
   }
+}
+
+export interface SaveOtpOptions {
+  /** Overrides the Chaterm userData directory to store into (tests). */
+  baseDir?: string
+  /** Generate the verification code for this timestamp (tests). */
+  forTime?: number
+}
+
+/**
+ * Store a TOTP secret for a host using the desktop's `lk1:` local-key format
+ * (AES-256-GCM, master key in <userData>/chaterm-db-credential.key), so the
+ * entry stays decryptable by both cfm and the desktop's own fallback path.
+ * The secret never touches disk in plaintext: it arrives via the hidden
+ * prompt in the otp command and is written only as ciphertext.
+ * Returns the current code generated from the stored secret as verification.
+ */
+export const saveOtpSecret = (host: string, secret: string, opts: SaveOtpOptions = {}): { dir: string; code: string | null } => {
+  const hostKey = host.trim().toLowerCase()
+  const trimmed = secret.replace(/\s/g, '')
+  base32Decode(trimmed) // throws on invalid input
+
+  const dir = opts.baseDir ?? resolveChatermBaseDirs()[0]
+  mkdirSync(dir, { recursive: true })
+
+  const keyPath = join(dir, LOCAL_KEY_FILE)
+  if (!existsSync(keyPath)) writeFileSync(keyPath, randomBytes(32), { mode: 0o600 })
+
+  const filePath = join(dir, OTP_SECRETS_FILE)
+  let map: Record<string, string> = {}
+  if (existsSync(filePath)) {
+    try {
+      map = JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, string>
+    } catch {
+      map = {}
+    }
+  }
+  map[hostKey] = encryptWithLocalKey(readFileSync(keyPath), trimmed)
+  writeFileSync(filePath, JSON.stringify(map, null, 2), { mode: 0o600 })
+  decryptCache.delete(hostKey)
+
+  return { dir, code: generateOtpForHost(hostKey, { baseDirs: [dir], forTime: opts.forTime }) }
 }
