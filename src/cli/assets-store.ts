@@ -190,6 +190,13 @@ const getSqlJs = async (): Promise<any> => {
   return sqlJsInit
 }
 
+// Debug trace for the stored-credential lookup. Gated by CFM_DEBUG so default
+// behavior stays silent; exists to make failures visible inside restricted
+// environments (e.g. WorkBuddy sandbox) where everything used to be swallowed.
+const credDebug = (msg: string): void => {
+  if (process.env.CFM_DEBUG) process.stderr.write(`[cfm-cred] ${msg}\n`)
+}
+
 /**
  * Look up a stored SSH credential for user@host:port across the local Chaterm
  * desktop databases. Returns null when nothing matches (caller falls back to
@@ -197,24 +204,45 @@ const getSqlJs = async (): Promise<any> => {
  */
 export const findStoredCredential = async (opts: FindCredentialOptions): Promise<StoredCredential | null> => {
   const candidates = resolveCandidateDbPaths(resolveChatermBaseDirs(opts.baseDir))
-  if (candidates.length === 0) return null
+  if (candidates.length === 0) {
+    credDebug('no candidate chaterm_data.db found')
+    return null
+  }
 
   const SQL = await getSqlJs()
 
   for (const dbPath of candidates) {
     let tmpDb: string | null = null
+    let fileBuffer: Buffer | null = null
     try {
       tmpDb = snapshotDb(dbPath)
-      const fileBuffer = fs.readFileSync(tmpDb)
+      fileBuffer = fs.readFileSync(tmpDb)
+    } catch (snapErr) {
+      // The snapshot copy can fail on sandboxed/projected file systems (e.g.
+      // copy truncated at a size cap). Fall back to a one-shot read of the
+      // original: plain read() may succeed where copy_file_range is blocked.
+      credDebug(`snapshot of ${dbPath} failed (${(snapErr as Error).message}); trying direct read`)
+      try {
+        fileBuffer = fs.readFileSync(dbPath)
+        tmpDb = null
+      } catch (directErr) {
+        credDebug(`direct read of ${dbPath} failed: ${(directErr as Error).message}`)
+        continue
+      }
+    }
+    try {
       const db = new SQL.Database(fileBuffer)
       try {
         const row = queryAsset(db, opts.username, opts.host, opts.port)
+        if (!row) {
+          credDebug(`no matching row in ${dbPath} (user=${opts.username} host=${opts.host} port=${opts.port}, buffer=${fileBuffer.length} bytes)`)
+        }
         if (row) return toCredential(row, dbPath)
       } finally {
         db.close()
       }
-    } catch {
-      // unreadable/foreign db — try the next candidate
+    } catch (dbErr) {
+      credDebug(`query on ${tmpDb ?? dbPath} failed: ${(dbErr as Error).message} (buffer=${fileBuffer.length} bytes)`)
     } finally {
       if (tmpDb) cleanupSnapshot(tmpDb)
     }
